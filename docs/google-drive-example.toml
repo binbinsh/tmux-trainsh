@@ -1,0 +1,141 @@
+# Example Recipe: Mount Google Drive on Colab/Vast.ai
+#
+# This recipe demonstrates how to mount Google Drive on remote hosts:
+# 1. Ensure the host is online
+# 2. Mount Google Drive using rclone
+# 3. Verify the mount
+# 4. Run training with data from Google Drive
+# 5. Unmount when done
+
+[recipe]
+name = "gdrive-training"
+version = "1.0.0"
+description = "Train model with data from Google Drive on Colab/Vast.ai"
+
+[variables]
+# Host configuration
+host_id = "colab-host"            # Your configured Colab/Vast host ID
+storage_id = "my-gdrive"          # Your configured Google Drive storage ID
+
+# Mount configuration
+mount_path = "/content/drive"     # Where to mount on Colab
+gdrive_folder = "ML/datasets"     # Folder in Google Drive to mount (empty for root)
+
+# Training configuration
+local_project = "/Users/me/projects/training"
+remote_workdir = "/content/training"
+dataset_path = "/content/drive/dataset"
+output_path = "/content/drive/outputs"
+
+# ============================================================
+# Steps
+# ============================================================
+
+# Step 1: Verify host is online
+[[step]]
+id = "check_host"
+name = "Check Host Online"
+wait_condition = { 
+  condition = { host_online = { host_id = "${host_id}" } },
+  timeout_secs = 60,
+  poll_interval_secs = 5
+}
+
+# Step 2: Mount Google Drive
+[[step]]
+id = "mount_gdrive"
+name = "Mount Google Drive"
+depends_on = ["check_host"]
+gdrive_mount = { 
+  host_id = "${host_id}",
+  storage_id = "${storage_id}",
+  mount_path = "${mount_path}",
+  gdrive_path = "${gdrive_folder}",
+  vfs_cache = true,
+  cache_mode = "writes",
+  background = true
+}
+retry = { max_attempts = 3, delay_secs = 5 }
+
+# Step 3: Verify mount is working
+[[step]]
+id = "verify_mount"
+name = "Verify Mount"
+depends_on = ["mount_gdrive"]
+wait_condition = {
+  condition = { gdrive_mounted = { host_id = "${host_id}", mount_path = "${mount_path}" } },
+  timeout_secs = 30,
+  poll_interval_secs = 3
+}
+
+# Step 4: List contents to verify
+[[step]]
+id = "list_drive"
+name = "List Drive Contents"
+depends_on = ["verify_mount"]
+ssh_command = {
+  host_id = "${host_id}",
+  command = "ls -la ${mount_path}",
+  capture_output = "drive_contents"
+}
+
+# Step 5: Sync training code
+[[step]]
+id = "sync_code"
+name = "Sync Training Code"
+depends_on = ["verify_mount"]
+rsync_upload = {
+  host_id = "${host_id}",
+  local_path = "${local_project}",
+  remote_path = "${remote_workdir}",
+  use_gitignore = true,
+  excludes = ["*.pyc", "__pycache__", ".git"]
+}
+
+# Step 6: Create tmux session for training
+[[step]]
+id = "create_training_session"
+name = "Create Training Session"
+depends_on = ["sync_code"]
+tmux_new = {
+  host_id = "${host_id}",
+  session_name = "train",
+  workdir = "${remote_workdir}"
+}
+
+# Step 7: Run training with data from GDrive
+[[step]]
+id = "run_training"
+name = "Run Training"
+depends_on = ["create_training_session"]
+tmux_send = {
+  host_id = "${host_id}",
+  session_name = "train",
+  keys = "python train.py --data ${dataset_path} --output ${output_path}\nEnter"
+}
+
+# Step 8: Send notification
+[[step]]
+id = "notify_started"
+name = "Notify Training Started"
+depends_on = ["run_training"]
+notify = {
+  title = "Training Started",
+  message = "Training with Google Drive data has started",
+  level = "success"
+}
+
+# ============================================================
+# Cleanup Steps (optional, run manually or after training)
+# ============================================================
+
+# Unmount Google Drive when done
+# [[step]]
+# id = "unmount_gdrive"
+# name = "Unmount Google Drive"
+# depends_on = ["run_training"]
+# gdrive_unmount = {
+#   host_id = "${host_id}",
+#   mount_path = "${mount_path}"
+# }
+
