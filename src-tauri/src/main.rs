@@ -103,6 +103,18 @@ async fn list_local_files(path: String) -> Result<Vec<storage::FileEntry>, AppEr
   Ok(entries)
 }
 
+/// Create a local directory (including parents)
+#[tauri::command]
+async fn create_local_dir(path: String) -> Result<(), AppError> {
+  if path.trim().is_empty() {
+    return Err(AppError::invalid_input("Path is required"));
+  }
+  tokio::fs::create_dir_all(&path)
+    .await
+    .map_err(|e| AppError::io(format!("Failed to create directory: {}", e)))?;
+  Ok(())
+}
+
 /// Open content in external editor and return updated content
 #[tauri::command]
 async fn open_in_external_editor(
@@ -227,6 +239,38 @@ async fn list_host_files(host_id: String, path: String) -> Result<Vec<storage::F
   }
   
   Ok(entries)
+}
+
+/// Create a directory on a remote host via SSH
+#[tauri::command]
+async fn create_host_dir(host_id: String, path: String) -> Result<(), AppError> {
+  if path.trim().is_empty() {
+    return Err(AppError::invalid_input("Path is required"));
+  }
+
+  let host = host::get_host(&host_id).await?;
+  let ssh = host.ssh.as_ref()
+    .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
+
+  let escaped_path = shell_escape::unix::escape(path.into()).to_string();
+  let cmd = format!("mkdir -p {}", escaped_path);
+
+  let mut ssh_cmd = tokio::process::Command::new("ssh");
+  for arg in ssh.common_ssh_options() {
+    ssh_cmd.arg(arg);
+  }
+  ssh_cmd.arg(ssh.target());
+  ssh_cmd.arg(&cmd);
+
+  let output = ssh_cmd.output().await
+    .map_err(|e| AppError::command(format!("Failed to execute SSH: {e}")))?;
+
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    return Err(AppError::command(format!("Failed to create remote directory: {}", stderr.trim())));
+  }
+
+  Ok(())
 }
 
 // ============================================================
@@ -459,11 +503,92 @@ async fn log_clear_local(session_id: String) -> Result<(), AppError> {
 // Vast.ai Commands
 // ============================================================
 
+async fn resolve_vast_instance(instance_id: i64) -> Result<(TrainshConfig, VastClient, VastInstance), AppError> {
+  if instance_id <= 0 {
+    return Err(AppError::invalid_input("instance_id must be positive"));
+  }
+  let cfg = load_config().await?;
+  let client = VastClient::from_cfg(&cfg)?;
+  let insts = client.list_instances().await?;
+  let inst = insts
+    .into_iter()
+    .find(|x| x.id == instance_id)
+    .ok_or_else(|| AppError::not_found(format!("Vast instance {instance_id} not found")))?;
+  Ok((cfg, client, inst))
+}
+
 #[tauri::command]
 async fn vast_list_instances() -> Result<Vec<VastInstance>, AppError> {
   let cfg = load_config().await?;
   let client = VastClient::from_cfg(&cfg)?;
   client.list_instances().await
+}
+
+#[tauri::command]
+async fn vast_test_connection(instance_id: i64) -> Result<serde_json::Value, AppError> {
+  let (cfg, client, inst) = resolve_vast_instance(instance_id).await?;
+  client.attach_ssh_key(instance_id).await?;
+  let ssh_host = inst
+    .ssh_host
+    .ok_or_else(|| AppError::invalid_input("Instance is not running or SSH host unavailable"))?;
+  let ssh_port = inst.ssh_port.unwrap_or(22);
+  let ssh = SshSpec {
+    host: ssh_host,
+    port: ssh_port,
+    user: "root".to_string(),
+    key_path: cfg.vast.ssh_key_path.clone(),
+    extra_args: vec![],
+  };
+  ssh.validate()?;
+
+  let mut cmd = tokio::process::Command::new("ssh");
+  for arg in ssh.common_ssh_options() {
+    cmd.arg(arg);
+  }
+  cmd.arg(ssh.target());
+  cmd.arg("echo ok");
+
+  let output = cmd.output().await?;
+  if output.status.success() {
+    Ok(serde_json::json!({ "success": true, "message": "Connection successful" }))
+  } else {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let msg = stderr.trim();
+    if msg.contains("Permission denied") {
+      Ok(serde_json::json!({ "success": false, "message": "Connection failed: Permission denied. Check your SSH key." }))
+    } else if msg.contains("Connection refused") {
+      Ok(serde_json::json!({ "success": false, "message": "Connection failed: Connection refused. Is the host running?" }))
+    } else if msg.contains("Connection timed out") || msg.contains("timed out") {
+      Ok(serde_json::json!({ "success": false, "message": "Connection failed: Timed out. Check your network connection." }))
+    } else {
+      Ok(serde_json::json!({ "success": false, "message": format!("Connection failed: {msg}") }))
+    }
+  }
+}
+
+#[tauri::command]
+async fn vast_attach_ssh_key(instance_id: i64) -> Result<(), AppError> {
+  let cfg = load_config().await?;
+  let client = VastClient::from_cfg(&cfg)?;
+  client.attach_ssh_key(instance_id).await
+}
+
+#[tauri::command]
+async fn vast_fetch_system_info(instance_id: i64) -> Result<host::SystemInfo, AppError> {
+  let (cfg, client, inst) = resolve_vast_instance(instance_id).await?;
+  client.attach_ssh_key(instance_id).await?;
+  let ssh_host = inst
+    .ssh_host
+    .ok_or_else(|| AppError::invalid_input("Instance is not running or SSH host unavailable"))?;
+  let ssh_port = inst.ssh_port.unwrap_or(22);
+  let ssh = SshSpec {
+    host: ssh_host,
+    port: ssh_port,
+    user: "root".to_string(),
+    key_path: cfg.vast.ssh_key_path.clone(),
+    extra_args: vec![],
+  };
+  host::fetch_system_info(&ssh, host::HostType::Vast).await
 }
 
 #[tauri::command]
@@ -616,6 +741,8 @@ fn main() {
       // File Listing (for FilePicker)
       list_local_files,
       list_host_files,
+      create_local_dir,
+      create_host_dir,
       // External Editor
       open_in_external_editor,
       // SSH Keys
@@ -652,6 +779,9 @@ fn main() {
       log_clear_local,
       // Vast.ai
       vast_list_instances,
+      vast_attach_ssh_key,
+      vast_test_connection,
+      vast_fetch_system_info,
       vast_start_instance,
       vast_stop_instance,
       vast_label_instance,

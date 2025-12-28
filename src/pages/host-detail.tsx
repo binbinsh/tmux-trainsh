@@ -22,11 +22,25 @@ import {
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { AppIcon } from "../components/AppIcon";
-import type { GpuInfo, Storage } from "../lib/types";
+import type { GpuInfo, Host, HostStatus, Storage, SystemInfo, VastInstance } from "../lib/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { hostApi, termOpenSshTmux, pricingApi, useSyncVastPricing, useHostCostBreakdown, usePricingSettings, useStorages, type RemoteTmuxSession } from "../lib/tauri-api";
+import { copyText } from "../lib/clipboard";
+import {
+  getConfig,
+  hostApi,
+  termOpenSshTmux,
+  useHostCostBreakdown,
+  usePricingSettings,
+  useStorages,
+  useSyncVastPricing,
+  useVastInstances,
+  vastAttachSshKey,
+  vastFetchSystemInfo,
+  vastTestConnection,
+  type RemoteTmuxSession,
+} from "../lib/tauri-api";
 import { StatusBadge } from "../components/shared/StatusBadge";
 import { formatPriceWithRates } from "../lib/currency";
 
@@ -86,6 +100,22 @@ function IconEdit() {
   );
 }
 
+function IconCopy() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+    </svg>
+  );
+}
+
+function IconCheck() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    </svg>
+  );
+}
+
 function IconGpu() {
   return (
     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -102,6 +132,19 @@ function getTempColor(temp: number | null | undefined): string {
   if (temp < 50) return "text-success";
   if (temp < 70) return "text-warning";
   return "text-danger";
+}
+
+function getVastHostStatus(inst: VastInstance): HostStatus {
+  const v = (inst.actual_status ?? "").toLowerCase();
+  if (v.includes("running") || v.includes("active") || v.includes("online")) return "online";
+  if (v.includes("stopped") || v.includes("exited")) return "offline";
+  if (v.includes("error") || v.includes("failed")) return "error";
+  if (v.includes("offline")) return "offline";
+  return "connecting";
+}
+
+function getVastDisplayName(inst: VastInstance): string {
+  return inst.label?.trim() || `vast #${inst.id}`;
 }
 
 // Vast.ai Pricing Card Component
@@ -562,8 +605,25 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
   );
 }
 
-export function HostDetailPage() {
+type HostDetailMode = "saved" | "vast";
+
+type HostDetailPageProps = {
+  hostId: string;
+  mode: HostDetailMode;
+};
+
+export function SavedHostDetailPage() {
   const { id } = useParams({ from: "/hosts/$id" });
+  return <HostDetailPage hostId={id} mode="saved" />;
+}
+
+export function VastHostDetailPage() {
+  const { id } = useParams({ from: "/hosts/vast/$id" });
+  return <HostDetailPage hostId={id} mode="vast" />;
+}
+
+export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
+  const isVast = mode === "vast";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const editModal = useDisclosure();
@@ -573,6 +633,12 @@ export function HostDetailPage() {
 
   // GPU detail state
   const [selectedGpu, setSelectedGpu] = useState<GpuInfo | null>(null);
+  const [copiedSsh, setCopiedSsh] = useState(false);
+  const pricingSettingsQuery = usePricingSettings();
+  const displayCurrency = pricingSettingsQuery.data?.display_currency ?? "USD";
+  const exchangeRates = pricingSettingsQuery.data?.exchange_rates;
+  const formatUsd = (value: number, decimals = 3) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
 
   // Tmux session selection state
   const [remoteTmuxSessions, setRemoteTmuxSessions] = useState<RemoteTmuxSession[]>([]);
@@ -587,21 +653,63 @@ export function HostDetailPage() {
   const [editCloudflaredHostname, setEditCloudflaredHostname] = useState("");
   const [editEnvVars, setEditEnvVars] = useState<string>(""); // "KEY=value" per line
 
+  const vastInstanceId = Number(hostId);
+  const hasValidVastId = Number.isFinite(vastInstanceId) && vastInstanceId > 0;
+  const [vastCreatedAt] = useState(() => new Date().toISOString());
+  const [vastSystemInfo, setVastSystemInfo] = useState<SystemInfo | null>(null);
+  const [vastLastSeenAt, setVastLastSeenAt] = useState<string | null>(null);
+
+  const cfgQuery = useQuery({
+    queryKey: ["config"],
+    queryFn: getConfig,
+    enabled: isVast,
+  });
+  const vastQuery = useVastInstances();
+  const vastInstance = isVast && hasValidVastId
+    ? (vastQuery.data ?? []).find((inst) => inst.id === vastInstanceId) ?? null
+    : null;
+  const canVastConnect = Boolean(vastInstance?.ssh_host);
+  const vastHost: Host | null = isVast && vastInstance
+    ? {
+        id: `vast-${vastInstance.id}`,
+        name: getVastDisplayName(vastInstance),
+        type: "vast",
+        status: getVastHostStatus(vastInstance),
+        ssh: canVastConnect
+          ? {
+              host: vastInstance.ssh_host ?? "",
+              port: vastInstance.ssh_port ?? 22,
+              user: "root",
+              keyPath: cfgQuery.data?.vast.ssh_key_path ?? null,
+              extraArgs: [],
+            }
+          : null,
+        vast_instance_id: vastInstance.id,
+        cloudflared_hostname: null,
+        env_vars: {},
+        gpu_name: vastInstance.gpu_name,
+        num_gpus: vastInstance.num_gpus,
+        system_info: vastSystemInfo,
+        created_at: vastCreatedAt,
+        last_seen_at: vastLastSeenAt,
+      }
+    : null;
+
   const hostQuery = useQuery({
-    queryKey: ["hosts", id],
-    queryFn: () => hostApi.get(id),
-    enabled: !!id,
+    queryKey: ["hosts", hostId],
+    queryFn: () => hostApi.get(hostId),
+    enabled: !isVast && !!hostId,
   });
 
   // Get storages linked to this host
   const storagesQuery = useStorages();
   const linkedStorages = (storagesQuery.data ?? []).filter(
-    (s) => s.backend.type === "ssh_remote" && s.backend.host_id === id
+    (s) => s.backend.type === "ssh_remote" && s.backend.host_id === hostId
   );
 
   // Initialize edit form when host data loads
   useEffect(() => {
-    if (hostQuery.data) {
+    if (!isVast && hostQuery.data) {
       const host = hostQuery.data;
       setEditName(host.name || "");
       setEditSshHost(host.ssh?.host || "");
@@ -615,24 +723,51 @@ export function HostDetailPage() {
         .join("\n");
       setEditEnvVars(envStr);
     }
-  }, [hostQuery.data]);
+  }, [hostQuery.data, isVast]);
 
-  const testMutation = useMutation({
-    mutationFn: () => hostApi.testConnection(id),
+  const savedTestMutation = useMutation({
+    mutationFn: () => hostApi.testConnection(hostId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["hosts", id] });
+      queryClient.invalidateQueries({ queryKey: ["hosts", hostId] });
     },
   });
 
-  const refreshMutation = useMutation({
-    mutationFn: () => hostApi.refresh(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["hosts", id] });
+  const vastTestMutation = useMutation({
+    mutationFn: async () => {
+      if (!hasValidVastId) {
+        return { success: false, message: "Invalid Vast instance id" };
+      }
+      return await vastTestConnection(vastInstanceId);
     },
   });
+
+  const testMutation = isVast ? vastTestMutation : savedTestMutation;
+
+  const savedRefreshMutation = useMutation({
+    mutationFn: () => hostApi.refresh(hostId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["hosts", hostId] });
+    },
+  });
+
+  const vastRefreshMutation = useMutation({
+    mutationFn: async () => {
+      if (!hasValidVastId) {
+        throw new Error("Invalid Vast instance id");
+      }
+      return await vastFetchSystemInfo(vastInstanceId);
+    },
+    onSuccess: (info) => {
+      setVastSystemInfo(info);
+      setVastLastSeenAt(new Date().toISOString());
+      queryClient.invalidateQueries({ queryKey: ["vastInstances"] });
+    },
+  });
+
+  const refreshMutation = isVast ? vastRefreshMutation : savedRefreshMutation;
 
   const deleteMutation = useMutation({
-    mutationFn: () => hostApi.remove(id),
+    mutationFn: () => hostApi.remove(hostId),
     onSuccess: () => {
       navigate({ to: "/hosts" });
     },
@@ -667,10 +802,10 @@ export function HostDetailPage() {
         config.cloudflared_hostname = editCloudflaredHostname || null;
       }
       
-      return await hostApi.update(id, config);
+      return await hostApi.update(hostId, config);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["hosts", id] });
+      queryClient.invalidateQueries({ queryKey: ["hosts", hostId] });
       queryClient.invalidateQueries({ queryKey: ["hosts"] });
       editModal.onClose();
     },
@@ -682,16 +817,28 @@ export function HostDetailPage() {
   useEffect(() => {
     setTestResult(null);
     setSelectedGpu(null);
-  }, [id]);
+  }, [hostId]);
+
+  useEffect(() => {
+    if (isVast) {
+      setVastSystemInfo(null);
+      setVastLastSeenAt(null);
+    }
+  }, [hostId, isVast]);
 
   async function handleTest() {
     setTestResult(null);
-    const result = await testMutation.mutateAsync();
-    setTestResult(result);
+    try {
+      const result = await testMutation.mutateAsync();
+      setTestResult(result);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setTestResult({ success: false, message });
+    }
   }
 
   async function handleOpenTerminal() {
-    const host = hostQuery.data;
+    const host = isVast ? vastHost : hostQuery.data;
     if (!host?.ssh) {
       alert("No SSH configuration for this host");
       return;
@@ -699,10 +846,18 @@ export function HostDetailPage() {
 
     try {
       setIsLoadingTmuxSessions(true);
-      
+
+      if (isVast) {
+        if (hasValidVastId) {
+          await vastAttachSshKey(vastInstanceId);
+        }
+        await connectToTmuxSession("main");
+        return;
+      }
+
       // Check for existing tmux sessions
-      const sessions = await hostApi.listTmuxSessions(id);
-      
+      const sessions = await hostApi.listTmuxSessions(hostId);
+
       if (sessions.length === 0) {
         // No existing sessions, create a new one directly
         await connectToTmuxSession("main");
@@ -724,7 +879,7 @@ export function HostDetailPage() {
   }
 
   async function connectToTmuxSession(sessionName: string) {
-    const host = hostQuery.data;
+    const host = isVast ? vastHost : hostQuery.data;
     if (!host?.ssh) return;
 
     try {
@@ -755,7 +910,23 @@ export function HostDetailPage() {
     }
   }
 
-  if (hostQuery.isLoading) {
+  const host = isVast ? vastHost : hostQuery.data;
+  const isLoading = isVast
+    ? vastQuery.isLoading || cfgQuery.isLoading
+    : hostQuery.isLoading;
+  const loadError = isVast
+    ? vastQuery.error || cfgQuery.error
+    : hostQuery.error;
+  const diskSpaceGb = vastInstance?.disk_space
+    ?? host?.system_info?.disks?.reduce((sum, disk) => sum + disk.total_gb, 0)
+    ?? null;
+  const storagePerHour = vastInstance?.storage_cost != null && diskSpaceGb != null
+    ? (vastInstance.storage_cost / 720) * diskSpaceGb
+    : null;
+  const uploadPerTb = vastInstance?.inet_up_cost != null ? vastInstance.inet_up_cost * 1024 : null;
+  const downloadPerTb = vastInstance?.inet_down_cost != null ? vastInstance.inet_down_cost * 1024 : null;
+
+  if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center">
         <Spinner size="lg" />
@@ -763,7 +934,7 @@ export function HostDetailPage() {
     );
   }
 
-  if (hostQuery.error || !hostQuery.data) {
+  if (loadError || !host) {
     return (
       <div className="h-full p-6">
         <Card>
@@ -778,7 +949,7 @@ export function HostDetailPage() {
     );
   }
 
-  const host = hostQuery.data;
+  const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : null;
 
   return (
     <div className="h-full p-6 overflow-auto">
@@ -801,7 +972,7 @@ export function HostDetailPage() {
               <Chip size="sm" variant="flat">{host.type}</Chip>
             </div>
             <p className="text-sm text-foreground/60">
-              Created {new Date(host.created_at).toLocaleDateString()}
+              {isVast ? "Vast.ai instance" : `Created ${new Date(host.created_at).toLocaleDateString()}`}
             </p>
           </div>
           <div className="flex gap-2">
@@ -809,34 +980,39 @@ export function HostDetailPage() {
               variant="flat"
               startContent={<IconTerminal />}
               onPress={handleOpenTerminal}
-              isDisabled={!host.ssh}
+              isDisabled={!host.ssh || (isVast && !canVastConnect)}
             >
               Terminal
             </Button>
-            <Button
-              variant="flat"
-              startContent={<IconEdit />}
-              onPress={editModal.onOpen}
-            >
-              Edit
-            </Button>
+            {!isVast && (
+              <Button
+                variant="flat"
+                startContent={<IconEdit />}
+                onPress={editModal.onOpen}
+              >
+                Edit
+              </Button>
+            )}
             <Button
               variant="flat"
               startContent={<IconRefresh />}
               onPress={() => refreshMutation.mutate()}
               isLoading={refreshMutation.isPending}
+              isDisabled={isVast && !canVastConnect}
             >
               Refresh
             </Button>
-            <Button
-              color="danger"
-              variant="flat"
-              startContent={<IconTrash />}
-              onPress={deleteModal.onOpen}
-              isLoading={deleteMutation.isPending}
-            >
-              Delete
-            </Button>
+            {!isVast && (
+              <Button
+                color="danger"
+                variant="flat"
+                startContent={<IconTrash />}
+                onPress={deleteModal.onOpen}
+                isLoading={deleteMutation.isPending}
+              >
+                Delete
+              </Button>
+            )}
           </div>
         </div>
 
@@ -854,6 +1030,7 @@ export function HostDetailPage() {
                       variant="flat"
                       onPress={handleTest}
                       isLoading={testMutation.isPending}
+                      isDisabled={isVast && !canVastConnect}
                     >
                       Test Connection
                     </Button>
@@ -863,21 +1040,41 @@ export function HostDetailPage() {
                 <CardBody className="gap-4">
                   {host.ssh ? (
                     <div className="grid grid-cols-2 gap-4">
+                      {sshAddress && (
+                        <div className="col-span-2 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm text-foreground/60">SSH Address</p>
+                            <p className="font-mono select-text">{sshAddress}</p>
+                          </div>
+                          <Button
+                            isIconOnly
+                            size="sm"
+                            variant="light"
+                            onPress={async () => {
+                              await copyText(sshAddress);
+                              setCopiedSsh(true);
+                              setTimeout(() => setCopiedSsh(false), 1200);
+                            }}
+                          >
+                            {copiedSsh ? <IconCheck /> : <IconCopy />}
+                          </Button>
+                        </div>
+                      )}
                       <div>
                         <p className="text-sm text-foreground/60">Host</p>
-                        <p className="font-mono">{host.ssh.host}</p>
+                        <p className="font-mono select-text">{host.ssh.host}</p>
                       </div>
                       <div>
                         <p className="text-sm text-foreground/60">Port</p>
-                        <p className="font-mono">{host.ssh.port}</p>
+                        <p className="font-mono select-text">{host.ssh.port}</p>
                       </div>
                       <div>
                         <p className="text-sm text-foreground/60">User</p>
-                        <p className="font-mono">{host.ssh.user}</p>
+                        <p className="font-mono select-text">{host.ssh.user}</p>
                       </div>
                       <div>
                         <p className="text-sm text-foreground/60">Key Path</p>
-                        <p className="font-mono text-sm truncate">{host.ssh.keyPath ?? host.ssh.key_path ?? "default"}</p>
+                        <p className="font-mono text-sm truncate select-text">{host.ssh.keyPath ?? host.ssh.key_path ?? "default"}</p>
                       </div>
                     </div>
                   ) : (
@@ -907,6 +1104,7 @@ export function HostDetailPage() {
                         variant="flat"
                         onPress={() => refreshMutation.mutate()}
                         isLoading={refreshMutation.isPending}
+                        isDisabled={isVast && !canVastConnect}
                       >
                         Fetch Info
                       </Button>
@@ -1094,7 +1292,42 @@ export function HostDetailPage() {
               </Card>
 
               {/* Type-specific Info */}
-              {host.type === "vast" && host.vast_instance_id && (
+              {isVast && vastInstance && (
+                <Card>
+                  <CardHeader>
+                    <span className="font-semibold">Vast.ai Rates</span>
+                  </CardHeader>
+                  <Divider />
+                  <CardBody className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-foreground/60">{displayCurrency}/hr</p>
+                      <p className="font-mono">{vastInstance.dph_total != null ? formatUsd(vastInstance.dph_total, 3) : "-"}</p>
+                    </div>
+                    {vastInstance.gpu_util != null && (
+                      <div>
+                        <p className="text-sm text-foreground/60">GPU Util</p>
+                        <p className="font-mono">{Math.round(vastInstance.gpu_util)}%</p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-sm text-foreground/60">
+                        Storage {diskSpaceGb != null ? `(${diskSpaceGb.toFixed(0)} GB)` : ""}
+                      </p>
+                      <p className="font-mono">{storagePerHour != null ? `${formatUsd(storagePerHour, 3)}/hr` : "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-foreground/60">Upload</p>
+                      <p className="font-mono">{uploadPerTb != null ? `${formatUsd(uploadPerTb, 3)}/TB` : "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-foreground/60">Download</p>
+                      <p className="font-mono">{downloadPerTb != null ? `${formatUsd(downloadPerTb, 3)}/TB` : "-"}</p>
+                    </div>
+                  </CardBody>
+                </Card>
+              )}
+
+              {!isVast && host.type === "vast" && host.vast_instance_id && (
                 <VastPricingCard hostId={host.id} hostName={host.name} vastInstanceId={host.vast_instance_id} />
               )}
 
@@ -1252,84 +1485,86 @@ export function HostDetailPage() {
       </div>
 
       {/* Edit Modal */}
-      <Modal isOpen={editModal.isOpen} onOpenChange={(open) => !open && editModal.onClose()} isDismissable={true} size="lg">
-        <ModalContent>
-          <ModalHeader>Edit Host: {host.name}</ModalHeader>
-          <ModalBody className="gap-4">
-            <Input labelPlacement="inside" label="Host Name"
-            value={editName}
-            onValueChange={setEditName}
-            placeholder="My Server" />
-            
-            <Divider />
-            <p className="text-sm font-medium">SSH Connection</p>
-            
-            <div className="grid grid-cols-2 gap-3">
-              <Input labelPlacement="inside" label="SSH Host"
-              value={editSshHost}
-              onValueChange={setEditSshHost}
-              placeholder="hostname or IP"
-              className="col-span-2" />
-              <Input labelPlacement="inside" label="SSH Port"
-              value={editSshPort}
-              onValueChange={setEditSshPort}
-              placeholder="22"
-              type="number" />
-              <Input labelPlacement="inside" label="SSH User"
-              value={editSshUser}
-              onValueChange={setEditSshUser}
-              placeholder="root" />
-              <Input labelPlacement="inside" label="SSH Key Path"
-              value={editSshKeyPath}
-              onValueChange={setEditSshKeyPath}
-              placeholder="~/.ssh/id_rsa"
-              description="Leave empty for default key"
-              className="col-span-2" />
-            </div>
+      {!isVast && (
+        <Modal isOpen={editModal.isOpen} onOpenChange={(open) => !open && editModal.onClose()} isDismissable={true} size="lg">
+          <ModalContent>
+            <ModalHeader>Edit Host: {host.name}</ModalHeader>
+            <ModalBody className="gap-4">
+              <Input labelPlacement="inside" label="Host Name"
+              value={editName}
+              onValueChange={setEditName}
+              placeholder="My Server" />
+              
+              <Divider />
+              <p className="text-sm font-medium">SSH Connection</p>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <Input labelPlacement="inside" label="SSH Host"
+                value={editSshHost}
+                onValueChange={setEditSshHost}
+                placeholder="hostname or IP"
+                className="col-span-2" />
+                <Input labelPlacement="inside" label="SSH Port"
+                value={editSshPort}
+                onValueChange={setEditSshPort}
+                placeholder="22"
+                type="number" />
+                <Input labelPlacement="inside" label="SSH User"
+                value={editSshUser}
+                onValueChange={setEditSshUser}
+                placeholder="root" />
+                <Input labelPlacement="inside" label="SSH Key Path"
+                value={editSshKeyPath}
+                onValueChange={setEditSshKeyPath}
+                placeholder="~/.ssh/id_rsa"
+                description="Leave empty for default key"
+                className="col-span-2" />
+              </div>
 
-            {host.type === "colab" && (
-              <>
-                <Divider />
-                <p className="text-sm font-medium">Colab Connection</p>
-                <Input labelPlacement="inside" label="Cloudflared Hostname"
-                value={editCloudflaredHostname}
-                onValueChange={setEditCloudflaredHostname}
-                placeholder="xxx-xxx-xxx.trycloudflare.com"
-                description="Run cloudflared tunnel in Colab to get this" />
-              </>
-            )}
+              {host.type === "colab" && (
+                <>
+                  <Divider />
+                  <p className="text-sm font-medium">Colab Connection</p>
+                  <Input labelPlacement="inside" label="Cloudflared Hostname"
+                  value={editCloudflaredHostname}
+                  onValueChange={setEditCloudflaredHostname}
+                  placeholder="xxx-xxx-xxx.trycloudflare.com"
+                  description="Run cloudflared tunnel in Colab to get this" />
+                </>
+              )}
 
-            <Divider />
-            <p className="text-sm font-medium">Environment Variables</p>
-            <Textarea labelPlacement="inside" label="Environment Variables"
-            value={editEnvVars}
-            onValueChange={setEditEnvVars}
-            placeholder="LD_LIBRARY_PATH=/usr/lib64-nvidia:$LD_LIBRARY_PATH&#10;PATH=/usr/local/cuda/bin:$PATH"
-            description="One variable per line: KEY=value. Lines starting with # are ignored."
-            minRows={3}
-            maxRows={8}
-            classNames={{ input: "font-mono text-sm" }} />
+              <Divider />
+              <p className="text-sm font-medium">Environment Variables</p>
+              <Textarea labelPlacement="inside" label="Environment Variables"
+              value={editEnvVars}
+              onValueChange={setEditEnvVars}
+              placeholder="LD_LIBRARY_PATH=/usr/lib64-nvidia:$LD_LIBRARY_PATH&#10;PATH=/usr/local/cuda/bin:$PATH"
+              description="One variable per line: KEY=value. Lines starting with # are ignored."
+              minRows={3}
+              maxRows={8}
+              classNames={{ input: "font-mono text-sm" }} />
 
-            {updateMutation.error && (
-              <p className="text-sm text-danger">
-                Error: {updateMutation.error instanceof Error ? updateMutation.error.message : String(updateMutation.error)}
-              </p>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={editModal.onClose}>
-              Cancel
-            </Button>
-            <Button
-              color="primary"
-              onPress={() => updateMutation.mutate()}
-              isLoading={updateMutation.isPending}
-            >
-              Save Changes
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+              {updateMutation.error && (
+                <p className="text-sm text-danger">
+                  Error: {updateMutation.error instanceof Error ? updateMutation.error.message : String(updateMutation.error)}
+                </p>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="flat" onPress={editModal.onClose}>
+                Cancel
+              </Button>
+              <Button
+                color="primary"
+                onPress={() => updateMutation.mutate()}
+                isLoading={updateMutation.isPending}
+              >
+                Save Changes
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+      )}
 
       {/* GPU Detail Modal */}
       <GpuDetailModal 
@@ -1355,29 +1590,31 @@ export function HostDetailPage() {
       />
       
       {/* Delete Confirmation Modal */}
-      <Modal isOpen={deleteModal.isOpen} onClose={deleteModal.onClose}>
-        <ModalContent>
-          <ModalHeader>Delete Host</ModalHeader>
-          <ModalBody>
-            <p>Are you sure you want to delete "{host.name}"? This action cannot be undone.</p>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={deleteModal.onClose}>
-              Cancel
-            </Button>
-            <Button 
-              color="danger" 
-              onPress={() => {
-                deleteMutation.mutate();
-                deleteModal.onClose();
-              }}
-              isLoading={deleteMutation.isPending}
-            >
-              Delete
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      {!isVast && (
+        <Modal isOpen={deleteModal.isOpen} onClose={deleteModal.onClose}>
+          <ModalContent>
+            <ModalHeader>Delete Host</ModalHeader>
+            <ModalBody>
+              <p>Are you sure you want to delete "{host.name}"? This action cannot be undone.</p>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="flat" onPress={deleteModal.onClose}>
+                Cancel
+              </Button>
+              <Button 
+                color="danger" 
+                onPress={() => {
+                  deleteMutation.mutate();
+                  deleteModal.onClose();
+                }}
+                isLoading={deleteMutation.isPending}
+              >
+                Delete
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+      )}
     </div>
   );
 }

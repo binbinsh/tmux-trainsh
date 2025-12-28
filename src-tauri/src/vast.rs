@@ -14,6 +14,10 @@ pub struct VastInstance {
   pub num_gpus: Option<i64>,
   pub gpu_util: Option<f64>,
   pub dph_total: Option<f64>,
+  pub storage_cost: Option<f64>,
+  pub inet_up_cost: Option<f64>,
+  pub inet_down_cost: Option<f64>,
+  pub disk_space: Option<f64>,
   pub ssh_host: Option<String>,
   pub ssh_port: Option<i64>,
   pub label: Option<String>,
@@ -28,6 +32,10 @@ impl Default for VastInstance {
       num_gpus: None,
       gpu_util: None,
       dph_total: None,
+      storage_cost: None,
+      inet_up_cost: None,
+      inet_down_cost: None,
+      disk_space: None,
       ssh_host: None,
       ssh_port: None,
       label: None,
@@ -258,6 +266,11 @@ impl VastClient {
       .await
   }
 
+  pub async fn attach_ssh_key(&self, instance_id: i64) -> Result<(), AppError> {
+    let urls = self.url_candidates(&format!("instances/{instance_id}/ssh"));
+    self.send_nojson(reqwest::Method::POST, &urls, None).await
+  }
+
   pub async fn label_instance(&self, instance_id: i64, label: String) -> Result<(), AppError> {
     let urls = self.url_candidates(&format!("instances/{instance_id}"));
     self
@@ -434,5 +447,3 @@ impl VastClient {
     Err(AppError::vast_api(format!("Unexpected create instance response: {v}")))
   }
 }
-
-

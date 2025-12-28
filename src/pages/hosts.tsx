@@ -1,7 +1,6 @@
 import {
   Card,
   CardBody,
-  CardHeader,
   Chip,
   Divider,
   Dropdown,
@@ -16,18 +15,12 @@ import {
   ModalHeader,
   Spinner,
   Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
   Tabs,
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect } from "react";
 import { copyText } from "../lib/clipboard";
@@ -119,6 +112,7 @@ function CodeBlock({ code }: { code: string }) {
 }
 
 export function HostListPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const addHostModal = useDisclosure();
   const labelModal = useDisclosure();
@@ -138,8 +132,6 @@ export function HostListPage() {
   const pricingSettingsQuery = usePricingSettings();
   const displayCurrency = pricingSettingsQuery.data?.display_currency ?? "USD";
   const exchangeRates = pricingSettingsQuery.data?.exchange_rates;
-  const formatUsd = (value: number, decimals = 3) =>
-    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
 
   // Mutations
   const addHostMutation = useMutation({
@@ -238,30 +230,25 @@ export function HostListPage() {
     addHostMutation.mutate(newHost as HostConfig);
   }
 
-  function importVastAsHost(inst: VastInstance) {
-    setNewHost({
-      name: inst.label ?? `vast-${inst.id}`,
-      type: "vast",
-      vast_instance_id: inst.id,
-      ssh_host: inst.ssh_host ?? "",
-      ssh_port: inst.ssh_port ?? 22,
-      ssh_user: "root",
-    });
-    setAddHostTab("custom");
-    addHostModal.onOpen();
-  }
-
-  function statusColor(s: string | null): "default" | "success" | "warning" | "danger" {
-    const v = (s ?? "").toLowerCase();
-    if (v.includes("running")) return "success";
-    if (v.includes("stopped") || v.includes("offline")) return "warning";
-    if (v.includes("error") || v.includes("failed")) return "danger";
-    return "default";
-  }
-
   const onlineHosts = hostsQuery.data?.filter((h) => h.status === "online").length ?? 0;
   const vastInstances = vastQuery.data ?? [];
-  const runningVast = vastInstances.filter((i) => i.actual_status?.includes("running")).length;
+  const runningVast = vastInstances.filter((i) => getVastBadgeStatus(i) === "running").length;
+  const [vastLastSeenAt, setVastLastSeenAt] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    if (vastInstances.length === 0) {
+      return;
+    }
+    setVastLastSeenAt((prev) => {
+      const next = { ...prev };
+      for (const inst of vastInstances) {
+        if (getVastBadgeStatus(inst) === "running") {
+          next[inst.id] = new Date().toISOString();
+        }
+      }
+      return next;
+    });
+  }, [vastInstances]);
 
   async function openVastConsole() {
     const cfg = await getConfig();
@@ -348,7 +335,7 @@ export function HostListPage() {
               </CardBody>
             </Card>
           ) : (hostsQuery.data ?? []).length === 0 ? (
-            <p className="text-foreground/60 text-sm py-4">No hosts saved yet. Add a host or import from Vast.ai.</p>
+            <p className="text-foreground/60 text-sm py-4">No hosts saved yet. Add a host to get started.</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <AnimatePresence>
@@ -391,96 +378,43 @@ export function HostListPage() {
           ) : vastInstances.length === 0 ? (
             <p className="text-foreground/60 text-sm py-2">No active instances</p>
           ) : (
-            <Table removeWrapper aria-label="Vast instances">
-              <TableHeader>
-                <TableColumn>ID</TableColumn>
-                <TableColumn>Status</TableColumn>
-                <TableColumn>GPU</TableColumn>
-                <TableColumn>{displayCurrency}/hr</TableColumn>
-                <TableColumn>SSH</TableColumn>
-                <TableColumn>Label</TableColumn>
-                <TableColumn>Actions</TableColumn>
-              </TableHeader>
-              <TableBody>
-                {vastInstances.map((inst) => (
-                  <TableRow key={inst.id}>
-                    <TableCell className="font-mono text-xs">{inst.id}</TableCell>
-                    <TableCell>
-                      <Chip size="sm" color={statusColor(inst.actual_status)} variant="flat">
-                        {inst.actual_status ?? "-"}
-                      </Chip>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {inst.num_gpus}x {inst.gpu_name ?? "-"}
-                    </TableCell>
-                    <TableCell className="text-sm font-mono">
-                      {inst.dph_total != null ? formatUsd(inst.dph_total) : "-"}
-                    </TableCell>
-                    <TableCell className="text-xs font-mono">
-                      {inst.ssh_host ? `${inst.ssh_host}:${inst.ssh_port}` : "-"}
-                    </TableCell>
-                    <TableCell className="text-sm">{inst.label ?? "-"}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          isLoading={vastStartMut.isPending && vastStartMut.variables === inst.id}
-                          onPress={() => vastStartMut.mutate(inst.id)}
-                        >
-                          Start
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          isLoading={vastStopMut.isPending && vastStopMut.variables === inst.id}
-                          onPress={() => vastStopMut.mutate(inst.id)}
-                        >
-                          Stop
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          onPress={() => importVastAsHost(inst)}
-                        >
-                          Import
-                        </Button>
-                        <Dropdown>
-                          <DropdownTrigger>
-                            <Button size="sm" variant="flat" isIconOnly>
-                              <IconEllipsis />
-                            </Button>
-                          </DropdownTrigger>
-                          <DropdownMenu>
-                            <DropdownItem
-                              key="label"
-                              onPress={() => {
-                                setLabelDraft({ id: inst.id, label: inst.label ?? "" });
-                                labelModal.onOpen();
-                              }}
-                            >
-                              Set Label
-                            </DropdownItem>
-                            <DropdownItem
-                              key="destroy"
-                              className="text-danger"
-                              color="danger"
-                              onPress={() => {
-                                if (confirm(`Destroy instance ${inst.id}? This will stop billing.`)) {
-                                  vastDestroyMut.mutate(inst.id);
-                                }
-                              }}
-                            >
-                              Destroy
-                            </DropdownItem>
-                          </DropdownMenu>
-                        </Dropdown>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <AnimatePresence>
+                {vastInstances.map((inst, index) => (
+                  <motion.div
+                    key={inst.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="h-full"
+                  >
+                    <VastInstanceCard
+                      inst={inst}
+                      displayCurrency={displayCurrency}
+                      exchangeRates={exchangeRates}
+                      lastSeenAt={vastLastSeenAt[inst.id] ?? null}
+                      onOpenDetails={() => {
+                        navigate({ to: "/hosts/vast/$id", params: { id: String(inst.id) } });
+                      }}
+                      onStart={() => vastStartMut.mutate(inst.id)}
+                      onStop={() => vastStopMut.mutate(inst.id)}
+                      onDestroy={() => {
+                        if (confirm(`Destroy instance ${inst.id}? This will stop billing.`)) {
+                          vastDestroyMut.mutate(inst.id);
+                        }
+                      }}
+                      onLabel={() => {
+                        setLabelDraft({ id: inst.id, label: inst.label ?? "" });
+                        labelModal.onOpen();
+                      }}
+                      isStarting={vastStartMut.isPending && vastStartMut.variables === inst.id}
+                      isStopping={vastStopMut.isPending && vastStopMut.variables === inst.id}
+                    />
+                  </motion.div>
                 ))}
-              </TableBody>
-            </Table>
+              </AnimatePresence>
+            </div>
           )}
         </div>
       </div>
@@ -574,7 +508,46 @@ for _ in range(30):
             print(f"\\n✅ Hostname: {match.group(1)}")
             print("Copy the hostname above to Doppio!")
             break
-    time.sleep(0.5)`} />
+    time.sleep(0.5)
+
+# 4. Monitor GPU usage (required)
+import time
+import subprocess
+import torch
+
+device = torch.device("cuda:0")
+torch.cuda.set_per_process_memory_fraction(0.05, device=device)
+x = torch.randn(256, 256, device=device)
+
+try:
+    while True:
+        with torch.no_grad():
+            y = (x @ x.T).sum()
+            torch.cuda.synchronize()
+
+        allocated = round(torch.cuda.memory_allocated(device) / 1024 / 1024, 2)
+        reserved = round(torch.cuda.memory_reserved(device) / 1024 / 1024, 2)
+
+        try:
+            smi = subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu,memory.used",
+                    "--format=csv,noheader,nounits",
+                ],
+                text=True,
+            ).strip()
+        except Exception:
+            smi = "nvidia-smi unavailable"
+
+        print(
+            f"{time.strftime('%F %T')} | alloc(MB)={allocated} reserved(MB)={reserved} | smi={smi}"
+        )
+
+        torch.cuda.empty_cache()
+        time.sleep(60)
+except KeyboardInterrupt:
+    pass`} />
                           
                           <p className="text-xs text-foreground/60">
                             After running, copy the hostname (e.g., <code className="bg-content3 px-1 rounded">xxxx-xxxx.trycloudflare.com</code>) and paste it below.
@@ -655,6 +628,7 @@ for _ in range(30):
           )}
         </ModalContent>
       </Modal>
+
     </div>
   );
 }
@@ -760,6 +734,17 @@ function calculateColabHourlyUsd(
   return total;
 }
 
+type VastBadgeStatus = "running" | "stopped" | "error" | "connecting" | "online" | "offline";
+
+function getVastBadgeStatus(inst: VastInstance): VastBadgeStatus {
+  const v = (inst.actual_status ?? "").toLowerCase();
+  if (v.includes("running") || v.includes("active") || v.includes("online")) return "running";
+  if (v.includes("stopped") || v.includes("exited")) return "stopped";
+  if (v.includes("error") || v.includes("failed")) return "error";
+  if (v.includes("offline")) return "offline";
+  return "connecting";
+}
+
 // Host Card Component
 function HostCard({
   host,
@@ -778,6 +763,7 @@ function HostCard({
 }) {
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
   const navigate = useNavigate();
+  const [copiedSsh, setCopiedSsh] = useState(false);
   
   const handleConfirmDelete = () => {
     onDelete();
@@ -793,8 +779,9 @@ function HostCard({
     host.type === "colab" ? calculateColabHourlyUsd(gpuCounts, colabPricing ?? null) : null;
   const hasColabGpuInfo = host.type === "colab" && gpuCounts.length > 0;
   const hasColabPricing = !!colabPricing;
-  const formatUsd = (value: number, decimals = 4) =>
+  const formatUsd = (value: number, decimals = 3) =>
     formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
+  const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : null;
 
   return (
     <>
@@ -847,10 +834,24 @@ function HostCard({
           </div>
 
           {/* SSH address */}
-          {host.ssh && (
-            <p className="text-xs font-mono text-foreground/50 whitespace-nowrap overflow-hidden text-ellipsis">
-              {host.ssh.user}@{host.ssh.host}:{host.ssh.port}
-            </p>
+          {sshAddress && (
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-mono text-foreground/50 whitespace-nowrap overflow-hidden text-ellipsis select-text">
+                {sshAddress}
+              </p>
+              <Button
+                isIconOnly
+                size="sm"
+                variant="light"
+                onPress={async () => {
+                  await copyText(sshAddress);
+                  setCopiedSsh(true);
+                  setTimeout(() => setCopiedSsh(false), 1200);
+                }}
+              >
+                {copiedSsh ? <IconCheck /> : <IconCopy />}
+              </Button>
+            </div>
           )}
 
           {/* GPU + pricing pills */}
@@ -921,5 +922,157 @@ function HostCard({
         </ModalContent>
       </Modal>
     </>
+  );
+}
+
+function VastInstanceCard({
+  inst,
+  displayCurrency,
+  exchangeRates,
+  lastSeenAt,
+  onOpenDetails,
+  onStart,
+  onStop,
+  onLabel,
+  onDestroy,
+  isStarting,
+  isStopping,
+}: {
+  inst: VastInstance;
+  displayCurrency: Currency;
+  exchangeRates?: ExchangeRates;
+  lastSeenAt: string | null;
+  onOpenDetails: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  onLabel: () => void;
+  onDestroy: () => void;
+  isStarting: boolean;
+  isStopping: boolean;
+}) {
+  const [copiedSsh, setCopiedSsh] = useState(false);
+  const name = inst.label?.trim() || `vast #${inst.id}`;
+  const badgeStatus = getVastBadgeStatus(inst);
+  const formatUsd = (value: number, decimals = 3) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
+  const storagePerHour = inst.storage_cost != null && inst.disk_space != null
+    ? (inst.storage_cost / 720) * inst.disk_space
+    : null;
+  const uploadPerTb = inst.inet_up_cost != null ? inst.inet_up_cost * 1024 : null;
+  const downloadPerTb = inst.inet_down_cost != null ? inst.inet_down_cost * 1024 : null;
+  const gpuLabel = inst.gpu_name
+    ? `${inst.num_gpus ?? 1}x ${getGpuShortName(inst.gpu_name)}`
+    : null;
+  const sshAddress = inst.ssh_host ? `root@${inst.ssh_host}:${inst.ssh_port ?? "-"}` : null;
+
+  return (
+    <Card
+      isPressable
+      disableAnimation
+      disableRipple
+      onPress={(event) => {
+        if (event.target.closest("[data-vast-card-action]")) {
+          return;
+        }
+        onOpenDetails();
+      }}
+      className="h-full w-full border border-divider hover:border-primary/50 transition-colors data-[pressed=true]:scale-100"
+    >
+      <CardBody className="p-3 flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2 min-w-0 flex-1">
+            <AppIcon name="vast" className="w-6 h-6 shrink-0 mt-0.5" alt="Vast.ai icon" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold break-words">{name}</h3>
+                <StatusBadge status={badgeStatus} size="sm" />
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0" data-vast-card-action>
+            <Dropdown>
+              <DropdownTrigger>
+                <Button isIconOnly size="sm" variant="light">
+                  <IconEllipsis />
+                </Button>
+              </DropdownTrigger>
+              <DropdownMenu>
+                <DropdownItem key="start" onPress={onStart} isDisabled={isStarting}>
+                  Start
+                </DropdownItem>
+                <DropdownItem key="stop" onPress={onStop} isDisabled={isStopping}>
+                  Stop
+                </DropdownItem>
+                <DropdownItem key="label" onPress={onLabel}>
+                  Set Label
+                </DropdownItem>
+                <DropdownItem
+                  key="destroy"
+                  className="text-danger"
+                  color="danger"
+                  onPress={onDestroy}
+                >
+                  Destroy
+                </DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
+          </div>
+        </div>
+
+        {sshAddress && (
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-mono text-foreground/50 whitespace-nowrap overflow-hidden text-ellipsis select-text">
+              {sshAddress}
+            </p>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="light"
+              onPress={async () => {
+                await copyText(sshAddress);
+                setCopiedSsh(true);
+                setTimeout(() => setCopiedSsh(false), 1200);
+              }}
+            >
+              {copiedSsh ? <IconCheck /> : <IconCopy />}
+            </Button>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {gpuLabel && (
+            <Chip size="sm" variant="flat" color="default">
+              {gpuLabel}
+            </Chip>
+          )}
+          {inst.dph_total != null && (
+            <Chip size="sm" variant="flat" color="warning">
+              GPU {formatUsd(inst.dph_total) + "/hr"}
+            </Chip>
+          )}
+          {storagePerHour != null && (
+            <Chip size="sm" variant="flat" color="default">
+              SSD {formatUsd(storagePerHour, 3)}/hr
+            </Chip>
+          )}
+          {uploadPerTb != null && (
+            <Chip size="sm" variant="flat" color="default">
+              ↑ {formatUsd(uploadPerTb, 3)}/TB
+            </Chip>
+          )}
+          {downloadPerTb != null && (
+            <Chip size="sm" variant="flat" color="default">
+              ↓ {formatUsd(downloadPerTb, 3)}/TB
+            </Chip>
+          )}
+        </div>
+
+        <div className="flex-1" />
+
+        <p className="text-xs text-foreground/40">
+          {lastSeenAt ? `Last seen: ${new Date(lastSeenAt).toLocaleDateString()}` : "Last seen: -"}
+        </p>
+      </CardBody>
+    </Card>
   );
 }

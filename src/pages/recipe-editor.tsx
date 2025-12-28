@@ -32,6 +32,7 @@ import {
   useRecipe,
   useSaveRecipe,
   useStorages,
+  useVastInstances,
   useValidateRecipe,
 } from "../lib/tauri-api";
 import { useTerminalOptional } from "../contexts/TerminalContext";
@@ -1124,6 +1125,8 @@ function StepBlock({
   const opDef = getOperationDef(opType);
   const category = OPERATION_CATEGORIES[opDef.category];
   const opData = (step as Record<string, unknown>)[opType] as Record<string, unknown> | undefined;
+  const vastQuery = useVastInstances();
+  const vastInstances = (vastQuery.data ?? []).slice().sort((a, b) => a.id - b.id);
   
   const updateOp = (field: string, value: unknown) => {
     onChange({
@@ -1509,16 +1512,36 @@ function StepBlock({
         return (
           <div className="flex items-center gap-2">
             <span className="text-sm text-black/60 w-24">Instance ID</span>
-            <Input labelPlacement="inside" type="number"
-            placeholder="12345"
-            value={String(opData.instance_id ?? 0)}
-            onValueChange={(v) => updateOp("instance_id", parseInt(v) || 0)}
-            size="sm"
-            variant="bordered"
-            classNames={{
-              inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[150px]",
-              input: "text-black placeholder:text-black/40",
-            }} />
+            <Select
+              labelPlacement="inside"
+              selectedKeys={opData.instance_id ? [String(opData.instance_id)] : []}
+              onSelectionChange={(keys) => {
+                const id = Number(Array.from(keys)[0]);
+                if (Number.isFinite(id)) {
+                  updateOp("instance_id", id);
+                }
+              }}
+              size="sm"
+              variant="bordered"
+              className="max-w-[240px]"
+              placeholder={vastInstances.length > 0 ? "Select instance..." : "No instances found"}
+              isDisabled={vastInstances.length === 0}
+            >
+              {vastInstances.map((inst) => (
+                <SelectItem key={String(inst.id)} textValue={`#${inst.id}${inst.label ? ` ${inst.label}` : ""}`}>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">
+                      #{inst.id}{inst.label ? ` - ${inst.label}` : ""}
+                    </span>
+                    <span className="text-xs text-foreground/60">
+                      {(inst.gpu_name ?? "Unknown GPU")}
+                      {inst.num_gpus ? ` | ${inst.num_gpus}x` : ""}
+                      {inst.actual_status ? ` | ${inst.actual_status}` : ""}
+                    </span>
+                  </div>
+                </SelectItem>
+              ))}
+            </Select>
           </div>
         );
         

@@ -4,7 +4,7 @@ import { RootLayout } from "./components/layout/RootLayout";
 // Pages
 import { DashboardPage } from "./pages/dashboard";
 import { HostListPage } from "./pages/hosts";
-import { HostDetailPage } from "./pages/host-detail";
+import { SavedHostDetailPage, VastHostDetailPage } from "./pages/host-detail";
 import { SettingsPage } from "./pages/settings";
 import { ColabPage } from "./pages/colab";
 import { JobPage } from "./pages/job";
@@ -43,7 +43,13 @@ const hostsRoute = createRoute({
 const hostDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/hosts/$id",
-  component: HostDetailPage,
+  component: SavedHostDetailPage,
+});
+
+const vastHostDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/hosts/vast/$id",
+  component: VastHostDetailPage,
 });
 
 const hostNewRoute = createRoute({
@@ -136,6 +142,7 @@ const routeTree = rootRoute.addChildren([
   hostsRoute,
   hostNewRoute,
   hostDetailRoute,
+  vastHostDetailRoute,
   // Recipe routes
   recipesRoute,
   recipeExecutionRoute,  // Must be before recipeEditorRoute to match /recipes/executions/$id first

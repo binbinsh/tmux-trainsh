@@ -268,6 +268,10 @@ export type VastInstance = {
   num_gpus: number | null;
   gpu_util: number | null;
   dph_total: number | null;
+  storage_cost: number | null;
+  inet_up_cost: number | null;
+  inet_down_cost: number | null;
+  disk_space: number | null;
   ssh_host: string | null;
   ssh_port: number | null;
   label: string | null;

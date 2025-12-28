@@ -34,6 +34,7 @@ import type {
   StorageTestResult,
   StorageUpdateInput,
   StorageUsage,
+  SystemInfo,
   SyncProgress,
   TrainshConfig,
   TransferCreateInput,
@@ -115,6 +116,14 @@ export async function listLocalFiles(path: string): Promise<FileEntry[]> {
 
 export async function listHostFiles(hostId: string, path: string): Promise<FileEntry[]> {
   return await safeInvoke<FileEntry[]>("list_host_files", { hostId, path });
+}
+
+export async function createLocalDir(path: string): Promise<void> {
+  await safeInvoke("create_local_dir", { path });
+}
+
+export async function createHostDir(hostId: string, path: string): Promise<void> {
+  await safeInvoke("create_host_dir", { hostId, path });
 }
 
 // ============================================================
@@ -250,6 +259,18 @@ export const sessionApi = {
 
 export async function vastListInstances(): Promise<VastInstance[]> {
   return await invoke("vast_list_instances");
+}
+
+export async function vastAttachSshKey(instanceId: number): Promise<void> {
+  await safeInvoke("vast_attach_ssh_key", { instanceId });
+}
+
+export async function vastTestConnection(instanceId: number): Promise<{ success: boolean; message: string }> {
+  return await safeInvoke("vast_test_connection", { instanceId });
+}
+
+export async function vastFetchSystemInfo(instanceId: number): Promise<SystemInfo> {
+  return await safeInvoke<SystemInfo>("vast_fetch_system_info", { instanceId });
 }
 
 export async function vastStartInstance(instanceId: number): Promise<VastInstance> {
