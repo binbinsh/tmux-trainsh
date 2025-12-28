@@ -28,14 +28,12 @@ pub enum StorageBackend {
     /// SSH/SFTP remote (references an existing Host)
     SshRemote { host_id: String, root_path: String },
 
-    /// Google Drive via OAuth or Service Account
+    /// Google Drive via OAuth
     GoogleDrive {
         client_id: Option<String>,
         client_secret: Option<String>,
         token: Option<String>,
         root_folder_id: Option<String>,
-        /// Service Account JSON (alternative to OAuth)
-        service_account_json: Option<String>,
     },
 
     /// Cloudflare R2 (S3-compatible)
@@ -335,7 +333,7 @@ fn build_sftp_config(ssh: &SshSpec) -> serde_json::Value {
 /// Build rclone remote config from StorageBackend (for non-SSH backends)
 fn build_rclone_config(backend: &StorageBackend) -> Result<serde_json::Value, AppError> {
     match backend {
-        StorageBackend::Local { root_path } => {
+        StorageBackend::Local { root_path: _ } => {
             Ok(serde_json::json!({
                 "type": "local",
             }))
@@ -347,29 +345,22 @@ fn build_rclone_config(backend: &StorageBackend) -> Result<serde_json::Value, Ap
                 host_id
             )))
         }
-        StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id, service_account_json } => {
+        StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id } => {
             let mut config = serde_json::json!({
                 "type": "drive",
                 "scope": "drive",
             });
-            
-            // Service Account takes priority over OAuth
-            if let Some(sa_json) = service_account_json {
-                config["service_account_credentials"] = serde_json::json!(sa_json);
-                eprintln!("GDrive config: using Service Account");
-            } else {
-                // OAuth mode: include client_id and client_secret for token refresh
-                if let Some(id) = client_id {
-                    config["client_id"] = serde_json::json!(id);
-                }
-                if let Some(secret) = client_secret {
-                    config["client_secret"] = serde_json::json!(secret);
-                }
-                if let Some(token) = token {
-                    config["token"] = serde_json::json!(token);
-                }
-                eprintln!("GDrive config: using OAuth, has_token={}", token.is_some());
+
+            if let Some(id) = client_id {
+                config["client_id"] = serde_json::json!(id);
             }
+            if let Some(secret) = client_secret {
+                config["client_secret"] = serde_json::json!(secret);
+            }
+            if let Some(token) = token {
+                config["token"] = serde_json::json!(token);
+            }
+            eprintln!("GDrive config: using OAuth, has_token={}", token.is_some());
             
             if let Some(folder_id) = root_folder_id {
                 config["root_folder_id"] = serde_json::json!(folder_id);
@@ -490,13 +481,6 @@ fn create_temp_remote(name_prefix: &str, config: &serde_json::Value) -> Result<S
             let _ = librclone::rpc("config/update", &serde_json::json!({
                 "name": remote_name,
                 "parameters": { "token": token },
-                "opt": { "nonInteractive": true }
-            }).to_string());
-        }
-        if let Some(service_account_credentials) = config.get("service_account_credentials").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "service_account_credentials": service_account_credentials },
                 "opt": { "nonInteractive": true }
             }).to_string());
         }
@@ -856,13 +840,9 @@ pub async fn storage_test(app: AppHandle, id: String) -> Result<StorageTestResul
     let store = app.state::<Arc<StorageStore>>();
     let mut storage = store.get(&id).await.ok_or_else(|| AppError::not_found(format!("Storage not found: {}", id)))?;
     
-    // For Google Drive OAuth mode (not Service Account), refresh token before use
-    if let StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id, service_account_json } = &storage.backend {
-        // Skip token refresh if using Service Account
-        if service_account_json.is_some() {
-            eprintln!("Google Drive: using Service Account, no token refresh needed");
-        } else if let (Some(cid), Some(csec), Some(tok)) = (client_id.as_ref(), client_secret.as_ref(), token.as_ref()) {
-            // OAuth mode: refresh token
+    // For Google Drive, refresh token before use
+    if let StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id } = &storage.backend {
+        if let (Some(cid), Some(csec), Some(tok)) = (client_id.as_ref(), client_secret.as_ref(), token.as_ref()) {
             eprintln!("Google Drive: refreshing token before test...");
             match crate::google_drive::refresh_token(cid, csec, tok).await {
                 Ok(new_token) => {
@@ -875,7 +855,6 @@ pub async fn storage_test(app: AppHandle, id: String) -> Result<StorageTestResul
                             client_secret: Some(csec.clone()),
                             token: Some(new_token),
                             root_folder_id: root_folder_id.clone(),
-                            service_account_json: None,
                         }),
                     };
                     if let Ok(updated) = store.update(&id, update).await {
@@ -894,7 +873,7 @@ pub async fn storage_test(app: AppHandle, id: String) -> Result<StorageTestResul
         } else {
             return Ok(StorageTestResult {
                 success: false,
-                message: "Google Drive not properly configured. Please set up OAuth or Service Account.".to_string(),
+                message: "Google Drive not properly configured. Please set up OAuth.".to_string(),
                 latency_ms: None,
             });
         }
@@ -915,12 +894,8 @@ pub async fn storage_list_files(
     })?;
     
     // For Google Drive OAuth mode, refresh token if expired
-    if let StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id, service_account_json } = &storage.backend {
-        // Skip token refresh if using Service Account
-        if service_account_json.is_some() {
-            eprintln!("Google Drive: using Service Account");
-        } else if let (Some(cid), Some(csec), Some(tok)) = (client_id.as_ref(), client_secret.as_ref(), token.as_ref()) {
-            // OAuth mode: refresh if expired
+    if let StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id } = &storage.backend {
+        if let (Some(cid), Some(csec), Some(tok)) = (client_id.as_ref(), client_secret.as_ref(), token.as_ref()) {
             if crate::google_drive::is_token_expired(tok) {
                 eprintln!("Google Drive token expired, refreshing...");
                 match crate::google_drive::refresh_token(cid, csec, tok).await {
@@ -934,7 +909,6 @@ pub async fn storage_list_files(
                                 client_secret: Some(csec.clone()),
                                 token: Some(new_token),
                                 root_folder_id: root_folder_id.clone(),
-                                service_account_json: None,
                             }),
                         };
                         if let Ok(updated) = store.update(&storage_id, update).await {
@@ -951,7 +925,7 @@ pub async fn storage_list_files(
             }
         } else {
             return Err(AppError::command(
-                "Google Drive not properly configured. Please set up OAuth or Service Account.".to_string()
+                "Google Drive not properly configured. Please set up OAuth.".to_string()
             ));
         }
     }
@@ -1452,4 +1426,3 @@ pub async fn storage_get_r2_usages(
     
     Ok(usages)
 }
-

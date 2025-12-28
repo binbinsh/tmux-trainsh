@@ -19,23 +19,25 @@ import {
   Switch,
   Tab,
   Tabs,
-  Textarea,
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import {
   storageApi,
   pricingApi,
+  usePricingSettings,
   useStorages,
   useHosts,
 } from "../lib/tauri-api";
 import type { Host, Storage, StorageBackend, StorageCreateInput, StorageUpdateInput, StorageUsage } from "../lib/types";
 import { calculateR2BucketCost } from "../components/r2-pricing";
 import { GoogleDriveWizard } from "../components/GoogleDriveWizard";
+import { formatPriceWithRates } from "../lib/currency";
+import { AppIcon } from "../components/AppIcon";
 
 // ============================================================
 // Icons
@@ -53,14 +55,6 @@ function IconRefresh() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-    </svg>
-  );
-}
-
-function IconFolder() {
-  return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
     </svg>
   );
 }
@@ -105,7 +99,7 @@ function getBackendTypeName(backend: StorageBackend): string {
   }
 }
 
-function getBackendIcon(backend: StorageBackend): string {
+function getBackendFallbackEmoji(backend: StorageBackend): string {
   switch (backend.type) {
     case "local": return "💻";
     case "ssh_remote": return "🖥️";
@@ -114,6 +108,21 @@ function getBackendIcon(backend: StorageBackend): string {
     case "google_cloud_storage": return "🌐";
     case "smb": return "🗄️";
     default: return "📦";
+  }
+}
+
+function getBackendIconNode(backend: StorageBackend, customIcon?: string | null): ReactNode {
+  switch (backend.type) {
+    case "ssh_remote":
+      return <AppIcon name="ssh" className="w-6 h-6" alt="SSH" />;
+    case "google_drive":
+      return <AppIcon name="googledrive" className="w-6 h-6" alt="Google Drive" />;
+    case "cloudflare_r2":
+      return <AppIcon name="cloudflare" className="w-6 h-6" alt="Cloudflare R2" />;
+    case "smb":
+      return <AppIcon name="smb" className="w-6 h-6" alt="SMB" />;
+    default:
+      return <span className="text-2xl">{customIcon || getBackendFallbackEmoji(backend)}</span>;
   }
 }
 
@@ -152,6 +161,12 @@ function StorageCard({
   usage?: StorageUsage | null;
   usageLoading?: boolean;
 }) {
+  const navigate = useNavigate();
+  const pricingQuery = usePricingSettings();
+  const displayCurrency = pricingQuery.data?.display_currency ?? "USD";
+  const exchangeRates = pricingQuery.data?.exchange_rates;
+  const formatUsd = (value: number, decimals = 2) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -161,6 +176,10 @@ function StorageCard({
   const isR2 = storage.backend.type === "cloudflare_r2";
   const isSmbOrSsh = storage.backend.type === "smb" || storage.backend.type === "ssh_remote";
   const r2MonthlyCost = usage && isR2 ? calculateR2BucketCost(usage.used_gb) : null;
+
+  const openBrowse = () => {
+    navigate({ to: "/storage/$id", params: { id: storage.id } });
+  };
 
   async function handleTest() {
     setTesting(true);
@@ -201,39 +220,53 @@ function StorageCard({
   }
 
   return (
-    <Card className="h-full border border-divider hover:border-primary/50 transition-colors">
+    <Card
+      as="div"
+      isPressable
+      disableAnimation
+      disableRipple
+      onPress={(event) => {
+        if (event.target.closest("[data-storage-card-action]")) {
+          return;
+        }
+        openBrowse();
+      }}
+      className="h-full border border-divider hover:border-primary/50 transition-colors data-[pressed=true]:scale-100"
+    >
       <CardBody className="flex flex-col gap-3">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">{storage.icon || getBackendIcon(storage.backend)}</span>
+            {getBackendIconNode(storage.backend, storage.icon)}
             <div>
               <h3 className="font-semibold">{storage.name}</h3>
               <p className="text-xs text-foreground/60">{getBackendTypeName(storage.backend)}</p>
             </div>
           </div>
-          <Dropdown>
-            <DropdownTrigger>
-              <Button isIconOnly size="sm" variant="light">
-                <IconEllipsis />
-              </Button>
-            </DropdownTrigger>
-            <DropdownMenu>
-              <DropdownItem key="test" onPress={handleTest}>
-                Test Connection
-              </DropdownItem>
-              <DropdownItem key="edit" onPress={onEdit}>
-                Edit
-              </DropdownItem>
-              <DropdownItem
-                key="delete"
-                className="text-danger"
-                color="danger"
-                onPress={() => setShowDeleteConfirm(true)}
-              >
-                Delete
-              </DropdownItem>
-            </DropdownMenu>
-          </Dropdown>
+          <div data-storage-card-action>
+            <Dropdown>
+              <DropdownTrigger>
+                <Button isIconOnly size="sm" variant="light">
+                  <IconEllipsis />
+                </Button>
+              </DropdownTrigger>
+              <DropdownMenu>
+                <DropdownItem key="test" onPress={handleTest} isDisabled={testing}>
+                  Test Connection
+                </DropdownItem>
+                <DropdownItem key="edit" onPress={onEdit}>
+                  Edit
+                </DropdownItem>
+                <DropdownItem
+                  key="delete"
+                  className="text-danger"
+                  color="danger"
+                  onPress={() => setShowDeleteConfirm(true)}
+                >
+                  Delete
+                </DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
+          </div>
         </div>
 
         <p className="text-sm text-foreground/70 truncate" title={getBackendDescription(storage.backend, hosts)}>
@@ -258,7 +291,7 @@ function StorageCard({
                       {usage.used_gb.toFixed(2)} GB
                     </Chip>
                     <Chip size="sm" variant="flat" color="warning">
-                      ${r2MonthlyCost?.toFixed(2) ?? "0.00"}/mo
+                      {formatUsd(r2MonthlyCost ?? 0, 2)}/mo
                     </Chip>
                   </>
                 )}
@@ -297,29 +330,8 @@ function StorageCard({
           </div>
         )}
 
-        {/* Spacer to push buttons and timestamp to bottom */}
+        {/* Spacer to push timestamp to bottom */}
         <div className="flex-1" />
-
-        <div className="flex gap-2">
-          <Button
-            as={Link}
-            to={`/storage/${storage.id}`}
-            size="sm"
-            color="primary"
-            variant="flat"
-            startContent={<IconFolder />}
-          >
-            Browse
-          </Button>
-          <Button
-            size="sm"
-            variant="flat"
-            isLoading={testing}
-            onPress={handleTest}
-          >
-            Test
-          </Button>
-        </div>
 
         <p className="text-xs text-foreground/40">
           {storage.last_accessed_at
@@ -410,8 +422,6 @@ function AddStorageModal({
   // Google Drive
   const [gdClientId, setGdClientId] = useState("");
   const [gdClientSecret, setGdClientSecret] = useState("");
-  const [gdServiceAccountJson, setGdServiceAccountJson] = useState("");
-  const [gdRootFolderId, setGdRootFolderId] = useState("");
 
   // SMB
   const [smbHost, setSmbHost] = useState("");
@@ -444,8 +454,6 @@ function AddStorageModal({
     setR2Bucket("");
     setGdClientId("");
     setGdClientSecret("");
-    setGdServiceAccountJson("");
-    setGdRootFolderId("");
     setSmbHost("");
     setSmbShare("");
     setSmbUser("");
@@ -480,25 +488,12 @@ function AddStorageModal({
           bucket: r2Bucket,
         };
       case "google_drive":
-        // Service Account takes priority
-        if (gdServiceAccountJson.trim()) {
-          return {
-            type: "google_drive",
-            client_id: null,
-            client_secret: null,
-            token: null,
-            root_folder_id: gdRootFolderId || null,
-            service_account_json: gdServiceAccountJson.trim(),
-          };
-        }
-        // OAuth mode (handled by wizard, this is just placeholder)
         return {
           type: "google_drive",
           client_id: gdClientId || null,
           client_secret: gdClientSecret || null,
           token: null,
           root_folder_id: null,
-          service_account_json: null,
         };
       case "smb":
         if (!smbHost) return null;
@@ -552,13 +547,11 @@ function AddStorageModal({
             <ModalHeader>Add Storage</ModalHeader>
             <ModalBody>
               <div className="space-y-4">
-                <Input
-                  label="Name"
-                  placeholder="My Storage"
-                  value={name}
-                  onValueChange={setName}
-                  isRequired
-                />
+                <Input labelPlacement="inside" label="Name"
+                placeholder="My Storage"
+                value={name}
+                onValueChange={setName}
+                isRequired />
 
                 <IconPicker value={icon} onChange={setIcon} />
 
@@ -567,168 +560,141 @@ function AddStorageModal({
                 <Tabs selectedKey={storageType} onSelectionChange={(k) => setStorageType(k as string)}>
                   <Tab key="local" title="💻 Local">
                     <div className="pt-4 space-y-4">
-                      <Input
-                        label="Root Path"
-                        placeholder="/Users/me/Projects"
-                        value={localPath}
-                        onValueChange={setLocalPath}
-                        isRequired
-                        description="Absolute path to local directory"
-                      />
+                      <Input labelPlacement="inside" label="Root Path"
+                      placeholder="/Users/me/Projects"
+                      value={localPath}
+                      onValueChange={setLocalPath}
+                      isRequired
+                      description="Absolute path to local directory" />
                     </div>
                   </Tab>
 
-                  <Tab key="ssh_remote" title="🖥️ SSH Remote">
+                  <Tab
+                    key="ssh_remote"
+                    title={(
+                      <span className="flex items-center gap-2">
+                        <AppIcon name="ssh" className="w-4 h-4" alt="SSH" />
+                        SSH Remote
+                      </span>
+                    )}
+                  >
                     <div className="pt-4 space-y-4">
-                      <Select
-                        label="Host"
-                        placeholder="Select a host"
-                        selectedKeys={sshHostId ? [sshHostId] : []}
-                        onSelectionChange={(keys) => {
-                          const id = Array.from(keys)[0] as string;
-                          setSshHostId(id);
-                        }}
-                        isRequired
-                      >
-                        {(hosts.data ?? []).map((host) => (
-                          <SelectItem key={host.id}>
-                            {host.name}
-                          </SelectItem>
-                        ))}
-                      </Select>
-                      <Input
-                        label="Root Path"
-                        placeholder="/root"
-                        value={sshRootPath}
-                        onValueChange={setSshRootPath}
-                        description="Path on remote host"
-                      />
+                      <Select labelPlacement="inside" label="Host"
+                      placeholder="Select a host"
+                      selectedKeys={sshHostId ? [sshHostId] : []}
+                      onSelectionChange={(keys) => {
+                        const id = Array.from(keys)[0] as string;
+                        setSshHostId(id);
+                      }}
+                      isRequired>{(hosts.data ?? []).map((host) => (
+                        <SelectItem key={host.id}>
+                          {host.name}
+                        </SelectItem>
+                      ))}</Select>
+                      <Input labelPlacement="inside" label="Root Path"
+                      placeholder="/root"
+                      value={sshRootPath}
+                      onValueChange={setSshRootPath}
+                      description="Path on remote host" />
                     </div>
                   </Tab>
 
-                  <Tab key="cloudflare_r2" title="☁️ Cloudflare R2">
+                  <Tab
+                    key="cloudflare_r2"
+                    title={(
+                      <span className="flex items-center gap-2">
+                        <AppIcon name="cloudflare" className="w-4 h-4" alt="Cloudflare R2" />
+                        Cloudflare R2
+                      </span>
+                    )}
+                  >
                     <div className="pt-4 space-y-4">
-                      <Input
-                        label="Account ID"
-                        placeholder="Your Cloudflare account ID"
-                        value={r2AccountId}
-                        onValueChange={setR2AccountId}
-                        isRequired
-                      />
-                      <Input
-                        label="Bucket"
-                        placeholder="my-bucket"
-                        value={r2Bucket}
-                        onValueChange={setR2Bucket}
-                        isRequired
-                      />
-                      <Input
-                        label="Access Key ID"
-                        value={r2AccessKeyId}
-                        onValueChange={setR2AccessKeyId}
-                        isRequired
-                      />
-                      <Input
-                        label="Secret Access Key"
-                        type="password"
-                        value={r2SecretAccessKey}
-                        onValueChange={setR2SecretAccessKey}
-                        isRequired
-                      />
+                      <Input labelPlacement="inside" label="Account ID"
+                      placeholder="Your Cloudflare account ID"
+                      value={r2AccountId}
+                      onValueChange={setR2AccountId}
+                      isRequired />
+                      <Input labelPlacement="inside" label="Bucket"
+                      placeholder="my-bucket"
+                      value={r2Bucket}
+                      onValueChange={setR2Bucket}
+                      isRequired />
+                      <Input labelPlacement="inside" label="Access Key ID"
+                      value={r2AccessKeyId}
+                      onValueChange={setR2AccessKeyId}
+                      isRequired />
+                      <Input labelPlacement="inside" label="Secret Access Key"
+                      type="password"
+                      value={r2SecretAccessKey}
+                      onValueChange={setR2SecretAccessKey}
+                      isRequired />
                     </div>
                   </Tab>
 
-                  <Tab key="google_drive" title="📁 Google Drive">
+                  <Tab
+                    key="google_drive"
+                    title={(
+                      <span className="flex items-center gap-2">
+                        <AppIcon name="googledrive" className="w-4 h-4" alt="Google Drive" />
+                        Google Drive
+                      </span>
+                    )}
+                  >
                     <div className="pt-4 space-y-4">
-                      <Tabs size="sm" variant="underlined">
-                        <Tab key="oauth" title="OAuth (Personal)">
-                          <div className="pt-4 space-y-4">
-                            <p className="text-sm text-foreground/60">
-                              For personal Google accounts. Requires browser authorization.
-                            </p>
-                            <Card className="bg-primary/5 border border-primary/20">
-                              <CardBody className="text-center py-6">
-                                <span className="text-4xl mb-3 block">🔐</span>
-                                <p className="font-medium mb-2">OAuth Setup</p>
-                                <p className="text-sm text-foreground/60 mb-4">
-                                  Follow the wizard to authorize access.
-                                </p>
-                                <Button
-                                  color="primary"
-                                  onPress={() => {
-                                    onClose();
-                                    setShowGDriveWizard(true);
-                                  }}
-                                >
-                                  Open Setup Wizard
-                                </Button>
-                              </CardBody>
-                            </Card>
-                          </div>
-                        </Tab>
-                        <Tab key="service_account" title="Service Account (Recommended)">
-                          <div className="pt-4 space-y-4">
-                            <p className="text-sm text-foreground/60">
-                              For automated access. No expiration, no refresh needed. 
-                              <a href="https://rclone.org/drive/#service-account-support" target="_blank" className="text-primary ml-1">Learn more</a>
-                            </p>
-                            <Input
-                              label="Storage Name"
-                              placeholder="My Google Drive"
-                              value={name}
-                              onValueChange={setName}
-                              isRequired
-                            />
-                            <Textarea
-                              label="Service Account JSON"
-                              placeholder='Paste your service account JSON here...'
-                              value={gdServiceAccountJson}
-                              onValueChange={setGdServiceAccountJson}
-                              minRows={6}
-                              description="Create a service account in Google Cloud Console and download the JSON key"
-                            />
-                            <Input
-                              label="Root Folder ID (optional)"
-                              placeholder="Leave empty for root, or paste folder ID from Drive URL"
-                              value={gdRootFolderId}
-                              onValueChange={setGdRootFolderId}
-                            />
-                          </div>
-                        </Tab>
-                      </Tabs>
+                      <p className="text-sm text-foreground/60">
+                        Google Drive uses OAuth and requires browser authorization.
+                      </p>
+                      <Card className="bg-primary/5 border border-primary/20">
+                        <CardBody className="text-center py-6">
+                          <span className="text-4xl mb-3 block">🔐</span>
+                          <p className="font-medium mb-2">OAuth Setup</p>
+                          <p className="text-sm text-foreground/60 mb-4">
+                            Follow the wizard to authorize access.
+                          </p>
+                          <Button
+                            color="primary"
+                            onPress={() => {
+                              onClose();
+                              setShowGDriveWizard(true);
+                            }}
+                          >
+                            Open Setup Wizard
+                          </Button>
+                        </CardBody>
+                      </Card>
                     </div>
                   </Tab>
 
-                  <Tab key="smb" title="🗄️ SMB/NAS">
+                  <Tab
+                    key="smb"
+                    title={(
+                      <span className="flex items-center gap-2">
+                        <AppIcon name="smb" className="w-4 h-4" alt="SMB" />
+                        SMB/NAS
+                      </span>
+                    )}
+                  >
                     <div className="pt-4 space-y-4">
                       <div className="grid grid-cols-2 gap-4">
-                        <Input
-                          label="Host"
-                          placeholder="192.168.1.100"
-                          value={smbHost}
-                          onValueChange={setSmbHost}
-                          isRequired
-                        />
-                        <Input
-                          label="Share"
-                          placeholder="shared"
-                          value={smbShare}
-                          onValueChange={setSmbShare}
-                          description="Leave empty to browse all shares"
-                        />
+                        <Input labelPlacement="inside" label="Host"
+                        placeholder="192.168.1.100"
+                        value={smbHost}
+                        onValueChange={setSmbHost}
+                        isRequired />
+                        <Input labelPlacement="inside" label="Share"
+                        placeholder="shared"
+                        value={smbShare}
+                        onValueChange={setSmbShare}
+                        description="Leave empty to browse all shares" />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
-                        <Input
-                          label="Username (optional)"
-                          value={smbUser}
-                          onValueChange={setSmbUser}
-                        />
-                        <Input
-                          label="Password (optional)"
-                          type="password"
-                          value={smbPassword}
-                          onValueChange={setSmbPassword}
-                        />
+                        <Input labelPlacement="inside" label="Username (optional)"
+                        value={smbUser}
+                        onValueChange={setSmbUser} />
+                        <Input labelPlacement="inside" label="Password (optional)"
+                        type="password"
+                        value={smbPassword}
+                        onValueChange={setSmbPassword} />
                       </div>
                     </div>
                   </Tab>
@@ -756,6 +722,7 @@ function AddStorageModal({
                 color="primary"
                 onPress={handleCreate}
                 isLoading={createMutation.isPending}
+                isDisabled={storageType === "google_drive"}
               >
                 Add Storage
               </Button>
@@ -824,13 +791,11 @@ function IconPicker({
         ))}
       </div>
       <div className="flex items-center gap-2">
-        <Input
-          size="sm"
-          placeholder="Custom emoji..."
-          value={value}
-          onValueChange={onChange}
-          className="flex-1"
-        />
+        <Input labelPlacement="inside" size="sm"
+        placeholder="Custom emoji..."
+        value={value}
+        onValueChange={onChange}
+        className="flex-1" />
         {value && (
           <span className="text-xl">{value}</span>
         )}
@@ -900,10 +865,9 @@ function EditStorageModal({
   const [gdClientSecret, setGdClientSecret] = useState(
     storage.backend.type === "google_drive" ? (storage.backend.client_secret || "") : ""
   );
-  // Preserve existing token, root_folder_id, and service_account_json when editing
+  // Preserve existing token and root_folder_id when editing
   const existingGdToken = storage.backend.type === "google_drive" ? storage.backend.token : null;
   const existingGdRootFolderId = storage.backend.type === "google_drive" ? storage.backend.root_folder_id : null;
-  const existingGdServiceAccountJson = storage.backend.type === "google_drive" ? storage.backend.service_account_json : null;
 
   // SMB
   const [smbHost, setSmbHost] = useState(
@@ -954,7 +918,6 @@ function EditStorageModal({
           client_secret: gdClientSecret || null,
           token: existingGdToken,  // Preserve existing OAuth token
           root_folder_id: existingGdRootFolderId,  // Preserve existing root folder
-          service_account_json: existingGdServiceAccountJson,  // Preserve service account
         };
       case "smb":
         if (!smbHost) return null;
@@ -998,73 +961,57 @@ function EditStorageModal({
     switch (storageType) {
       case "local":
         return (
-          <Input
-            label="Root Path"
-            placeholder="/Users/me/Projects"
-            value={localPath}
-            onValueChange={setLocalPath}
-            isRequired
-            description="Absolute path to local directory"
-          />
+          <Input labelPlacement="inside" label="Root Path"
+          placeholder="/Users/me/Projects"
+          value={localPath}
+          onValueChange={setLocalPath}
+          isRequired
+          description="Absolute path to local directory" />
         );
       case "ssh_remote":
         return (
           <>
-            <Select
-              label="Host"
-              placeholder="Select a host"
-              selectedKeys={sshHostId ? [sshHostId] : []}
-              onSelectionChange={(keys) => {
-                const id = Array.from(keys)[0] as string;
-                setSshHostId(id);
-              }}
-              isRequired
-            >
-              {(hosts.data ?? []).map((host) => (
-                <SelectItem key={host.id}>
-                  {host.name}
-                </SelectItem>
-              ))}
-            </Select>
-            <Input
-              label="Root Path"
-              placeholder="/root"
-              value={sshRootPath}
-              onValueChange={setSshRootPath}
-              description="Path on remote host"
-            />
+            <Select labelPlacement="inside" label="Host"
+            placeholder="Select a host"
+            selectedKeys={sshHostId ? [sshHostId] : []}
+            onSelectionChange={(keys) => {
+              const id = Array.from(keys)[0] as string;
+              setSshHostId(id);
+            }}
+            isRequired>{(hosts.data ?? []).map((host) => (
+              <SelectItem key={host.id}>
+                {host.name}
+              </SelectItem>
+            ))}</Select>
+            <Input labelPlacement="inside" label="Root Path"
+            placeholder="/root"
+            value={sshRootPath}
+            onValueChange={setSshRootPath}
+            description="Path on remote host" />
           </>
         );
       case "cloudflare_r2":
         return (
           <>
-            <Input
-              label="Account ID"
-              placeholder="Your Cloudflare account ID"
-              value={r2AccountId}
-              onValueChange={setR2AccountId}
-              isRequired
-            />
-            <Input
-              label="Bucket"
-              placeholder="my-bucket"
-              value={r2Bucket}
-              onValueChange={setR2Bucket}
-              isRequired
-            />
-            <Input
-              label="Access Key ID"
-              value={r2AccessKeyId}
-              onValueChange={setR2AccessKeyId}
-              isRequired
-            />
-            <Input
-              label="Secret Access Key"
-              type="password"
-              value={r2SecretAccessKey}
-              onValueChange={setR2SecretAccessKey}
-              isRequired
-            />
+            <Input labelPlacement="inside" label="Account ID"
+            placeholder="Your Cloudflare account ID"
+            value={r2AccountId}
+            onValueChange={setR2AccountId}
+            isRequired />
+            <Input labelPlacement="inside" label="Bucket"
+            placeholder="my-bucket"
+            value={r2Bucket}
+            onValueChange={setR2Bucket}
+            isRequired />
+            <Input labelPlacement="inside" label="Access Key ID"
+            value={r2AccessKeyId}
+            onValueChange={setR2AccessKeyId}
+            isRequired />
+            <Input labelPlacement="inside" label="Secret Access Key"
+            type="password"
+            value={r2SecretAccessKey}
+            onValueChange={setR2SecretAccessKey}
+            isRequired />
           </>
         );
       case "google_drive":
@@ -1073,50 +1020,38 @@ function EditStorageModal({
             <p className="text-sm text-foreground/60">
               Google Drive requires OAuth authentication. Leave Client ID/Secret empty to use rclone's defaults.
             </p>
-            <Input
-              label="Client ID (optional)"
-              value={gdClientId}
-              onValueChange={setGdClientId}
-            />
-            <Input
-              label="Client Secret (optional)"
-              type="password"
-              value={gdClientSecret}
-              onValueChange={setGdClientSecret}
-            />
+            <Input labelPlacement="inside" label="Client ID (optional)"
+            value={gdClientId}
+            onValueChange={setGdClientId} />
+            <Input labelPlacement="inside" label="Client Secret (optional)"
+            type="password"
+            value={gdClientSecret}
+            onValueChange={setGdClientSecret} />
           </>
         );
       case "smb":
         return (
           <>
             <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="Host"
-                placeholder="192.168.1.100"
-                value={smbHost}
-                onValueChange={setSmbHost}
-                isRequired
-              />
-              <Input
-                label="Share"
-                placeholder="shared"
-                value={smbShare}
-                onValueChange={setSmbShare}
-                description="Leave empty to browse all shares"
-              />
+              <Input labelPlacement="inside" label="Host"
+              placeholder="192.168.1.100"
+              value={smbHost}
+              onValueChange={setSmbHost}
+              isRequired />
+              <Input labelPlacement="inside" label="Share"
+              placeholder="shared"
+              value={smbShare}
+              onValueChange={setSmbShare}
+              description="Leave empty to browse all shares" />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="Username (optional)"
-                value={smbUser}
-                onValueChange={setSmbUser}
-              />
-              <Input
-                label="Password (optional)"
-                type="password"
-                value={smbPassword}
-                onValueChange={setSmbPassword}
-              />
+              <Input labelPlacement="inside" label="Username (optional)"
+              value={smbUser}
+              onValueChange={setSmbUser} />
+              <Input labelPlacement="inside" label="Password (optional)"
+              type="password"
+              value={smbPassword}
+              onValueChange={setSmbPassword} />
             </div>
           </>
         );
@@ -1140,13 +1075,11 @@ function EditStorageModal({
             <ModalBody>
               <div className="space-y-4">
                 {/* Basic Info */}
-                <Input
-                  label="Name"
-                  placeholder="My Storage"
-                  value={name}
-                  onValueChange={setName}
-                  isRequired
-                />
+                <Input labelPlacement="inside" label="Name"
+                placeholder="My Storage"
+                value={name}
+                onValueChange={setName}
+                isRequired />
 
                 <IconPicker value={icon} onChange={setIcon} />
 
@@ -1154,7 +1087,7 @@ function EditStorageModal({
 
                 {/* Backend Type Display */}
                 <div className="flex items-center gap-2 p-3 bg-content2 rounded-lg">
-                  <span className="text-xl">{getBackendIcon(storage.backend)}</span>
+                  {getBackendIconNode(storage.backend)}
                   <div>
                     <p className="font-medium">{getBackendTypeName(storage.backend)}</p>
                     <p className="text-xs text-foreground/60">Storage type cannot be changed</p>
@@ -1350,19 +1283,28 @@ export function StoragePage() {
           </Card>
           <Card>
             <CardBody>
-              <p className="text-sm text-foreground/60">💻 Local</p>
+              <p className="text-sm text-foreground/60 flex items-center gap-2">
+                <span>💻</span>
+                Local
+              </p>
               <p className="text-2xl font-bold">{localCount}</p>
             </CardBody>
           </Card>
           <Card>
             <CardBody>
-              <p className="text-sm text-foreground/60">🖥️ Remote</p>
+              <p className="text-sm text-foreground/60 flex items-center gap-2">
+                <AppIcon name="ssh" className="w-4 h-4" alt="SSH" />
+                Remote
+              </p>
               <p className="text-2xl font-bold">{remoteCount}</p>
             </CardBody>
           </Card>
           <Card>
             <CardBody>
-              <p className="text-sm text-foreground/60">☁️ Cloud</p>
+              <p className="text-sm text-foreground/60 flex items-center gap-2">
+                <AppIcon name="cloudflare" className="w-4 h-4" alt="Cloud" />
+                Cloud
+              </p>
               <p className="text-2xl font-bold">{cloudCount}</p>
             </CardBody>
           </Card>
@@ -1453,4 +1395,3 @@ export function StoragePage() {
     </div>
   );
 }
-

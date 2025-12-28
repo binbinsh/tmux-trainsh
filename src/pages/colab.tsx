@@ -17,6 +17,7 @@ import {
 import { Button } from "../components/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { copyText } from "../lib/clipboard";
 import { getConfig, sshPublicKey, termOpenSshTmux } from "../lib/tauri-api";
 import type { SshSpec, TrainshConfig } from "../lib/types";
 
@@ -148,22 +149,18 @@ tail -n 30 /content/cloudflared.log || true
           <Divider />
           <CardBody className="gap-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-              <Input label="Title" value={newTitle} onValueChange={setNewTitle} placeholder="colab" />
-              <Input
-                label="Hostname"
-                value={newHostname}
-                onValueChange={setNewHostname}
-                placeholder="colab-ssh.example.com"
-                description="Cloudflare Tunnel 的 SSH hostname"
-              />
-              <Input label="User" value={newUser} onValueChange={setNewUser} placeholder="root" />
-              <Input label="tmux session" value={newTmux} onValueChange={setNewTmux} placeholder="doppio" />
-              <Input
-                label="cloudflared path"
-                value={newCloudflared}
-                onValueChange={setNewCloudflared}
-                placeholder="/opt/homebrew/bin/cloudflared"
-              />
+              <Input labelPlacement="inside" label="Title" value={newTitle} onValueChange={setNewTitle} placeholder="colab" />
+              <Input labelPlacement="inside" label="Hostname"
+              value={newHostname}
+              onValueChange={setNewHostname}
+              placeholder="colab-ssh.example.com"
+              description="Cloudflare Tunnel 的 SSH hostname" />
+              <Input labelPlacement="inside" label="User" value={newUser} onValueChange={setNewUser} placeholder="root" />
+              <Input labelPlacement="inside" label="tmux session" value={newTmux} onValueChange={setNewTmux} placeholder="doppio" />
+              <Input labelPlacement="inside" label="cloudflared path"
+              value={newCloudflared}
+              onValueChange={setNewCloudflared}
+              placeholder="/opt/homebrew/bin/cloudflared" />
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -248,7 +245,7 @@ tail -n 30 /content/cloudflared.log || true
                               `  User ${s.user}`,
                               `  ProxyCommand ${s.cloudflared_path} access ssh --hostname %h`
                             ].join("\n");
-                            await navigator.clipboard.writeText(snippet);
+                            await copyText(snippet);
                           }}
                         >
                           Copy ssh config
@@ -309,19 +306,15 @@ tail -n 30 /content/cloudflared.log || true
             {manualError ? <div className="text-sm text-danger">Manual error: {manualError}</div> : null}
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Input
-                label="SSH public key (authorized_keys)"
-                value={manualPubKey}
-                onValueChange={setManualPubKey}
-                placeholder="ssh-ed25519 AAAA... user@host"
-              />
-              <Input
-                label="Cloudflared tunnel token (optional, not stored)"
-                type="password"
-                value={manualToken}
-                onValueChange={setManualToken}
-                placeholder="PASTE_TUNNEL_TOKEN"
-              />
+              <Input labelPlacement="inside" label="SSH public key (authorized_keys)"
+              value={manualPubKey}
+              onValueChange={setManualPubKey}
+              placeholder="ssh-ed25519 AAAA... user@host" />
+              <Input labelPlacement="inside" label="Cloudflared tunnel token (optional, not stored)"
+              type="password"
+              value={manualToken}
+              onValueChange={setManualToken}
+              placeholder="PASTE_TUNNEL_TOKEN" />
             </div>
 
             <div className="text-sm text-foreground/70 grid gap-2">
@@ -334,18 +327,16 @@ tail -n 30 /content/cloudflared.log || true
 
             <div className="grid gap-2">
               <div className="text-sm font-semibold">2) Colab Notebook（每次会话）</div>
-              <Textarea
-                label="One cell (bash)"
-                value={manualColabCell}
-                minRows={12}
-                classNames={{ input: "font-mono text-xs" }}
-                readOnly
-              />
+              <Textarea labelPlacement="inside" label="One cell (bash)"
+              value={manualColabCell}
+              minRows={12}
+              classNames={{ input: "font-mono text-xs" }}
+              readOnly />
               <div className="flex gap-2">
                 <Button
                   variant="flat"
                   onPress={async () => {
-                    await navigator.clipboard.writeText(manualColabCell);
+                    await copyText(manualColabCell);
                   }}
                 >
                   Copy cell
@@ -366,5 +357,4 @@ tail -n 30 /content/cloudflared.log || true
     </div>
   );
 }
-
 

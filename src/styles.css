@@ -2,4 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  [data-slot="label"] {
+    @apply text-xs text-foreground/60;
+  }
+}
 

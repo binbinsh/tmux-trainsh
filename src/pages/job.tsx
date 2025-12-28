@@ -218,66 +218,52 @@ export function JobPage() {
 
           <section className="grid gap-3">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Input
-                label="Project Dir"
-                value={projectDir}
-                onValueChange={setProjectDir}
-                placeholder="/path/to/your/project"
-                description="会自动排除 .git/node_modules/src-tauri/target 等；可通过 extra excludes 再排除。"
-              />
-              <Input
-                label="Instance ID"
-                value={instanceId}
-                onValueChange={setInstanceId}
-                placeholder="e.g. 123456"
-                description="从 Vast.ai Instances 页面复制（需要实例处于可 SSH 状态）。"
-              />
+              <Input labelPlacement="inside" label="Project Dir"
+              value={projectDir}
+              onValueChange={setProjectDir}
+              placeholder="/path/to/your/project"
+              description="会自动排除 .git/node_modules/src-tauri/target 等；可通过 extra excludes 再排除。" />
+              <Input labelPlacement="inside" label="Instance ID"
+              value={instanceId}
+              onValueChange={setInstanceId}
+              placeholder="e.g. 123456"
+              description="从 Vast.ai Instances 页面复制（需要实例处于可 SSH 状态）。" />
             </div>
             {renderInstanceHint(selectedInstance)}
 
-            <Input
-              label="Command"
-              value={command}
-              onValueChange={setCommand}
-              placeholder="python train.py --config configs/xxx.yaml"
-              description="会在远端用 bash -lc 执行，并通过 tee 写入 train.log。"
-            />
+            <Input labelPlacement="inside" label="Command"
+            value={command}
+            onValueChange={setCommand}
+            placeholder="python train.py --config configs/xxx.yaml"
+            description="会在远端用 bash -lc 执行，并通过 tee 写入 train.log。" />
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Input
-                label="Workdir (optional)"
-                value={workdir}
-                onValueChange={setWorkdir}
-                placeholder="."
-                description="相对于项目根目录的子目录；留空=项目根目录。"
-              />
-              <Input
-                label="Output dir (optional)"
-                value={outputDir}
-                onValueChange={setOutputDir}
-                placeholder="outputs"
-                description="远端输出目录（留空则 job_dir/output；支持绝对路径或相对 workdir）。"
-              />
-              <Input
-                label="HF_HOME (optional)"
-                value={hfHome}
-                onValueChange={setHfHome}
-                placeholder={cfgQuery.data?.colab.hf_home ?? "~/.cache/huggingface"}
-                description="留空则使用 Settings → Colab 的 hf_home 或默认 ~/.cache/huggingface。"
-              />
+              <Input labelPlacement="inside" label="Workdir (optional)"
+              value={workdir}
+              onValueChange={setWorkdir}
+              placeholder="."
+              description="相对于项目根目录的子目录；留空=项目根目录。" />
+              <Input labelPlacement="inside" label="Output dir (optional)"
+              value={outputDir}
+              onValueChange={setOutputDir}
+              placeholder="outputs"
+              description="远端输出目录（留空则 job_dir/output；支持绝对路径或相对 workdir）。" />
+              <Input labelPlacement="inside" label="HF_HOME (optional)"
+              value={hfHome}
+              onValueChange={setHfHome}
+              placeholder={cfgQuery.data?.colab.hf_home ?? "~/.cache/huggingface"}
+              description="留空则使用 Settings → Colab 的 hf_home 或默认 ~/.cache/huggingface。" />
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <Switch isSelected={sync} onValueChange={setSync}>
                 Sync project (upload & extract)
               </Switch>
-              <Input
-                label="Extra excludes (optional)"
-                value={extraExcludes}
-                onValueChange={setExtraExcludes}
-                placeholder="checkpoints, wandb"
-                description="逗号/换行分隔，作为打包排除前缀。"
-              />
+              <Input labelPlacement="inside" label="Extra excludes (optional)"
+              value={extraExcludes}
+              onValueChange={setExtraExcludes}
+              placeholder="checkpoints, wandb"
+              description="逗号/换行分隔，作为打包排除前缀。" />
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <Switch isSelected={includeData} onValueChange={setIncludeData}>
@@ -294,13 +280,11 @@ export function JobPage() {
             <Divider />
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Input
-                label="Local download dir"
-                value={localDownloadDir}
-                onValueChange={setLocalDownloadDir}
-                placeholder="/path/to/save/outputs"
-                description="用于下载远端 output dir。"
-              />
+              <Input labelPlacement="inside" label="Local download dir"
+              value={localDownloadDir}
+              onValueChange={setLocalDownloadDir}
+              placeholder="/path/to/save/outputs"
+              description="用于下载远端 output dir。" />
               <Switch isSelected={autoDownload} onValueChange={setAutoDownload}>
                 Auto download on finish
               </Switch>
@@ -424,7 +408,7 @@ export function JobPage() {
 
                   <div className="grid gap-3">
                     <div className="text-sm font-semibold">Logs (tail -n 200)</div>
-                    <Textarea value={logsText} minRows={12} readOnly classNames={{ input: "font-mono text-xs" }} />
+                    <Textarea labelPlacement="inside" value={logsText} minRows={12} readOnly classNames={{ input: "font-mono text-xs" }} />
                   </div>
                 </>
               ) : null}

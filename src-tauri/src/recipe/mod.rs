@@ -441,13 +441,12 @@ async fn run_interactive_recipe(
     use tauri::Emitter;
     use tauri::Manager;
     
-    let runner = interactive::get_runner().await;
-    
     // Get terminal manager from app state
     let term_mgr = app.state::<crate::terminal::TerminalManager>();
+    let history = term_mgr.history(&term_id).await;
     
     // Update status to running
-    runner.update_status(&exec_id, interactive::InteractiveStatus::Running).await?;
+    interactive::get_runner().await.update_status(&exec_id, interactive::InteractiveStatus::Running).await?;
     
     // Emit execution updated event so frontend can update immediately
     let _ = app.emit("recipe:execution_updated", serde_json::json!({
@@ -466,8 +465,13 @@ async fn run_interactive_recipe(
     // Execute each step sequentially with shell prompt integration for completion detection
     for (index, step) in recipe.steps.iter().enumerate() {
         // Update current step
-        runner.set_current_step(&exec_id, Some(step.id.clone())).await?;
-        runner.update_step_status(&exec_id, &step.id, types::StepStatus::Running).await?;
+        interactive::get_runner().await.set_current_step(&exec_id, Some(step.id.clone())).await?;
+        interactive::get_runner().await.update_step_status(&exec_id, &step.id, types::StepStatus::Running).await?;
+        if let Err(e) = crate::terminal::history_step_start(&term_mgr, &term_id, &step.id, index).await {
+            eprintln!("[interactive_recipe] history step start failed: {}", e);
+        }
+        let mut step_failed = false;
+        let mut step_exit_code: Option<i32> = None;
         
         // Emit step started event
         let _ = app.emit("recipe:step_started", serde_json::json!({
@@ -481,7 +485,7 @@ async fn run_interactive_recipe(
         
         if let Some(cmds) = commands {
             // Lock intervention briefly while sending commands (prevent user input interference)
-            runner.lock_intervention(&exec_id).await?;
+            interactive::get_runner().await.lock_intervention(&exec_id).await?;
             let _ = app.emit("recipe:intervention_lock_changed", serde_json::json!({
                 "execution_id": exec_id,
                 "terminal_id": term_id,
@@ -495,10 +499,31 @@ async fn run_interactive_recipe(
                 "command": cmds,
             }));
             
+            // Check if we need to cd to a workdir
+            let workdir_prefix = match &step.operation {
+                types::Operation::RunCommands(op) => {
+                    if let Some(workdir) = &op.workdir {
+                        let workdir_interpolated = parser::interpolate(workdir, &variables);
+                        if !workdir_interpolated.is_empty() {
+                            // Simple shell escape: wrap in single quotes and escape single quotes
+                            let escaped = workdir_interpolated.replace('\'', "'\"'\"'");
+                            format!("cd '{}'\n", escaped)
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    }
+                }
+                _ => String::new(),
+            };
+            
             // Send commands using heredoc with user's default shell
             // Uses $SHELL env var, falls back to bash if not set
+            // Captures exit code and outputs it with the done marker
             let heredoc = format!(
-                "${{SHELL:-bash}} <<'DOPPIO_EOF'\n{}\necho '{}'\nDOPPIO_EOF\n",
+                "${{SHELL:-bash}} <<'DOPPIO_EOF'\n{}{}\n__doppio_rc__=$?\necho '{}:'$__doppio_rc__\nDOPPIO_EOF\n",
+                workdir_prefix,
                 cmds.trim(),
                 DONE_MARKER
             );
@@ -510,7 +535,7 @@ async fn run_interactive_recipe(
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             
             // Unlock intervention to allow user input (password, confirmation, etc.)
-            runner.unlock_intervention(&exec_id).await?;
+            interactive::get_runner().await.unlock_intervention(&exec_id).await?;
             let _ = app.emit("recipe:intervention_lock_changed", serde_json::json!({
                 "execution_id": exec_id,
                 "terminal_id": term_id,
@@ -518,34 +543,193 @@ async fn run_interactive_recipe(
             }));
             
             // Update status to WaitingForInput while commands are running
-            runner.update_status(&exec_id, interactive::InteractiveStatus::WaitingForInput).await?;
+            interactive::get_runner().await.update_status(&exec_id, interactive::InteractiveStatus::WaitingForInput).await?;
             
-            // Wait for the marker to appear (commands completed)
-            // No timeout - wait indefinitely until commands finish
-            crate::terminal::wait_for_marker(
+            // Wait for done marker with exit code (format: ___DOPPIO_DONE___:0)
+            let exit_code = crate::terminal::wait_for_marker_with_exit_code(
                 &term_mgr,
                 &term_id,
                 DONE_MARKER,
             ).await;
+            step_exit_code = Some(exit_code);
             
-            eprintln!("[interactive_recipe] Commands completed");
+            eprintln!("[interactive_recipe] Commands completed, exit_code: {}", exit_code);
+            
+            // Check if commands failed (non-zero exit code)
+            if exit_code != 0 {
+                // Commands failed
+                let error_msg = format!("\r\n\x1b[31m✗ {} - exit code {}\x1b[0m\r\n", step.id, exit_code);
+                crate::terminal::term_display(&app, &term_id, &error_msg, history.as_deref());
+                
+                step_failed = true;
+                interactive::get_runner().await.update_step_status(&exec_id, &step.id, types::StepStatus::Failed).await?;
+                let _ = app.emit("recipe:step_failed", serde_json::json!({
+                    "execution_id": exec_id,
+                    "step_id": step.id,
+                    "error": format!("Step {} failed with exit code {}", step.id, exit_code),
+                }));
+                
+                if !step.continue_on_failure {
+                    interactive::get_runner().await.update_status(&exec_id, interactive::InteractiveStatus::Failed).await?;
+                    let _ = app.emit("recipe:execution_failed", serde_json::json!({
+                        "execution_id": exec_id,
+                        "error": format!("Step {} failed with exit code {}", step.id, exit_code),
+                    }));
+                    if let Err(e) = crate::terminal::history_step_end(
+                        &term_mgr,
+                        &term_id,
+                        &step.id,
+                        index,
+                        "failed",
+                        step_exit_code,
+                    )
+                    .await
+                    {
+                        eprintln!("[interactive_recipe] history step end failed: {}", e);
+                    }
+                    return Err(AppError::command(format!("Step {} failed with exit code {}", step.id, exit_code)));
+                }
+            }
             
             // Restore running status
-            runner.update_status(&exec_id, interactive::InteractiveStatus::Running).await?;
+            interactive::get_runner().await.update_status(&exec_id, interactive::InteractiveStatus::Running).await?;
+        } else {
+            // Operation cannot be converted to terminal commands (e.g., GdriveMount, Transfer, etc.)
+            // Execute it directly via backend and show progress in terminal
+            eprintln!("[interactive_recipe] Executing operation via backend: {:?}", step.operation);
+            
+            // Get detailed operation description
+            let op_desc = get_operation_description(&step.operation, &variables);
+            
+            // Show starting message with description directly to xterm.js (no shell echo)
+            let start_msg = format!(
+                "\r\n\x1b[1;36m▶ [Doppio] {}\x1b[0m\r\n\x1b[90m  {}\x1b[0m\r\n",
+                step.id,
+                op_desc.replace('\n', "\r\n  ")
+            );
+            crate::terminal::term_display(&app, &term_id, &start_msg, history.as_deref());
+            // Progress reporter to keep sidebar + terminal updated
+            let exec_id_clone = exec_id.clone();
+            let step_id_clone = step.id.clone();
+            let app_handle = app.clone();
+            let term_id_clone = term_id.clone();
+            let history_for_progress = history.clone();
+            let progress_cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |msg: &str| {
+                let exec_id = exec_id_clone.clone();
+                let step_id = step_id_clone.clone();
+                let app_handle_inner = app_handle.clone();
+                let message = msg.to_string();
+                tauri::async_runtime::spawn(async move {
+                    let runner = interactive::get_runner().await;
+                    let _ = runner.set_step_progress(&exec_id, &step_id, Some(message.clone())).await;
+                    let _ = app_handle_inner.emit("recipe:step_progress", serde_json::json!({
+                        "execution_id": exec_id,
+                        "step_id": step_id,
+                        "progress": message,
+                    }));
+                });
+                let live_msg = format!("\x1b[90m  → {}\x1b[0m\r\n", msg);
+                crate::terminal::term_display(&app_handle, &term_id_clone, &live_msg, history_for_progress.as_deref());
+            });
+            // Persist initial progress text
+            progress_cb(&op_desc.lines().next().unwrap_or(&op_desc));
+            
+            // Execute the operation using the execution engine
+            match execution::execute_step(&step.operation, &variables, Some(progress_cb.clone())).await {
+                Ok(Some(output)) => {
+                    // Show success with output directly to xterm.js
+                    let formatted_output = output.replace('\n', "\r\n");
+                    let success_msg = format!("\x1b[32m✓ {}\x1b[0m\r\n{}\r\n", step.id, formatted_output);
+                    crate::terminal::term_display(&app, &term_id, &success_msg, history.as_deref());
+                }
+                Ok(None) => {
+                    // Show success without output
+                    let success_msg = format!("\x1b[32m✓ {} completed\x1b[0m\r\n", step.id);
+                    crate::terminal::term_display(&app, &term_id, &success_msg, history.as_deref());
+                }
+                Err(e) => {
+                    // Show error directly to xterm.js
+                    let error_str = e.to_string().replace('\n', "\r\n  ");
+                    let error_msg = format!("\x1b[31m✗ {} failed:\x1b[0m\r\n  \x1b[31m{}\x1b[0m\r\n", step.id, error_str);
+                    crate::terminal::term_display(&app, &term_id, &error_msg, history.as_deref());
+                    
+                    step_failed = true;
+                    // Update step status to failed
+                    interactive::get_runner().await.update_step_status(&exec_id, &step.id, types::StepStatus::Failed).await?;
+                    let _ = app.emit("recipe:step_failed", serde_json::json!({
+                        "execution_id": exec_id,
+                        "step_id": step.id,
+                        "error": e.to_string(),
+                    }));
+                    
+                    // Check if step should continue on failure
+                    if !step.continue_on_failure {
+                        // Stop execution
+                        interactive::get_runner().await.update_status(&exec_id, interactive::InteractiveStatus::Failed).await?;
+                        let _ = app.emit("recipe:execution_failed", serde_json::json!({
+                            "execution_id": exec_id,
+                            "error": e.to_string(),
+                        }));
+                        if let Err(err) = crate::terminal::history_step_end(
+                            &term_mgr,
+                            &term_id,
+                            &step.id,
+                            index,
+                            "failed",
+                            step_exit_code,
+                        )
+                        .await
+                        {
+                            eprintln!("[interactive_recipe] history step end failed: {}", err);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            
+            // Clear progress on completion/failure
+            let exec_id_clone = exec_id.clone();
+            let step_id_clone = step.id.clone();
+            let app_handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let runner = interactive::get_runner().await;
+                let _ = runner.set_step_progress(&exec_id_clone, &step_id_clone, None).await;
+                let _ = app_handle.emit("recipe:step_progress", serde_json::json!({
+                    "execution_id": exec_id_clone,
+                    "step_id": step_id_clone,
+                    "progress": serde_json::Value::Null,
+                }));
+            });
         }
         
-        // Mark step as complete
-        runner.update_step_status(&exec_id, &step.id, types::StepStatus::Success).await?;
-        eprintln!("[interactive_recipe] Step {} completed", step.id);
-        let _ = app.emit("recipe:step_completed", serde_json::json!({
-            "execution_id": exec_id,
-            "step_id": step.id,
-        }));
+        if !step_failed {
+            // Mark step as complete
+            interactive::get_runner().await.update_step_status(&exec_id, &step.id, types::StepStatus::Success).await?;
+            eprintln!("[interactive_recipe] Step {} completed", step.id);
+            let _ = app.emit("recipe:step_completed", serde_json::json!({
+                "execution_id": exec_id,
+                "step_id": step.id,
+            }));
+        }
+
+        let status = if step_failed { "failed" } else { "success" };
+        if let Err(e) = crate::terminal::history_step_end(
+            &term_mgr,
+            &term_id,
+            &step.id,
+            index,
+            status,
+            step_exit_code,
+        )
+        .await
+        {
+            eprintln!("[interactive_recipe] history step end failed: {}", e);
+        }
     }
     
     // All steps completed
-    runner.set_current_step(&exec_id, None).await?;
-    runner.update_status(&exec_id, interactive::InteractiveStatus::Completed).await?;
+    interactive::get_runner().await.set_current_step(&exec_id, None).await?;
+    interactive::get_runner().await.update_status(&exec_id, interactive::InteractiveStatus::Completed).await?;
     
     // Emit completion event
     let _ = app.emit("recipe:execution_completed", serde_json::json!({
@@ -556,6 +740,8 @@ async fn run_interactive_recipe(
 }
 
 /// Extract commands from a step's operation
+/// Returns Some(commands) if the operation can be executed as terminal commands
+/// Returns None if the operation must be executed via Rust backend
 fn extract_commands_from_step(step: &types::Step, variables: &HashMap<String, String>) -> Option<String> {
     fn interpolate(s: &str, vars: &HashMap<String, String>) -> String {
         let mut result = s.to_string();
@@ -575,6 +761,12 @@ fn extract_commands_from_step(step: &types::Step, variables: &HashMap<String, St
         types::Operation::GitClone(op) => {
             let repo = interpolate(&op.repo_url, variables);
             let dest = interpolate(&op.destination, variables);
+            
+            // If auth_token is provided, use backend execution for security
+            if op.auth_token.as_ref().map(|t| !interpolate(t, variables).is_empty()).unwrap_or(false) {
+                return None;
+            }
+            
             let mut cmd = format!("git clone {}", repo);
             if let Some(b) = &op.branch {
                 cmd.push_str(&format!(" -b {}", interpolate(b, variables)));
@@ -583,6 +775,36 @@ fn extract_commands_from_step(step: &types::Step, variables: &HashMap<String, St
                 cmd.push_str(&format!(" --depth {}", d));
             }
             cmd.push_str(&format!(" {}", dest));
+            Some(cmd)
+        }
+        types::Operation::HfDownload(op) => {
+            let repo_id = interpolate(&op.repo_id, variables);
+            let dest = interpolate(&op.destination, variables);
+            let repo_type = match op.repo_type {
+                types::HfRepoType::Model => "model",
+                types::HfRepoType::Dataset => "dataset",
+                types::HfRepoType::Space => "space",
+            };
+            
+            let mut cmd = format!("huggingface-cli download {} --local-dir {} --repo-type {}", 
+                repo_id, dest, repo_type);
+            
+            if let Some(revision) = &op.revision {
+                cmd.push_str(&format!(" --revision {}", interpolate(revision, variables)));
+            }
+            
+            for file in &op.files {
+                cmd.push_str(&format!(" --include {}", file));
+            }
+            
+            // If auth token is set, prepend HF_TOKEN env var
+            if let Some(token) = &op.auth_token {
+                let token_val = interpolate(token, variables);
+                if !token_val.is_empty() {
+                    cmd = format!("HF_TOKEN='{}' {}", token_val, cmd);
+                }
+            }
+            
             Some(cmd)
         }
         types::Operation::TmuxNew(op) => {
@@ -602,24 +824,110 @@ fn extract_commands_from_step(step: &types::Step, variables: &HashMap<String, St
             let session = interpolate(&op.session_name, variables);
             Some(format!("tmux kill-session -t {}", session))
         }
+        types::Operation::TmuxCapture(op) => {
+            let session = interpolate(&op.session_name, variables);
+            let lines = op.lines.unwrap_or(100);
+            Some(format!("tmux capture-pane -t {} -p -S -{}", session, lines))
+        }
         types::Operation::Sleep(op) => {
             Some(format!("sleep {}", op.duration_secs))
         }
-        types::Operation::SetVar(_) | types::Operation::GetValue(_) | types::Operation::Assert(_) => {
-            // These don't produce terminal commands
-            None
-        }
         types::Operation::Notify(op) => {
-            // Just echo the notification
             let msg = op.message.as_ref().map(|m| interpolate(m, variables)).unwrap_or_default();
             let level_str = format!("{:?}", op.level).to_lowercase();
             Some(format!("echo '[{}] {}: {}'", level_str, interpolate(&op.title, variables), msg))
         }
-        _ => {
-            // For other operations, we don't have a simple command equivalent
-            // They would need full execution support
-            None
+        // Operations that must use backend execution:
+        // GdriveMount/Unmount, Transfer, RsyncUpload/Download, VastStart/Stop/Destroy,
+        // WaitCondition, HttpRequest, SetVar, GetValue, Assert, Group
+        _ => None,
+    }
+}
+
+/// Get a human-readable description of an operation for display
+fn get_operation_description(operation: &types::Operation, variables: &HashMap<String, String>) -> String {
+    fn interpolate(s: &str, vars: &HashMap<String, String>) -> String {
+        let mut result = s.to_string();
+        for (key, value) in vars {
+            result = result.replace(&format!("${{{}}}", key), value);
         }
+        result
+    }
+    
+    match operation {
+        types::Operation::GdriveMount(op) => {
+            let mount_path = if op.mount_path.is_empty() {
+                "/content/drive/MyDrive".to_string()
+            } else {
+                interpolate(&op.mount_path, variables)
+            };
+            format!(
+                "Mounting Google Drive at {}\n→ Installing rclone if needed\n→ Configuring OAuth credentials\n→ Starting rclone mount\n→ Verifying mount",
+                mount_path
+            )
+        }
+        types::Operation::GdriveUnmount(op) => {
+            format!("Unmounting Google Drive from {}", interpolate(&op.mount_path, variables))
+        }
+        types::Operation::Transfer(op) => {
+            let src = match &op.source {
+                types::TransferEndpoint::Local { path } => format!("local:{}", interpolate(path, variables)),
+                types::TransferEndpoint::Host { host_id, path } => {
+                    let host = host_id.as_ref().map(|h| interpolate(h, variables)).unwrap_or_else(|| "target".to_string());
+                    format!("{}:{}", host, interpolate(path, variables))
+                }
+                types::TransferEndpoint::Storage { storage_id, path } => {
+                    format!("storage:{}:{}", interpolate(storage_id, variables), interpolate(path, variables))
+                }
+            };
+            let dst = match &op.destination {
+                types::TransferEndpoint::Local { path } => format!("local:{}", interpolate(path, variables)),
+                types::TransferEndpoint::Host { host_id, path } => {
+                    let host = host_id.as_ref().map(|h| interpolate(h, variables)).unwrap_or_else(|| "target".to_string());
+                    format!("{}:{}", host, interpolate(path, variables))
+                }
+                types::TransferEndpoint::Storage { storage_id, path } => {
+                    format!("storage:{}:{}", interpolate(storage_id, variables), interpolate(path, variables))
+                }
+            };
+            format!("Transferring files\n→ Source: {}\n→ Destination: {}", src, dst)
+        }
+        types::Operation::RsyncUpload(op) => {
+            format!("Uploading via rsync\n→ Local: {}\n→ Remote: {}", 
+                interpolate(&op.local_path, variables),
+                interpolate(&op.remote_path, variables))
+        }
+        types::Operation::RsyncDownload(op) => {
+            format!("Downloading via rsync\n→ Remote: {}\n→ Local: {}",
+                interpolate(&op.remote_path, variables),
+                interpolate(&op.local_path, variables))
+        }
+        types::Operation::GitClone(op) => {
+            let repo = interpolate(&op.repo_url, variables);
+            let dest = interpolate(&op.destination, variables);
+            let mut desc = format!("Cloning git repository\n→ Repo: {}\n→ Destination: {}", repo, dest);
+            if let Some(b) = &op.branch {
+                desc.push_str(&format!("\n→ Branch: {}", interpolate(b, variables)));
+            }
+            if op.auth_token.is_some() {
+                desc.push_str("\n→ Using auth token");
+            }
+            desc
+        }
+        types::Operation::HfDownload(op) => {
+            let repo_id = interpolate(&op.repo_id, variables);
+            let dest = interpolate(&op.destination, variables);
+            format!("Downloading from HuggingFace\n→ Repo: {}\n→ Destination: {}", repo_id, dest)
+        }
+        types::Operation::VastStart(op) => format!("Starting Vast.ai instance #{}", op.instance_id),
+        types::Operation::VastStop(op) => format!("Stopping Vast.ai instance #{}", op.instance_id),
+        types::Operation::VastDestroy(op) => format!("Destroying Vast.ai instance #{}", op.instance_id),
+        types::Operation::WaitCondition(op) => format!("Waiting for condition (timeout: {}s)", op.timeout_secs),
+        types::Operation::HttpRequest(op) => format!("{:?} {}", op.method, interpolate(&op.url, variables)),
+        types::Operation::SetVar(_) => "Setting variable".to_string(),
+        types::Operation::GetValue(_) => "Getting value".to_string(),
+        types::Operation::Assert(_) => "Checking assertion".to_string(),
+        _ => "Executing operation".to_string(),
     }
 }
 
@@ -775,4 +1083,3 @@ pub async fn recipe_interactive_exec_command(
     
     Ok(())
 }
-

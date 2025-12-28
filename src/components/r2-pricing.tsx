@@ -16,8 +16,9 @@ import {
 } from "@nextui-org/react";
 import { Button } from "./ui";
 import { useState } from "react";
-import { storageApi } from "../lib/tauri-api";
+import { storageApi, usePricingSettings } from "../lib/tauri-api";
 import type { StorageUsage } from "../lib/types";
+import { formatPriceWithRates } from "../lib/currency";
 
 // ============================================================
 // R2 Pricing Constants (as of 2025)
@@ -70,6 +71,11 @@ export function R2PricingCalculator() {
   const [error, setError] = useState<string | null>(null);
   const [classAOps, setClassAOps] = useState("0.5"); // in millions
   const [classBOps, setClassBOps] = useState("5"); // in millions
+  const pricingQuery = usePricingSettings();
+  const displayCurrency = pricingQuery.data?.display_currency ?? "USD";
+  const exchangeRates = pricingQuery.data?.exchange_rates;
+  const formatUsd = (value: number, decimals = 2) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
 
   const fetchUsages = async () => {
     setLoading(true);
@@ -102,7 +108,7 @@ export function R2PricingCalculator() {
         <div className="text-sm font-medium">R2 Storage Cost</div>
         <div className="flex items-center gap-2">
           <Chip size="sm" variant="flat" color="primary">
-            ${totalCost.toFixed(2)}/mo
+            {formatUsd(totalCost, 2)}/mo
           </Chip>
           <Button
             size="sm"
@@ -148,7 +154,7 @@ export function R2PricingCalculator() {
                     {formatBytes(u.used_bytes)}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-warning">
-                    ${bucketCost.toFixed(2)}
+                    {formatUsd(bucketCost, 2)}
                   </TableCell>
                 </TableRow>
               );
@@ -170,39 +176,35 @@ export function R2PricingCalculator() {
           <span className="font-mono text-sm">{totalStorageGb.toFixed(2)} GB</span>
           <span className="text-xs text-foreground/40">{totalObjects.toLocaleString()} objects</span>
         </div>
-        <Input
-          label="Class A Ops (M/mo)"
-          type="number"
-          value={classAOps}
-          onValueChange={setClassAOps}
-          size="sm"
-          variant="bordered"
-          description={`Free: ${R2_PRICING.free_class_a_million}M`}
-        />
-        <Input
-          label="Class B Ops (M/mo)"
-          type="number"
-          value={classBOps}
-          onValueChange={setClassBOps}
-          size="sm"
-          variant="bordered"
-          description={`Free: ${R2_PRICING.free_class_b_million}M`}
-        />
+        <Input labelPlacement="inside" label="Class A Ops (M/mo)"
+        type="number"
+        value={classAOps}
+        onValueChange={setClassAOps}
+        size="sm"
+        variant="bordered"
+        description={`Free: ${R2_PRICING.free_class_a_million}M`} />
+        <Input labelPlacement="inside" label="Class B Ops (M/mo)"
+        type="number"
+        value={classBOps}
+        onValueChange={setClassBOps}
+        size="sm"
+        variant="bordered"
+        description={`Free: ${R2_PRICING.free_class_b_million}M`} />
       </div>
 
       {/* Cost breakdown */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs">
         <div className="flex justify-between p-2 bg-content2 rounded-lg">
           <span className="text-foreground/60">Storage</span>
-          <span className="font-mono">${storageCost.toFixed(2)}</span>
+          <span className="font-mono">{formatUsd(storageCost, 2)}</span>
         </div>
         <div className="flex justify-between p-2 bg-content2 rounded-lg">
           <span className="text-foreground/60">Class A</span>
-          <span className="font-mono">${classACost.toFixed(2)}</span>
+          <span className="font-mono">{formatUsd(classACost, 2)}</span>
         </div>
         <div className="flex justify-between p-2 bg-content2 rounded-lg">
           <span className="text-foreground/60">Class B</span>
-          <span className="font-mono">${classBCost.toFixed(2)}</span>
+          <span className="font-mono">{formatUsd(classBCost, 2)}</span>
         </div>
         <div className="flex justify-between p-2 bg-success/10 rounded-lg">
           <span className="text-foreground/60">Egress</span>
@@ -211,7 +213,9 @@ export function R2PricingCalculator() {
       </div>
 
       <p className="text-xs text-foreground/50">
-        Storage: ${R2_PRICING.storage_per_gb_month}/GB (10GB free) • Class A: $4.50/M (1M free) • Class B: $0.36/M (10M free) •{" "}
+        Storage: {formatUsd(R2_PRICING.storage_per_gb_month, 4)}/GB (10GB free) • Class A:{" "}
+        {formatUsd(R2_PRICING.class_a_per_million, 2)}/M (1M free) • Class B:{" "}
+        {formatUsd(R2_PRICING.class_b_per_million, 2)}/M (10M free) •{" "}
         <a
           href="https://developers.cloudflare.com/r2/pricing/"
           target="_blank"
@@ -224,4 +228,3 @@ export function R2PricingCalculator() {
     </div>
   );
 }
-

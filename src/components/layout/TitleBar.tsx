@@ -31,6 +31,15 @@ function IconSidebar() {
   );
 }
 
+function IconHistory() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
 // Terminal tab component - pill style with close button on left
 function TerminalTab({ 
   session,
@@ -53,7 +62,7 @@ function TerminalTab({
       transition={{ duration: 0.15 }}
       onClick={onClick}
       className={`
-        group relative flex items-center gap-1.5 pl-1.5 pr-3 h-6 rounded-full cursor-pointer
+        group relative flex items-center gap-1.5 pl-1.5 pr-3 h-6 w-56 flex-shrink-0 rounded-lg cursor-pointer
         transition-all duration-150
         ${isActive 
           ? "bg-primary text-primary-foreground shadow-sm" 
@@ -79,7 +88,7 @@ function TerminalTab({
       </button>
       
       {/* Title */}
-      <span className="text-xs font-medium truncate max-w-[100px]">{session.title}</span>
+      <span className="text-xs font-medium truncate min-w-0 flex-1">{session.title}</span>
     </motion.div>
   );
 }
@@ -114,7 +123,7 @@ export function TitleBar() {
       data-tauri-drag-region
       onMouseDown={handleMouseDown}
       className="h-8 flex items-center bg-content1/90 backdrop-blur-md border-b border-divider/50 pr-3"
-      style={{ paddingLeft: 250 }} // Space for native macOS traffic lights
+      style={{ paddingLeft: 80 }} // Space for native macOS traffic lights
     >
       {/* Left sidebar toggle - always visible */}
       <div onMouseDown={(e) => e.stopPropagation()}>
@@ -168,6 +177,21 @@ export function TitleBar() {
           {/* Remaining space is draggable (inherits from parent) */}
           <div className="flex-1 h-full" />
           
+          {/* History toggle */}
+          <div onMouseDown={(e) => e.stopPropagation()}>
+            <Tooltip content={terminal.historyPanelVisible ? "Hide History" : "Show History"} delay={500}>
+              <Button
+                isIconOnly
+                size="sm"
+                variant="light"
+                onPress={terminal.toggleHistoryPanel}
+                className={`min-w-7 w-7 h-7 ml-2 ${terminal.historyPanelVisible ? "text-foreground/60" : "text-foreground/40"} hover:text-foreground`}
+              >
+                <IconHistory />
+              </Button>
+            </Tooltip>
+          </div>
+
           {/* Right sidebar toggle - always visible on terminal page */}
           <div onMouseDown={(e) => e.stopPropagation()}>
             <Tooltip content={terminal.recipePanelVisible ? "Hide Recipe Panel (⌘])" : "Show Recipe Panel (⌘])"} delay={500}>

@@ -240,62 +240,50 @@ export function FilePicker({
           
           {/* Endpoint selector */}
           <div className="flex items-center gap-2 flex-wrap">
-            <Select
-              selectedKeys={[endpointType]}
+            <Select labelPlacement="inside" selectedKeys={[endpointType]}
+            onSelectionChange={(keys) => {
+              const type = Array.from(keys)[0] as EndpointType;
+              setEndpointType(type);
+              setCurrentPath("/");
+              setSelectedPaths(new Set());
+            }}
+            size="sm"
+            variant="bordered"
+            className="max-w-[140px]"
+            label="Source"><SelectItem key="local">Local</SelectItem>
+            <SelectItem key="host">Host</SelectItem>
+            <SelectItem key="storage">Storage</SelectItem></Select>
+            
+            {endpointType === "host" && (
+              <Select labelPlacement="inside" selectedKeys={hostId ? [hostId] : []}
               onSelectionChange={(keys) => {
-                const type = Array.from(keys)[0] as EndpointType;
-                setEndpointType(type);
+                const id = Array.from(keys)[0] as string;
+                setHostId(id);
                 setCurrentPath("/");
-                setSelectedPaths(new Set());
               }}
               size="sm"
               variant="bordered"
-              className="max-w-[140px]"
-              label="Source"
-            >
-              <SelectItem key="local">Local</SelectItem>
-              <SelectItem key="host">Host</SelectItem>
-              <SelectItem key="storage">Storage</SelectItem>
-            </Select>
-            
-            {endpointType === "host" && (
-              <Select
-                selectedKeys={hostId ? [hostId] : []}
-                onSelectionChange={(keys) => {
-                  const id = Array.from(keys)[0] as string;
-                  setHostId(id);
-                  setCurrentPath("/");
-                }}
-                size="sm"
-                variant="bordered"
-                className="max-w-[200px]"
-                label="Host"
-                placeholder="Select host..."
-              >
-                {hosts.map((h: Host) => (
-                  <SelectItem key={h.id}>{h.name}</SelectItem>
-                ))}
-              </Select>
+              className="max-w-[200px]"
+              label="Host"
+              placeholder="Select host...">{hosts.map((h: Host) => (
+                <SelectItem key={h.id}>{h.name}</SelectItem>
+              ))}</Select>
             )}
             
             {endpointType === "storage" && (
-              <Select
-                selectedKeys={storageId ? [storageId] : []}
-                onSelectionChange={(keys) => {
-                  const id = Array.from(keys)[0] as string;
-                  setStorageId(id);
-                  setCurrentPath("/");
-                }}
-                size="sm"
-                variant="bordered"
-                className="max-w-[200px]"
-                label="Storage"
-                placeholder="Select storage..."
-              >
-                {storages.map((s: Storage) => (
-                  <SelectItem key={s.id}>{s.name}</SelectItem>
-                ))}
-              </Select>
+              <Select labelPlacement="inside" selectedKeys={storageId ? [storageId] : []}
+              onSelectionChange={(keys) => {
+                const id = Array.from(keys)[0] as string;
+                setStorageId(id);
+                setCurrentPath("/");
+              }}
+              size="sm"
+              variant="bordered"
+              className="max-w-[200px]"
+              label="Storage"
+              placeholder="Select storage...">{storages.map((s: Storage) => (
+                <SelectItem key={s.id}>{s.name}</SelectItem>
+              ))}</Select>
             )}
             
             {endpointType === "local" && (

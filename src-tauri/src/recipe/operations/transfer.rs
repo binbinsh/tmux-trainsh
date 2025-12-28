@@ -6,13 +6,14 @@
 //! - Storage backends (Google Drive, S3, etc.)
 
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use crate::error::AppError;
 use crate::host;
 use crate::recipe::types::{TransferEndpoint, TransferOp};
 use crate::storage::{get_storage, Storage, StorageBackend};
-use crate::sync as sync_module;
 use super::ssh as ssh_ops;
 
 /// Execute a transfer operation
@@ -109,8 +110,16 @@ pub async fn execute(
                 copy_on_host(&src_host_id, &src_path, &dst_path).await?;
                 Ok(Some(format!("Transferred {}:{} to {}:{}", src_host_id, src_path, dst_host_id, dst_path)))
             } else {
-                // Different hosts - download then upload, or use rsync between hosts
-                transfer_between_hosts(&src_host_id, &src_path, &dst_host_id, &dst_path, &op.exclude_patterns).await?;
+                // Different hosts - download to local temp, then upload (rsync)
+                transfer_between_hosts_rsync(
+                    &src_host_id,
+                    &src_path,
+                    &dst_host_id,
+                    &dst_path,
+                    &op.exclude_patterns,
+                    op.delete,
+                )
+                .await?;
                 Ok(Some(format!("Transferred {}:{} to {}:{}", src_host_id, src_path, dst_host_id, dst_path)))
             }
         }
@@ -235,12 +244,16 @@ async fn upload_to_host(
     let ssh = host.ssh.as_ref()
         .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
     
-    let ssh_opts = build_ssh_opts(ssh);
+    let ssh_wrapper = build_rsync_ssh_wrapper(ssh)?;
     let remote = format!("{}@{}:{}", ssh.user, ssh.host, remote_path);
+
+    // Ensure destination directory exists before rsync
+    let mkdir_cmd = format!(r#"mkdir -p "{}""#, remote_path.replace('"', "\\\""));
+    ssh_ops::execute_command(host_id, &mkdir_cmd, None, &HashMap::new()).await?;
     
     let mut rsync = tokio::process::Command::new("rsync");
     rsync.args(["-avz", "--progress"]);
-    rsync.args(["-e", &format!("ssh {}", ssh_opts)]);
+    rsync.args(["-e", ssh_wrapper.to_string_lossy().as_ref()]);
     for exclude in excludes {
         rsync.args(["--exclude", exclude]);
     }
@@ -250,11 +263,17 @@ async fn upload_to_host(
     rsync.arg(local_path);
     rsync.arg(&remote);
     
-    let status = rsync.status().await
-        .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-    
-    if !status.success() {
-        return Err(AppError::command("Upload to host failed"));
+    let output = rsync.output().await;
+    let _ = std::fs::remove_file(&ssh_wrapper);
+    let output = output.map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(AppError::command(format!(
+            "Upload to host failed (code={:?}): {}",
+            output.status.code(),
+            format_command_output(&stdout, &stderr)
+        )));
     }
     
     Ok(())
@@ -277,23 +296,29 @@ async fn download_from_host(
             .map_err(|e| AppError::io(format!("Failed to create directory: {}", e)))?;
     }
     
-    let ssh_opts = build_ssh_opts(ssh);
+    let ssh_wrapper = build_rsync_ssh_wrapper(ssh)?;
     let remote = format!("{}@{}:{}", ssh.user, ssh.host, remote_path);
     
     let mut rsync = tokio::process::Command::new("rsync");
     rsync.args(["-avz", "--progress"]);
-    rsync.args(["-e", &format!("ssh {}", ssh_opts)]);
+    rsync.args(["-e", ssh_wrapper.to_string_lossy().as_ref()]);
     for exclude in excludes {
         rsync.args(["--exclude", exclude]);
     }
     rsync.arg(&remote);
     rsync.arg(local_path);
     
-    let status = rsync.status().await
-        .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-    
-    if !status.success() {
-        return Err(AppError::command("Download from host failed"));
+    let output = rsync.output().await;
+    let _ = std::fs::remove_file(&ssh_wrapper);
+    let output = output.map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(AppError::command(format!(
+            "Download from host failed (code={:?}): {}",
+            output.status.code(),
+            format_command_output(&stdout, &stderr)
+        )));
     }
     
     Ok(())
@@ -311,125 +336,99 @@ async fn copy_on_host(
     Ok(())
 }
 
-/// Transfer files between two different hosts via local machine using rsync CLI
-async fn transfer_between_hosts(
+/// Transfer files between two different hosts by staging through local temp (rsync).
+async fn transfer_between_hosts_rsync(
     src_host_id: &str,
     src_path: &str,
     dst_host_id: &str,
     dst_path: &str,
     excludes: &[String],
+    delete: bool,
 ) -> Result<(), AppError> {
-    // Get both hosts
-    let src_host = host::get_host(src_host_id).await?;
-    let dst_host = host::get_host(dst_host_id).await?;
-    
-    let src_ssh = src_host.ssh.as_ref()
-        .ok_or_else(|| AppError::invalid_input("Source host has no SSH configuration"))?;
-    let dst_ssh = dst_host.ssh.as_ref()
-        .ok_or_else(|| AppError::invalid_input("Destination host has no SSH configuration"))?;
-    
-    // Create temp directory
     let temp_dir = std::env::temp_dir().join(format!("transfer-{}", uuid::Uuid::new_v4()));
-    tokio::fs::create_dir_all(&temp_dir).await
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
         .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
-    
-    // Build SSH options for source
-    let src_ssh_opts = build_ssh_opts(src_ssh);
-    let src_remote = format!("{}@{}:{}", src_ssh.user, src_ssh.host, src_path);
-    
-    // Download from source using rsync CLI (supports ssh-agent)
-    let mut rsync_down = tokio::process::Command::new("rsync");
-    rsync_down.args(["-avz", "--progress"]);
-    rsync_down.args(["-e", &format!("ssh {}", src_ssh_opts)]);
-    for exclude in excludes {
-        rsync_down.args(["--exclude", exclude]);
+
+    let result = async {
+        let temp_root = temp_dir.to_string_lossy().to_string();
+        download_from_host(src_host_id, src_path, &temp_root, excludes).await?;
+
+        // Preserve rsync trailing-slash semantics when re-uploading.
+        let mut copy_contents =
+            src_path.ends_with('/') || src_path.ends_with("/.") || src_path.ends_with("/./");
+        let mut payload = if copy_contents {
+            temp_dir.clone()
+        } else {
+            let trimmed = src_path.trim_end_matches('/');
+            match std::path::Path::new(trimmed).file_name() {
+                Some(name) if name != "." && name != ".." => temp_dir.join(name),
+                _ => {
+                    copy_contents = true;
+                    temp_dir.clone()
+                }
+            }
+        };
+
+        if !copy_contents && tokio::fs::metadata(&payload).await.is_err() {
+            copy_contents = true;
+            payload = temp_dir.clone();
+        }
+
+        let payload_str = payload.to_string_lossy();
+        let upload_source = if copy_contents {
+            format!("{}/", payload_str.as_ref().trim_end_matches('/'))
+        } else {
+            payload_str.to_string()
+        };
+
+        upload_to_host(dst_host_id, &upload_source, dst_path, excludes, delete).await?;
+        Ok(())
     }
-    rsync_down.arg(&src_remote);
-    rsync_down.arg(temp_dir.to_str().unwrap());
-    
-    let status = rsync_down.status().await
-        .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-    if !status.success() {
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-        return Err(AppError::command("Download from source host failed"));
-    }
-    
-    // Build SSH options for destination
-    let dst_ssh_opts = build_ssh_opts(dst_ssh);
-    let dst_remote = format!("{}@{}:{}", dst_ssh.user, dst_ssh.host, dst_path);
-    
-    // Upload to destination using rsync CLI
-    let mut rsync_up = tokio::process::Command::new("rsync");
-    rsync_up.args(["-avz", "--progress"]);
-    rsync_up.args(["-e", &format!("ssh {}", dst_ssh_opts)]);
-    for exclude in excludes {
-        rsync_up.args(["--exclude", exclude]);
-    }
-    // Add trailing slash to copy contents, not the directory itself
-    let local_src = format!("{}/", temp_dir.to_string_lossy());
-    rsync_up.arg(&local_src);
-    rsync_up.arg(&dst_remote);
-    
-    let output = rsync_up.output().await
-        .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-    
-    // Cleanup temp dir
+    .await;
+
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    
-    // Check exit status - be lenient with certain exit codes
-    let exit_code = output.status.code().unwrap_or(-1);
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        
-        eprintln!("[transfer] rsync exit code: {}", exit_code);
-        eprintln!("[transfer] rsync stderr: {}", stderr);
-        
-        // Exit code 255: SSH connection closed after transfer
-        // This is common with cloudflared tunnels - the connection drops after transfer completes
-        // Since we saw the progress output (speedup is X.XX) in terminal, the transfer succeeded
-        if exit_code == 255 {
-            eprintln!("[transfer] Exit code 255 (SSH connection closed) - treating as success for cloudflared tunnels");
-            return Ok(());
-        }
-        
-        // Exit code 24: Partial transfer due to vanished source files (often OK)
-        if exit_code == 24 {
-            eprintln!("[transfer] Exit code 24 (partial transfer) - treating as success");
-            return Ok(());
-        }
-        
-        return Err(AppError::command(format!(
-            "Upload to destination host failed (exit code {}): {}",
-            exit_code, stderr
-        )));
-    }
-    
-    Ok(())
+    result
 }
 
-/// Build SSH command-line options from SshSpec
-fn build_ssh_opts(ssh: &crate::ssh::SshSpec) -> String {
-    let mut opts = vec![format!("-p {}", ssh.port)];
-    
-    if let Some(key_path) = &ssh.key_path {
-        opts.push(format!("-i {}", key_path));
+fn build_rsync_ssh_wrapper(ssh: &crate::ssh::SshSpec) -> Result<PathBuf, AppError> {
+    let mut lines = vec![
+        "#!/usr/bin/env bash".to_string(),
+        "set -e".to_string(),
+        "cmd=(ssh)".to_string(),
+    ];
+
+    for opt in ssh.common_ssh_options() {
+        lines.push(format!("cmd+=({})", bash_quote(&opt)));
     }
-    
-    opts.push("-o StrictHostKeyChecking=accept-new".to_string());
-    
-    // Handle extra args (like ProxyCommand for cloudflared)
-    let mut i = 0;
-    while i < ssh.extra_args.len() {
-        if ssh.extra_args[i] == "-o" && i + 1 < ssh.extra_args.len() {
-            opts.push(format!("-o {}", ssh.extra_args[i + 1]));
-            i += 2;
-        } else {
-            opts.push(ssh.extra_args[i].clone());
-            i += 1;
-        }
+
+    lines.push(r#"exec "${cmd[@]}" "$@""#.to_string());
+
+    let script_path = std::env::temp_dir()
+        .join(format!("doppio_rsync_ssh_{}.sh", uuid::Uuid::new_v4()));
+    std::fs::write(&script_path, format!("{}\n", lines.join("\n")))
+        .map_err(|e| AppError::io(format!("Failed to write rsync ssh wrapper: {}", e)))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| AppError::io(format!("Failed to set rsync ssh wrapper permissions: {}", e)))?;
+
+    Ok(script_path)
+}
+
+fn bash_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn format_command_output(stdout: &str, stderr: &str) -> String {
+    if !stdout.is_empty() && !stderr.is_empty() {
+        format!("{}\n--- stderr ---\n{}", stdout, stderr)
+    } else if !stdout.is_empty() {
+        stdout.to_string()
+    } else if !stderr.is_empty() {
+        format!("(stderr only)\n{}", stderr)
+    } else {
+        "(no output)".to_string()
     }
-    
-    opts.join(" ")
 }
 
 /// Upload from local to storage using rclone
@@ -631,15 +630,12 @@ fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_js
             let full_path = format!("{}/{}", bucket, path.trim_start_matches('/'));
             Ok((Some(config), full_path))
         }
-        StorageBackend::GoogleDrive { token, root_folder_id, service_account_json, .. } => {
+        StorageBackend::GoogleDrive { token, root_folder_id, .. } => {
             let mut config = serde_json::json!({
                 "type": "drive",
                 "scope": "drive",
             });
-            // Service Account takes priority
-            if let Some(sa_json) = service_account_json {
-                config["service_account_credentials"] = serde_json::Value::String(sa_json.clone());
-            } else if let Some(token) = token {
+            if let Some(token) = token {
                 config["token"] = serde_json::Value::String(token.clone());
             }
             if let Some(root_id) = root_folder_id {
@@ -707,4 +703,3 @@ fn delete_temp_rclone_remote(name: &str) {
     let params = serde_json::json!({ "name": name });
     let _ = librclone::rpc("config/delete", &params.to_string());
 }
-

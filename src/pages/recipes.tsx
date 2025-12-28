@@ -519,13 +519,11 @@ export function RecipesPage() {
         <ModalContent>
           <ModalHeader>Create New Recipe</ModalHeader>
           <ModalBody>
-            <Input
-              label="Recipe Name"
-              placeholder="my-training-recipe"
-              value={newRecipeName}
-              onValueChange={setNewRecipeName}
-              autoFocus
-            />
+            <Input labelPlacement="inside" label="Recipe Name"
+            placeholder="my-training-recipe"
+            value={newRecipeName}
+            onValueChange={setNewRecipeName}
+            autoFocus />
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" onPress={onClose}>

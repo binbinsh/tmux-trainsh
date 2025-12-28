@@ -1,7 +1,13 @@
 use std::{
   collections::HashMap,
-  io::{Read, Write},
-  sync::{Arc, Mutex},
+  fs::{create_dir_all, File, OpenOptions},
+  io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
+  path::PathBuf,
+  sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+  },
+  time::{SystemTime, UNIX_EPOCH},
 };
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -9,7 +15,8 @@ use std::os::unix::fs::PermissionsExt;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+use dirs::home_dir;
 
 use crate::{
   config::load_config,
@@ -32,10 +39,15 @@ struct TermHandle {
   child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
   /// Shared output buffer for command completion detection
   output_buffer: Arc<std::sync::RwLock<String>>,
+  history: Arc<TermHistory>,
 }
 
 /// Maximum size of output buffer (1MB)
 const OUTPUT_BUFFER_MAX_SIZE: usize = 1024 * 1024;
+/// PTY read buffer size (larger reads reduce syscalls)
+const READ_BUFFER_SIZE: usize = 64 * 1024;
+/// tmux history limit for remote sessions (lines)
+const TMUX_HISTORY_LIMIT: usize = 200000;
 
 #[derive(Default)]
 pub struct TerminalManager {
@@ -51,6 +63,325 @@ struct TermDataEvent {
 #[derive(Debug, Clone, Serialize)]
 struct TermExitEvent {
   id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TermHistoryInfo {
+  pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TermHistoryChunk {
+  pub offset: u64,
+  pub data: String,
+  pub eof: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TermHistoryStep {
+  pub step_id: String,
+  pub step_index: usize,
+  pub start_offset: u64,
+  pub end_offset: u64,
+  pub started_at: u64,
+  pub ended_at: u64,
+  pub status: String,
+  pub exit_code: Option<i32>,
+}
+
+struct StepStart {
+  step_index: usize,
+  start_offset: u64,
+  started_at: u64,
+}
+
+pub(crate) struct TermHistory {
+  log_path: PathBuf,
+  steps_path: PathBuf,
+  writer: Mutex<File>,
+  steps_writer: Mutex<File>,
+  bytes_written: AtomicU64,
+  step_starts: Mutex<HashMap<String, StepStart>>,
+}
+
+const HISTORY_CHUNK_LIMIT: usize = 256 * 1024;
+
+impl TermHistory {
+  fn new(app: &tauri::AppHandle, id: &str) -> Result<Self, AppError> {
+    let base_dir = app
+      .path()
+      .app_data_dir()
+      .map_err(|e| AppError::io(format!("history app_data_dir failed: {e}")))?;
+    let history_dir = base_dir.join("terminal_history");
+    create_dir_all(&history_dir)
+      .map_err(|e| AppError::io(format!("history create dir failed: {e}")))?;
+
+    let log_path = history_dir.join(format!("{id}.log"));
+    let steps_path = history_dir.join(format!("{id}.steps.jsonl"));
+    let writer = OpenOptions::new()
+      .create(true)
+      .append(true)
+      .open(&log_path)
+      .map_err(|e| AppError::io(format!("history open log failed: {e}")))?;
+    let steps_writer = OpenOptions::new()
+      .create(true)
+      .append(true)
+      .open(&steps_path)
+      .map_err(|e| AppError::io(format!("history open steps failed: {e}")))?;
+    let size = writer
+      .metadata()
+      .map_err(|e| AppError::io(format!("history metadata failed: {e}")))?
+      .len();
+
+    Ok(Self {
+      log_path,
+      steps_path,
+      writer: Mutex::new(writer),
+      steps_writer: Mutex::new(steps_writer),
+      bytes_written: AtomicU64::new(size),
+      step_starts: Mutex::new(HashMap::new()),
+    })
+  }
+
+  fn now_millis() -> u64 {
+    SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap_or_default()
+      .as_millis() as u64
+  }
+
+  fn size(&self) -> u64 {
+    self.bytes_written.load(Ordering::Relaxed)
+  }
+
+  fn append_output(&self, data: &str) -> Result<(), AppError> {
+    if data.is_empty() {
+      return Ok(());
+    }
+    let mut file = self
+      .writer
+      .lock()
+      .map_err(|_| AppError::io("history writer lock poisoned"))?;
+    file
+      .write_all(data.as_bytes())
+      .map_err(|e| AppError::io(format!("history write failed: {e}")))?;
+    self
+      .bytes_written
+      .fetch_add(data.as_bytes().len() as u64, Ordering::Relaxed);
+    Ok(())
+  }
+
+  fn record_step_start(&self, step_id: &str, step_index: usize) -> Result<(), AppError> {
+    let start_offset = self.bytes_written.load(Ordering::Relaxed);
+    let started_at = Self::now_millis();
+    let mut map = self
+      .step_starts
+      .lock()
+      .map_err(|_| AppError::io("history step lock poisoned"))?;
+    map.insert(
+      step_id.to_string(),
+      StepStart {
+        step_index,
+        start_offset,
+        started_at,
+      },
+    );
+    Ok(())
+  }
+
+  fn record_step_end(
+    &self,
+    step_id: &str,
+    step_index: usize,
+    status: &str,
+    exit_code: Option<i32>,
+  ) -> Result<(), AppError> {
+    let end_offset = self.bytes_written.load(Ordering::Relaxed);
+    let ended_at = Self::now_millis();
+    let mut map = self
+      .step_starts
+      .lock()
+      .map_err(|_| AppError::io("history step lock poisoned"))?;
+    let start = map.remove(step_id).unwrap_or(StepStart {
+      step_index,
+      start_offset: end_offset,
+      started_at: ended_at,
+    });
+    let record = TermHistoryStep {
+      step_id: step_id.to_string(),
+      step_index: start.step_index,
+      start_offset: start.start_offset,
+      end_offset,
+      started_at: start.started_at,
+      ended_at,
+      status: status.to_string(),
+      exit_code,
+    };
+    let mut file = self
+      .steps_writer
+      .lock()
+      .map_err(|_| AppError::io("history steps writer lock poisoned"))?;
+    let line = serde_json::to_string(&record)
+      .map_err(|e| AppError::io(format!("history steps serialize failed: {e}")))?;
+    file
+      .write_all(line.as_bytes())
+      .map_err(|e| AppError::io(format!("history steps write failed: {e}")))?;
+    file
+      .write_all(b"\n")
+      .map_err(|e| AppError::io(format!("history steps newline failed: {e}")))?;
+    Ok(())
+  }
+
+  fn read_range(&self, offset: u64, limit: usize) -> Result<TermHistoryChunk, AppError> {
+    if limit == 0 {
+      return Ok(TermHistoryChunk {
+        offset,
+        data: String::new(),
+        eof: true,
+      });
+    }
+    let mut file = File::open(&self.log_path)
+      .map_err(|e| AppError::io(format!("history open log failed: {e}")))?;
+    let size = file
+      .metadata()
+      .map_err(|e| AppError::io(format!("history metadata failed: {e}")))?
+      .len();
+    if size == 0 {
+      return Ok(TermHistoryChunk {
+        offset: 0,
+        data: String::new(),
+        eof: true,
+      });
+    }
+    let offset = offset.min(size);
+    let limit = limit.min(HISTORY_CHUNK_LIMIT);
+    let remaining = (size - offset) as usize;
+    let to_read = limit.min(remaining);
+    file
+      .seek(SeekFrom::Start(offset))
+      .map_err(|e| AppError::io(format!("history seek failed: {e}")))?;
+    let mut buf = vec![0u8; to_read];
+    let n = file
+      .read(&mut buf)
+      .map_err(|e| AppError::io(format!("history read failed: {e}")))?;
+    let data = String::from_utf8_lossy(&buf[..n]).to_string();
+    Ok(TermHistoryChunk {
+      offset,
+      data,
+      eof: offset + n as u64 >= size,
+    })
+  }
+
+  fn read_tail(&self, limit: usize) -> Result<TermHistoryChunk, AppError> {
+    let size = self.size();
+    let limit = limit.min(HISTORY_CHUNK_LIMIT);
+    let start = size.saturating_sub(limit as u64);
+    self.read_range(start, limit)
+  }
+
+  fn list_steps(&self) -> Result<Vec<TermHistoryStep>, AppError> {
+    if !self.steps_path.exists() {
+      return Ok(Vec::new());
+    }
+    let file = File::open(&self.steps_path)
+      .map_err(|e| AppError::io(format!("history open steps failed: {e}")))?;
+    let reader = BufReader::new(file);
+    let mut steps = Vec::new();
+    for line in reader.lines() {
+      let line = match line {
+        Ok(line) => line,
+        Err(e) => {
+          eprintln!("[Terminal] history step read failed: {e}");
+          continue;
+        }
+      };
+      let trimmed = line.trim();
+      if trimmed.is_empty() {
+        continue;
+      }
+      match serde_json::from_str::<TermHistoryStep>(trimmed) {
+        Ok(step) => steps.push(step),
+        Err(e) => eprintln!("[Terminal] history step parse failed: {e}"),
+      }
+    }
+    steps.sort_by_key(|step| step.step_index);
+    Ok(steps)
+  }
+}
+
+fn append_output_buffer(buf: &mut String, chunk: &str) {
+  buf.push_str(chunk);
+  if buf.len() <= OUTPUT_BUFFER_MAX_SIZE {
+    return;
+  }
+
+  let trim_at = buf.len() / 2;
+  let trim_at = buf
+    .char_indices()
+    .find(|(i, _)| *i >= trim_at)
+    .map(|(i, _)| i)
+    .unwrap_or(buf.len());
+  if trim_at > 0 {
+    buf.drain(..trim_at);
+  }
+}
+
+fn emit_chunk(
+  app_handle: &tauri::AppHandle,
+  id: &str,
+  output_buf: &Arc<std::sync::RwLock<String>>,
+  history: &TermHistory,
+  chunk: String,
+) {
+  if let Ok(mut obuf) = output_buf.write() {
+    append_output_buffer(&mut obuf, &chunk);
+  }
+  if let Err(e) = history.append_output(&chunk) {
+    eprintln!("[Terminal] history append failed for {}: {}", id, e);
+  }
+
+  let _ = app_handle.emit(
+    "term:data",
+    TermDataEvent {
+      id: id.to_string(),
+      data: chunk,
+    },
+  );
+}
+
+fn spawn_pty_reader(
+  mut reader: Box<dyn Read + Send>,
+  app_handle: tauri::AppHandle,
+  id_data: String,
+  output_buf: Arc<std::sync::RwLock<String>>,
+  history: Arc<TermHistory>,
+  label: &'static str,
+) {
+  std::thread::spawn(move || {
+    let mut buf = vec![0u8; READ_BUFFER_SIZE];
+
+    loop {
+      let n = match reader.read(&mut buf) {
+        Ok(0) => {
+          eprintln!("[Terminal] {} PTY EOF for {}", label, id_data);
+          break;
+        }
+        Ok(n) => n,
+        Err(e) => {
+          eprintln!("[Terminal] {} PTY read error for {}: {}", label, id_data, e);
+          break;
+        }
+      };
+
+      let s = String::from_utf8_lossy(&buf[..n]).into_owned();
+      emit_chunk(&app_handle, &id_data, &output_buf, &history, s);
+    }
+
+    eprintln!("[Terminal] Emitting term:exit for {}", id_data);
+    let _ = app_handle.emit("term:exit", TermExitEvent { id: id_data });
+  });
 }
 
 impl TerminalManager {
@@ -75,6 +406,11 @@ impl TerminalManager {
     map.get(id).cloned()
   }
 
+  pub(crate) async fn history(&self, id: &str) -> Option<Arc<TermHistory>> {
+    let map = self.sessions.lock().await;
+    map.get(id).map(|h| h.history.clone())
+  }
+
   async fn remove(&self, id: &str) -> Option<TermHandle> {
     let mut map = self.sessions.lock().await;
     map.remove(id)
@@ -91,6 +427,35 @@ impl TerminalManager {
     let map = self.sessions.lock().await;
     map.get(id).and_then(|h| h.output_buffer.read().ok().map(|b| b.len()))
   }
+}
+
+async fn history_for(mgr: &TerminalManager, id: &str) -> Result<Arc<TermHistory>, AppError> {
+  mgr
+    .history(id)
+    .await
+    .ok_or_else(|| AppError::invalid_input(format!("Unknown terminal session: {id}")))
+}
+
+pub(crate) async fn history_step_start(
+  mgr: &TerminalManager,
+  id: &str,
+  step_id: &str,
+  step_index: usize,
+) -> Result<(), AppError> {
+  let history = history_for(mgr, id).await?;
+  history.record_step_start(step_id, step_index)
+}
+
+pub(crate) async fn history_step_end(
+  mgr: &TerminalManager,
+  id: &str,
+  step_id: &str,
+  step_index: usize,
+  status: &str,
+  exit_code: Option<i32>,
+) -> Result<(), AppError> {
+  let history = history_for(mgr, id).await?;
+  history.record_step_end(step_id, step_index, status, exit_code)
 }
 
 /// Simple wait for a marker string in terminal output
@@ -124,6 +489,52 @@ pub async fn wait_for_marker(
         // Also check if new_output starts with marker (rare edge case)
         if new_output.starts_with(marker) {
           return;
+        }
+      }
+    }
+  }
+}
+
+/// Wait for marker with exit code in format "MARKER:CODE"
+/// Returns the exit code (0 if parsing fails)
+pub async fn wait_for_marker_with_exit_code(
+  mgr: &TerminalManager,
+  term_id: &str,
+  marker: &str,
+) -> i32 {
+  let poll_interval = std::time::Duration::from_millis(100);
+  
+  // Get initial output length to only search new output
+  let initial_len = mgr.get_output_len(term_id).await.unwrap_or(0);
+  
+  // Pattern: MARKER:CODE (e.g., ___DOPPIO_DONE___:0)
+  let marker_prefix = format!("{}:", marker);
+  
+  loop {
+    tokio::time::sleep(poll_interval).await;
+    
+    // Check for marker in output
+    if let Some(output) = mgr.get_output(term_id).await {
+      if output.len() > initial_len {
+        let new_output = &output[initial_len..];
+        
+        // Look for marker:code pattern
+        for line in new_output.lines() {
+          let line = line.trim();
+          if line.starts_with(&marker_prefix) {
+            // Extract exit code
+            let code_str = &line[marker_prefix.len()..];
+            return code_str.parse().unwrap_or(0);
+          }
+        }
+        
+        // Also check with \r\n line endings
+        for line in new_output.split("\r\n") {
+          let line = line.trim();
+          if line.starts_with(&marker_prefix) {
+            let code_str = &line[marker_prefix.len()..];
+            return code_str.parse().unwrap_or(0);
+          }
         }
       }
     }
@@ -247,7 +658,14 @@ async fn open_ssh_tmux_inner(
     String::new()
   };
   
-  let remote_cmd = format!("{}tmux new-session -A -s {}", env_exports, session);
+  let remote_cmd = format!(
+    "{}tmux start-server; tmux set-option -g history-limit {}; tmux set-option -t {} history-limit {} 2>/dev/null; tmux new-session -A -s {}",
+    env_exports,
+    TMUX_HISTORY_LIMIT,
+    session,
+    TMUX_HISTORY_LIMIT,
+    session
+  );
   
   
   // Check if we have a ProxyCommand in extra_args (needs special handling)
@@ -321,6 +739,7 @@ async fn open_ssh_tmux_inner(
   let writer = Arc::new(Mutex::new(writer));
   let child = Arc::new(Mutex::new(child));
   let output_buffer = Arc::new(std::sync::RwLock::new(String::new()));
+  let history = Arc::new(TermHistory::new(&app, &id)?);
 
   mgr
     .insert(
@@ -331,48 +750,22 @@ async fn open_ssh_tmux_inner(
         writer: writer.clone(),
         child: child.clone(),
         output_buffer: output_buffer.clone(),
+        history: history.clone(),
       },
     )
     .await;
 
-  // Reader loop (blocking thread).
+  // Reader loop (blocking thread)
   let app_handle = app.clone();
   let id_data = id.clone();
-  let output_buf_clone = output_buffer.clone();
-  std::thread::spawn(move || {
-    let mut buf: [u8; 4096] = [0; 4096];
-
-    loop {
-      let n = match reader.read(&mut buf) {
-        Ok(0) => {
-          eprintln!("[Terminal] PTY EOF for {}", id_data);
-          break;
-        }
-        Ok(n) => n,
-        Err(e) => {
-          eprintln!("[Terminal] PTY read error for {}: {}", id_data, e);
-          break;
-        }
-      };
-      
-      // Emit data immediately for responsiveness
-      let s = String::from_utf8_lossy(&buf[..n]).to_string();
-      let _ = app_handle.emit("term:data", TermDataEvent { id: id_data.clone(), data: s.clone() });
-      
-      // Store in output buffer for command completion detection
-      if let Ok(mut obuf) = output_buf_clone.write() {
-        obuf.push_str(&s);
-        // Trim buffer if too large (keep last half)
-        if obuf.len() > OUTPUT_BUFFER_MAX_SIZE {
-          let mid = obuf.len() / 2;
-          *obuf = obuf[mid..].to_string();
-        }
-      }
-    }
-
-    eprintln!("[Terminal] Emitting term:exit for {}", id_data);
-    let _ = app_handle.emit("term:exit", TermExitEvent { id: id_data });
-  });
+  spawn_pty_reader(
+    reader,
+    app_handle,
+    id_data,
+    output_buffer.clone(),
+    history.clone(),
+    "SSH",
+  );
 
   Ok(TermSessionInfo { id, title })
 }
@@ -380,6 +773,53 @@ async fn open_ssh_tmux_inner(
 #[tauri::command]
 pub async fn term_list(mgr: tauri::State<'_, TerminalManager>) -> Result<Vec<TermSessionInfo>, AppError> {
   Ok(mgr.list().await)
+}
+
+#[tauri::command]
+pub async fn term_history_info(
+  mgr: tauri::State<'_, TerminalManager>,
+  id: String,
+) -> Result<TermHistoryInfo, AppError> {
+  let history = history_for(&mgr, &id).await?;
+  Ok(TermHistoryInfo {
+    size_bytes: history.size(),
+  })
+}
+
+#[tauri::command]
+pub async fn term_history_range(
+  mgr: tauri::State<'_, TerminalManager>,
+  id: String,
+  offset: u64,
+  limit: usize,
+) -> Result<TermHistoryChunk, AppError> {
+  let history = history_for(&mgr, &id).await?;
+  tokio::task::spawn_blocking(move || history.read_range(offset, limit))
+    .await
+    .map_err(|e| AppError::io(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn term_history_tail(
+  mgr: tauri::State<'_, TerminalManager>,
+  id: String,
+  limit: usize,
+) -> Result<TermHistoryChunk, AppError> {
+  let history = history_for(&mgr, &id).await?;
+  tokio::task::spawn_blocking(move || history.read_tail(limit))
+    .await
+    .map_err(|e| AppError::io(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn term_history_steps(
+  mgr: tauri::State<'_, TerminalManager>,
+  id: String,
+) -> Result<Vec<TermHistoryStep>, AppError> {
+  let history = history_for(&mgr, &id).await?;
+  tokio::task::spawn_blocking(move || history.list_steps())
+    .await
+    .map_err(|e| AppError::io(e.to_string()))?
 }
 
 #[tauri::command]
@@ -541,12 +981,20 @@ pub async fn open_local_inner(
 
   // Determine the user's shell
   let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+  let home = home_dir().unwrap_or_else(|| std::path::PathBuf::from("~"));
+  let histfile = std::env::var("HISTFILE")
+    .unwrap_or_else(|_| home.join(".zsh_history").display().to_string());
+  let hist_size = std::env::var("HISTSIZE").unwrap_or_else(|_| "50000".to_string());
+  let save_hist = std::env::var("SAVEHIST").unwrap_or_else(|_| "10000".to_string());
 
   let mut cmd = CommandBuilder::new(&shell);
   cmd.arg("-l"); // Login shell
   cmd.env("TERM", "xterm-256color");
   cmd.env("LANG", "en_US.UTF-8");
   cmd.env("LC_ALL", "en_US.UTF-8");
+  cmd.env("HISTFILE", histfile);
+  cmd.env("HISTSIZE", hist_size);
+  cmd.env("SAVEHIST", save_hist);
 
   // Spawn shell inside the PTY
   let child = pair
@@ -567,6 +1015,7 @@ pub async fn open_local_inner(
   let writer = Arc::new(Mutex::new(writer));
   let child = Arc::new(Mutex::new(child));
   let output_buffer = Arc::new(std::sync::RwLock::new(String::new()));
+  let history = Arc::new(TermHistory::new(&app, &id)?);
 
   mgr
     .insert(
@@ -577,6 +1026,7 @@ pub async fn open_local_inner(
         writer: writer.clone(),
         child: child.clone(),
         output_buffer: output_buffer.clone(),
+        history: history.clone(),
       },
     )
     .await;
@@ -584,39 +1034,14 @@ pub async fn open_local_inner(
   // Reader loop (blocking thread)
   let app_handle = app.clone();
   let id_data = id.clone();
-  let output_buf_clone = output_buffer.clone();
-  std::thread::spawn(move || {
-    let mut buf: [u8; 4096] = [0; 4096];
-
-    loop {
-      let n = match reader.read(&mut buf) {
-        Ok(0) => {
-          eprintln!("[Terminal] Local PTY EOF for {}", id_data);
-          break;
-        }
-        Ok(n) => n,
-        Err(e) => {
-          eprintln!("[Terminal] Local PTY read error for {}: {}", id_data, e);
-          break;
-        }
-      };
-
-      let s = String::from_utf8_lossy(&buf[..n]).to_string();
-      let _ = app_handle.emit("term:data", TermDataEvent { id: id_data.clone(), data: s.clone() });
-      
-      // Store in output buffer for command completion detection
-      if let Ok(mut obuf) = output_buf_clone.write() {
-        obuf.push_str(&s);
-        if obuf.len() > OUTPUT_BUFFER_MAX_SIZE {
-          let mid = obuf.len() / 2;
-          *obuf = obuf[mid..].to_string();
-        }
-      }
-    }
-
-    eprintln!("[Terminal] Emitting term:exit for local terminal {}", id_data);
-    let _ = app_handle.emit("term:exit", TermExitEvent { id: id_data });
-  });
+  spawn_pty_reader(
+    reader,
+    app_handle,
+    id_data,
+    output_buffer.clone(),
+    history.clone(),
+    "Local",
+  );
 
   Ok(TermSessionInfo { id, title })
 }
@@ -818,7 +1243,14 @@ pub async fn open_ssh_tmux_inner_static(
     String::new()
   };
   
-  let remote_cmd = format!("{}tmux new-session -A -s {}", env_exports, session);
+  let remote_cmd = format!(
+    "{}tmux start-server; tmux set-option -g history-limit {}; tmux set-option -t {} history-limit {} 2>/dev/null; tmux new-session -A -s {}",
+    env_exports,
+    TMUX_HISTORY_LIMIT,
+    session,
+    TMUX_HISTORY_LIMIT,
+    session
+  );
   
   
   // Check if we have a ProxyCommand in extra_args (needs special handling)
@@ -892,6 +1324,7 @@ pub async fn open_ssh_tmux_inner_static(
   let writer = Arc::new(Mutex::new(writer));
   let child = Arc::new(Mutex::new(child));
   let output_buffer = Arc::new(std::sync::RwLock::new(String::new()));
+  let history = Arc::new(TermHistory::new(&app, &id)?);
 
   mgr
     .insert(
@@ -902,47 +1335,22 @@ pub async fn open_ssh_tmux_inner_static(
         writer: writer.clone(),
         child: child.clone(),
         output_buffer: output_buffer.clone(),
+        history: history.clone(),
       },
     )
     .await;
 
-  // Reader loop (blocking thread).
+  // Reader loop (blocking thread)
   let app_handle = app.clone();
   let id_data = id.clone();
-  let output_buf_clone = output_buffer.clone();
-  std::thread::spawn(move || {
-    let mut buf: [u8; 4096] = [0; 4096];
-
-    loop {
-      let n = match reader.read(&mut buf) {
-        Ok(0) => {
-          eprintln!("[Terminal] Vast PTY EOF for {}", id_data);
-          break;
-        }
-        Ok(n) => n,
-        Err(e) => {
-          eprintln!("[Terminal] Vast PTY read error for {}: {}", id_data, e);
-          break;
-        }
-      };
-      
-      // Emit data immediately for responsiveness
-      let s = String::from_utf8_lossy(&buf[..n]).to_string();
-      let _ = app_handle.emit("term:data", TermDataEvent { id: id_data.clone(), data: s.clone() });
-      
-      // Store in output buffer for command completion detection
-      if let Ok(mut obuf) = output_buf_clone.write() {
-        obuf.push_str(&s);
-        if obuf.len() > OUTPUT_BUFFER_MAX_SIZE {
-          let mid = obuf.len() / 2;
-          *obuf = obuf[mid..].to_string();
-        }
-      }
-    }
-
-    eprintln!("[Terminal] Emitting term:exit for vast terminal {}", id_data);
-    let _ = app_handle.emit("term:exit", TermExitEvent { id: id_data });
-  });
+  spawn_pty_reader(
+    reader,
+    app_handle,
+    id_data,
+    output_buffer.clone(),
+    history.clone(),
+    "Vast",
+  );
 
   Ok(TermSessionInfo { id, title })
 }
@@ -963,4 +1371,26 @@ pub async fn term_write_inner(mgr: &TerminalManager, id: &str, data: &str) -> Re
   .await
   .map_err(|e| AppError::io(e.to_string()))??;
   Ok(())
+}
+
+/// Display data directly in xterm.js without sending to PTY/shell
+/// This avoids the command being echoed back by the shell
+pub(crate) fn term_display(
+  app: &tauri::AppHandle,
+  id: &str,
+  data: &str,
+  history: Option<&TermHistory>,
+) {
+  if let Some(history) = history {
+    if let Err(e) = history.append_output(data) {
+      eprintln!("[Terminal] history append failed for {}: {}", id, e);
+    }
+  }
+  let _ = app.emit(
+    "term:data",
+    TermDataEvent {
+      id: id.to_string(),
+      data: data.to_string(),
+    },
+  );
 }

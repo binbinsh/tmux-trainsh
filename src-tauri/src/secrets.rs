@@ -352,10 +352,6 @@ pub mod common {
     pub const WANDB_API_KEY: &str = "wandb/api_key";
     pub const OPENAI_API_KEY: &str = "openai/api_key";
     pub const ANTHROPIC_API_KEY: &str = "anthropic/api_key";
-    pub const COMET_API_KEY: &str = "comet/api_key";
-    pub const NEPTUNE_API_TOKEN: &str = "neptune/api_token";
-    pub const KAGGLE_USERNAME: &str = "kaggle/username";
-    pub const KAGGLE_KEY: &str = "kaggle/key";
     pub const SSH_PASSPHRASE: &str = "ssh/passphrase";
 }
 
@@ -367,10 +363,6 @@ pub fn suggested_secrets() -> Vec<(&'static str, &'static str, &'static str)> {
         (common::WANDB_API_KEY, "Weights & Biases API Key", "Log training metrics to W&B"),
         (common::OPENAI_API_KEY, "OpenAI API Key", "Access GPT models"),
         (common::ANTHROPIC_API_KEY, "Anthropic API Key", "Access Claude models"),
-        (common::COMET_API_KEY, "Comet ML API Key", "Log experiments to Comet"),
-        (common::NEPTUNE_API_TOKEN, "Neptune API Token", "Log experiments to Neptune"),
-        (common::KAGGLE_USERNAME, "Kaggle Username", "Download datasets from Kaggle"),
-        (common::KAGGLE_KEY, "Kaggle API Key", "Authenticate with Kaggle API"),
     ]
 }
 
@@ -466,4 +458,3 @@ mod tests {
         assert!(refs.is_empty());
     }
 }
-

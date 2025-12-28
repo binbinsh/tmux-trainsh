@@ -27,6 +27,7 @@ import {
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
+import { AppIcon } from "../components/AppIcon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
@@ -66,6 +67,25 @@ function IconRefresh() {
       <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
     </svg>
   );
+}
+
+function getStorageIconNode(storage: Storage, sizeClass = "w-7 h-7") {
+  switch (storage.backend.type) {
+    case "google_drive":
+      return <AppIcon name="googledrive" className={sizeClass} alt="Google Drive" />;
+    case "cloudflare_r2":
+      return <AppIcon name="cloudflare" className={sizeClass} alt="Cloudflare R2" />;
+    case "ssh_remote":
+      return <AppIcon name="ssh" className={sizeClass} alt="SSH" />;
+    case "smb":
+      return <AppIcon name="smb" className={sizeClass} alt="SMB" />;
+    default:
+      return (
+        <span className={sizeClass.includes("w-4") ? "text-sm" : "text-2xl"}>
+          {storage.icon || "📁"}
+        </span>
+      );
+  }
 }
 
 function IconNewFolder() {
@@ -213,43 +233,36 @@ function TransferModal({
                   </div>
                 </div>
 
-                <Select
-                  label="Destination Storage"
-                  placeholder="Select destination"
-                  selectedKeys={destStorageId ? [destStorageId] : []}
-                  onSelectionChange={(keys) => {
-                    const id = Array.from(keys)[0] as string;
-                    setDestStorageId(id);
-                  }}
-                  isRequired
-                >
-                  {otherStorages.map((s) => (
-                    <SelectItem key={s.id}>
-                      {s.icon || "📁"} {s.name}
-                    </SelectItem>
-                  ))}
-                </Select>
+                <Select labelPlacement="inside" label="Destination Storage"
+                placeholder="Select destination"
+                selectedKeys={destStorageId ? [destStorageId] : []}
+                onSelectionChange={(keys) => {
+                  const id = Array.from(keys)[0] as string;
+                  setDestStorageId(id);
+                }}
+                isRequired>{otherStorages.map((s) => (
+                  <SelectItem key={s.id}>
+                    <span className="flex items-center gap-2">
+                      {getStorageIconNode(s, "w-4 h-4")}
+                      {s.name}
+                    </span>
+                  </SelectItem>
+                ))}</Select>
 
-                <Input
-                  label="Destination Path"
-                  placeholder="/"
-                  value={destPath}
-                  onValueChange={setDestPath}
-                  description="Path on destination storage"
-                />
+                <Input labelPlacement="inside" label="Destination Path"
+                placeholder="/"
+                value={destPath}
+                onValueChange={setDestPath}
+                description="Path on destination storage" />
 
-                <Select
-                  label="Operation"
-                  selectedKeys={[operation]}
-                  onSelectionChange={(keys) => {
-                    setOperation(Array.from(keys)[0] as TransferOperation);
-                  }}
-                >
-                  <SelectItem key="copy">Copy (keep source)</SelectItem>
-                  <SelectItem key="move">Move (delete source after)</SelectItem>
-                  <SelectItem key="sync">Sync (mirror with delete)</SelectItem>
-                  <SelectItem key="sync_no_delete">Sync (no delete)</SelectItem>
-                </Select>
+                <Select labelPlacement="inside" label="Operation"
+                selectedKeys={[operation]}
+                onSelectionChange={(keys) => {
+                  setOperation(Array.from(keys)[0] as TransferOperation);
+                }}><SelectItem key="copy">Copy (keep source)</SelectItem>
+                <SelectItem key="move">Move (delete source after)</SelectItem>
+                <SelectItem key="sync">Sync (mirror with delete)</SelectItem>
+                <SelectItem key="sync_no_delete">Sync (no delete)</SelectItem></Select>
 
                 {error && <p className="text-sm text-danger">{error}</p>}
               </div>
@@ -316,14 +329,12 @@ function NewFolderModal({
           <>
             <ModalHeader>New Folder</ModalHeader>
             <ModalBody>
-              <Input
-                label="Folder Name"
-                placeholder="my-folder"
-                value={name}
-                onValueChange={setName}
-                autoFocus
-                isRequired
-              />
+              <Input labelPlacement="inside" label="Folder Name"
+              placeholder="my-folder"
+              value={name}
+              onValueChange={setName}
+              autoFocus
+              isRequired />
               {error && <p className="text-sm text-danger">{error}</p>}
             </ModalBody>
             <ModalFooter>
@@ -475,7 +486,7 @@ export function FileBrowserPage() {
             >
               <IconArrowLeft />
             </Button>
-            <span className="text-2xl">{storage.icon || "📁"}</span>
+            {getStorageIconNode(storage)}
             <div>
               <h1 className="text-lg font-semibold">{storage.name}</h1>
               <p className="text-xs text-foreground/60">
@@ -678,4 +689,3 @@ export function FileBrowserPage() {
     </div>
   );
 }
-

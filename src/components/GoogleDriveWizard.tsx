@@ -15,8 +15,10 @@ import {
   Textarea,
 } from "@nextui-org/react";
 import { Button } from "./ui";
+import { AppIcon } from "./AppIcon";
 import { open } from "@tauri-apps/plugin-shell";
 import { useState } from "react";
+import { copyText } from "../lib/clipboard";
 import { gdriveOAuthApi, storageApi } from "../lib/tauri-api";
 import type { StorageCreateInput } from "../lib/types";
 import { motion, AnimatePresence } from "framer-motion";
@@ -210,7 +212,7 @@ export function GoogleDriveWizard({
     try {
       const input: StorageCreateInput = {
         name: storageName.trim() || "Google Drive",
-        icon: "📁",
+        icon: null,
         backend: {
           type: "google_drive",
           client_id: clientId.trim(),
@@ -236,13 +238,13 @@ export function GoogleDriveWizard({
       await open(url);
     } catch (e) {
       // Fallback: copy to clipboard
-      navigator.clipboard.writeText(url);
+      void copyText(url);
       setError("Could not open browser. URL copied to clipboard.");
     }
   }
 
   function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
+    void copyText(text);
   }
 
   // ============================================================
@@ -376,34 +378,28 @@ export function GoogleDriveWizard({
             Enter the OAuth credentials you created in the previous step.
           </p>
           
-          <Input
-            label="Storage Name"
-            placeholder="Google Drive"
-            value={storageName}
-            onValueChange={setStorageName}
-            description="A friendly name for this storage location"
-          />
+          <Input labelPlacement="inside" label="Storage Name"
+          placeholder="Google Drive"
+          value={storageName}
+          onValueChange={setStorageName}
+          description="A friendly name for this storage location" />
           
           <Divider />
           
-          <Input
-            label="Client ID"
-            placeholder="xxxxxxxx.apps.googleusercontent.com"
-            value={clientId}
-            onValueChange={setClientId}
-            isRequired
-            description="The OAuth 2.0 Client ID from Google Cloud Console"
-          />
+          <Input labelPlacement="inside" label="Client ID"
+          placeholder="xxxxxxxx.apps.googleusercontent.com"
+          value={clientId}
+          onValueChange={setClientId}
+          isRequired
+          description="The OAuth 2.0 Client ID from Google Cloud Console" />
           
-          <Input
-            label="Client Secret"
-            type="password"
-            placeholder="GOCSPX-xxxxxxxx"
-            value={clientSecret}
-            onValueChange={setClientSecret}
-            isRequired
-            description="The OAuth 2.0 Client Secret from Google Cloud Console"
-          />
+          <Input labelPlacement="inside" label="Client Secret"
+          type="password"
+          placeholder="GOCSPX-xxxxxxxx"
+          value={clientSecret}
+          onValueChange={setClientSecret}
+          isRequired
+          description="The OAuth 2.0 Client Secret from Google Cloud Console" />
           
           {error && (
             <p className="text-sm text-danger">{error}</p>
@@ -450,15 +446,13 @@ export function GoogleDriveWizard({
             </CardBody>
           </Card>
           
-          <Textarea
-            label="Authorization Code"
-            placeholder="Paste the authorization code here..."
-            value={authCode}
-            onValueChange={setAuthCode}
-            minRows={2}
-            maxRows={4}
-            description="The code shown after you authorize the app"
-          />
+          <Textarea labelPlacement="inside" label="Authorization Code"
+          placeholder="Paste the authorization code here..."
+          value={authCode}
+          onValueChange={setAuthCode}
+          minRows={2}
+          maxRows={4}
+          description="The code shown after you authorize the app" />
           
           <div className="p-3 bg-warning/10 rounded-lg border border-warning/20">
             <p className="text-sm text-warning">
@@ -493,7 +487,7 @@ export function GoogleDriveWizard({
           <Card className="bg-content2">
             <CardBody>
               <div className="flex items-center gap-3">
-                <span className="text-2xl">📁</span>
+                <AppIcon name="googledrive" className="w-8 h-8" alt="Google Drive" />
                 <div>
                   <p className="font-medium">{storageName || "Google Drive"}</p>
                   <p className="text-sm text-foreground/60">Google Drive</p>
@@ -532,7 +526,7 @@ export function GoogleDriveWizard({
           <>
             <ModalHeader className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
-                <span className="text-2xl">📁</span>
+                <AppIcon name="googledrive" className="w-8 h-8" alt="Google Drive" />
                 <span>Connect Google Drive</span>
               </div>
               
@@ -648,4 +642,3 @@ export function GoogleDriveWizard({
     </Modal>
   );
 }
-

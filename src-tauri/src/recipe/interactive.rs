@@ -56,6 +56,8 @@ pub struct InteractiveExecution {
     pub current_step: Option<String>,
     /// Step statuses
     pub steps: Vec<InteractiveStepState>,
+    /// Optional progress messages keyed by step_id
+    pub step_progress: std::collections::HashMap<String, String>,
     /// Timestamps
     pub created_at: String,
     pub started_at: Option<String>,
@@ -270,6 +272,7 @@ impl InteractiveRunner {
             intervention_locked: false,
             current_step: None,
             steps,
+            step_progress: std::collections::HashMap::new(),
             created_at: now,
             started_at: None,
             completed_at: None,
@@ -376,6 +379,22 @@ impl InteractiveRunner {
         Ok(())
     }
     
+    /// Update or clear step progress message
+    pub async fn set_step_progress(&self, id: &str, step_id: &str, progress: Option<String>) -> Result<(), AppError> {
+        let execs = self.executions.read().await;
+        let state = execs.get(id)
+            .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
+        
+        let mut exec = state.execution.write().await;
+        if let Some(msg) = progress {
+            exec.step_progress.insert(step_id.to_string(), msg);
+        } else {
+            exec.step_progress.remove(step_id);
+        }
+        
+        Ok(())
+    }
+    
     /// Set current step
     pub async fn set_current_step(&self, id: &str, step_id: Option<String>) -> Result<(), AppError> {
         let execs = self.executions.read().await;
@@ -445,4 +464,3 @@ pub async fn init_runner(tx: mpsc::UnboundedSender<InteractiveEvent>) {
     let mut runner = get_runner_inner().lock().await;
     *runner = InteractiveRunner::new().with_event_sender(tx);
 }
-

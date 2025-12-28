@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  Currency,
   ColabGpuPricing,
   ColabPricingResult,
   ColabSubscription,
@@ -134,6 +135,10 @@ export async function sshKeyCandidates(): Promise<string[]> {
 
 export async function sshPublicKey(privateKeyPath: string): Promise<string> {
   return await invoke("ssh_public_key", { privateKeyPath });
+}
+
+export async function sshPrivateKey(privateKeyPath: string): Promise<string> {
+  return await invoke("ssh_private_key", { privateKeyPath });
 }
 
 export type SshKeyInfo = {
@@ -365,6 +370,27 @@ export type TermSessionInfo = {
   title: string;
 };
 
+export type TermHistoryInfo = {
+  sizeBytes: number;
+};
+
+export type TermHistoryChunk = {
+  offset: number;
+  data: string;
+  eof: boolean;
+};
+
+export type TermHistoryStep = {
+  stepId: string;
+  stepIndex: number;
+  startOffset: number;
+  endOffset: number;
+  startedAt: number;
+  endedAt: number;
+  status: string;
+  exitCode?: number | null;
+};
+
 export async function termList(): Promise<TermSessionInfo[]> {
   return await invoke("term_list");
 }
@@ -435,6 +461,36 @@ export async function termResize(id: string, cols: number, rows: number): Promis
 
 export async function termClose(id: string): Promise<void> {
   await invoke("term_close", { id });
+}
+
+export async function termHistoryInfo(id: string): Promise<TermHistoryInfo> {
+  return await invoke("term_history_info", { id });
+}
+
+export async function termHistoryRange(params: {
+  id: string;
+  offset: number;
+  limit: number;
+}): Promise<TermHistoryChunk> {
+  return await invoke("term_history_range", {
+    id: params.id,
+    offset: params.offset,
+    limit: params.limit,
+  });
+}
+
+export async function termHistoryTail(params: {
+  id: string;
+  limit: number;
+}): Promise<TermHistoryChunk> {
+  return await invoke("term_history_tail", {
+    id: params.id,
+    limit: params.limit,
+  });
+}
+
+export async function termHistorySteps(id: string): Promise<TermHistoryStep[]> {
+  return await invoke("term_history_steps", { id });
 }
 
 /**
@@ -861,6 +917,10 @@ export const pricingApi = {
     return await safeInvoke<ExchangeRates>("pricing_fetch_rates");
   },
 
+  updateDisplayCurrency: async (displayCurrency: Currency): Promise<PricingSettings> => {
+    return await safeInvoke<PricingSettings>("pricing_update_display_currency", { displayCurrency });
+  },
+
   reset: async (): Promise<PricingSettings> => {
     return await safeInvoke<PricingSettings>("pricing_reset");
   },
@@ -1000,6 +1060,16 @@ export function useFetchExchangeRates() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: pricingApi.fetchRates,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pricing"] });
+    },
+  });
+}
+
+export function useUpdateDisplayCurrency() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: pricingApi.updateDisplayCurrency,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pricing"] });
     },
@@ -1470,17 +1540,63 @@ export function useInteractiveExecution(id: string | null) {
         "recipe:step_started",
         "recipe:step_completed", 
         "recipe:step_failed",
+        "recipe:step_progress",
         "recipe:command_sending",
         "recipe:command_failed",
         "recipe:execution_completed",
+        "recipe:execution_failed",
         "recipe:intervention_lock_changed",
       ];
       
       const unlisteners: (() => void)[] = [];
       
       for (const eventName of events) {
-        const u = await listen<{ execution_id?: string }>(eventName, (event) => {
+        const u = await listen<{
+          execution_id?: string;
+          step_id?: string;
+          status?: string;
+        }>(eventName, (event) => {
           if (event.payload.execution_id === id) {
+            queryClient.setQueryData<InteractiveExecution | undefined>(
+              ["interactive-executions", id],
+              (prev) => {
+                if (!prev) return prev;
+                const next: InteractiveExecution = { ...prev };
+                const stepId = event.payload.step_id;
+
+                if (eventName === "recipe:execution_updated" && event.payload.status) {
+                  next.status = event.payload.status as InteractiveExecution["status"];
+                }
+                if (eventName === "recipe:execution_completed") next.status = "completed";
+                if (eventName === "recipe:execution_failed") next.status = "failed";
+                if (eventName === "recipe:step_progress") {
+                  const stepIdForProgress = event.payload.step_id;
+                  if (stepIdForProgress) {
+                    const map = { ...(prev.step_progress ?? {}) };
+                    if (event.payload.progress == null) {
+                      delete map[stepIdForProgress];
+                    } else {
+                      map[stepIdForProgress] = event.payload.progress as string;
+                    }
+                    next.step_progress = map;
+                  }
+                }
+
+                if (stepId) {
+                  const steps = prev.steps.map((step) => {
+                    if (step.step_id !== stepId) return step;
+                    if (eventName === "recipe:step_started") return { ...step, status: "running" };
+                    if (eventName === "recipe:step_completed") return { ...step, status: "success" };
+                    if (eventName === "recipe:step_failed") return { ...step, status: "failed" };
+                    if (eventName === "recipe:command_sending") return { ...step, status: "running" };
+                    return step;
+                  });
+                  next.steps = steps;
+                }
+
+                return next;
+              }
+            );
             // Invalidate query to trigger immediate refetch
             queryClient.invalidateQueries({ queryKey: ["interactive-executions", id] });
           }

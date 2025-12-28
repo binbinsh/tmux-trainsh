@@ -2,8 +2,6 @@ import {
   Card,
   CardBody,
   CardHeader,
-  Chip,
-  Divider,
   Input,
   Modal,
   ModalBody,
@@ -19,50 +17,31 @@ import {
   TableColumn,
   TableHeader,
   TableRow,
-  Textarea,
   Tooltip,
   useDisclosure
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
+import { AppIcon } from "../components/AppIcon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { copyText } from "../lib/clipboard";
 import {
   getConfig,
   pricingApi,
   saveConfig,
   secretsApi,
-  sshGenerateKey,
   sshKeyCandidates,
+  sshPrivateKey,
   sshPublicKey,
+  useFetchExchangeRates,
   useColabPricingCalculation,
+  usePricingSettings,
   useUpdateColabGpuPricing,
-  useUpdateColabSubscription
+  useUpdateColabSubscription,
+  useUpdateDisplayCurrency
 } from "../lib/tauri-api";
 import type { ColabGpuPricing, Currency, SecretMeta, SecretSuggestion, TrainshConfig } from "../lib/types";
-
-// ============================================================
-// Currency Helpers
-// ============================================================
-
-const CURRENCIES: { value: Currency; label: string; symbol: string }[] = [
-  { value: "USD", label: "US Dollar", symbol: "$" },
-  { value: "JPY", label: "Japanese Yen", symbol: "¥" },
-  { value: "HKD", label: "Hong Kong Dollar", symbol: "HK$" },
-  { value: "CNY", label: "Chinese Yuan", symbol: "¥" },
-  { value: "EUR", label: "Euro", symbol: "€" },
-  { value: "GBP", label: "British Pound", symbol: "£" },
-  { value: "KRW", label: "Korean Won", symbol: "₩" },
-  { value: "TWD", label: "Taiwan Dollar", symbol: "NT$" }
-];
-
-function getCurrencySymbol(currency: Currency): string {
-  return CURRENCIES.find((c) => c.value === currency)?.symbol ?? "$";
-}
-
-function formatPrice(price: number, currency?: Currency, decimals = 4): string {
-  const symbol = currency ? getCurrencySymbol(currency) : "$";
-  return `${symbol}${price.toFixed(decimals)}`;
-}
+import { CURRENCIES, formatPriceWithRates, getCurrencySymbol } from "../lib/currency";
 
 // ============================================================
 // Icons
@@ -78,19 +57,11 @@ function IconSettings({ className }: { className?: string }) {
 }
 
 function IconServer({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
-    </svg>
-  );
+  return <AppIcon name="vast" className={className} alt="Vast.ai" />;
 }
 
 function IconBeaker({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
-    </svg>
-  );
+  return <AppIcon name="colab" className={className} alt="Google Colab" />;
 }
 
 function IconKey({ className }: { className?: string }) {
@@ -215,25 +186,14 @@ export function SettingsPage() {
     queryKey: ["config"],
     queryFn: getConfig
   });
-  const keysQuery = useQuery({
-    queryKey: ["sshKeyCandidates"],
-    queryFn: sshKeyCandidates
-  });
+  const fetchRates = useFetchExchangeRates();
 
   const [draft, setDraft] = useState<TrainshConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
-
-  const [pubKey, setPubKey] = useState<string>("");
-  const [pubKeyError, setPubKeyError] = useState<string | null>(null);
-  const [pubKeyLoading, setPubKeyLoading] = useState(false);
-
-  const genModal = useDisclosure();
-  const [genPath, setGenPath] = useState("~/.ssh/doppio_ed25519");
-  const [genComment, setGenComment] = useState("doppio");
-  const [genLoading, setGenLoading] = useState(false);
-  const [genError, setGenError] = useState<string | null>(null);
+  const [isColabDirty, setIsColabDirty] = useState(false);
+  const colabSaveRef = useRef<null | (() => Promise<void>)>(null);
 
   useEffect(() => {
     if (cfgQuery.data) {
@@ -243,8 +203,8 @@ export function SettingsPage() {
 
   const isDirty = useMemo(() => {
     if (!draft || !cfgQuery.data) return false;
-    return JSON.stringify(draft) !== JSON.stringify(cfgQuery.data);
-  }, [draft, cfgQuery.data]);
+    return JSON.stringify(draft) !== JSON.stringify(cfgQuery.data) || isColabDirty;
+  }, [draft, cfgQuery.data, isColabDirty]);
 
   async function onSave() {
     if (!draft) return;
@@ -252,6 +212,9 @@ export function SettingsPage() {
     setSaveError(null);
     try {
       await saveConfig(draft);
+      if (colabSaveRef.current) {
+        await colabSaveRef.current();
+      }
       setSavedAt(new Date().toLocaleString());
       await cfgQuery.refetch();
     } catch (err) {
@@ -310,250 +273,143 @@ export function SettingsPage() {
             <Button
               size="sm"
               variant="flat"
-              isDisabled={saving || !cfgQuery.data}
-              onPress={() => cfgQuery.data && setDraft(cfgQuery.data)}
+              onPress={() => fetchRates.mutate()}
+              isLoading={fetchRates.isPending}
             >
-              Reset
+              Refresh Rates
             </Button>
-            <Button 
+            <Button
               size="sm"
               color="primary" 
               isLoading={saving} 
               isDisabled={!draft || saving || !isDirty} 
               onPress={onSave}
             >
-              Save Changes
+              Save
             </Button>
           </div>
         </div>
 
-        {/* Section 1: General */}
-        <SectionCard icon="settings" title="General" subtitle="Default paths and preferences">
-                <Input
-            label="HuggingFace Cache (HF_HOME)"
-                  value={draft.colab.hf_home ?? ""}
-                  onValueChange={(v) =>
+        <SectionCard icon="settings" title="General" subtitle="Default paths, preferences, and currency">
+          <div className="space-y-4">
+            <Input labelPlacement="inside" label="HuggingFace Cache (HF_HOME)"
+            value={draft.colab.hf_home ?? ""}
+            onValueChange={(v) =>
               setDraft({ ...draft, colab: { ...draft.colab, hf_home: v.trim() ? v : null } })
-                  }
-                  placeholder="~/.cache/huggingface"
-            description="Default HF_HOME for remote training (leave empty for system default)"
-                  size="sm"
+            }
+            placeholder="~/.cache/huggingface"
+            description="HF_HOME"
+            size="sm"
             variant="flat"
-            classNames={{ inputWrapper: "bg-content2" }}
-          />
+            classNames={{ inputWrapper: "bg-content2" }} />
+            <DisplayCurrencySection />
+          </div>
         </SectionCard>
 
-        {/* Section 2: Vast.ai (API + SSH + Pricing) */}
         <SectionCard icon="server" title="Vast.ai" subtitle="API key, SSH settings, and pricing rates">
           <div className="space-y-6">
-            {/* API & Console */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    label="API Key"
-                    type="password"
-                    value={draft.vast.api_key ?? ""}
-                    onValueChange={(v) =>
-                  setDraft({ ...draft, vast: { ...draft.vast, api_key: v.trim() ? v : null } })
-                    }
-                description="For Vast.ai Console API"
-                    size="sm"
-                variant="flat"
-                classNames={{ inputWrapper: "bg-content2" }}
-                  />
-                  <Input
-                    label="Console URL"
-                    value={draft.vast.url}
-                    onValueChange={(v) =>
-                  setDraft({ ...draft, vast: { ...draft.vast, url: v } })
-                    }
-                    size="sm"
-                variant="flat"
-                classNames={{ inputWrapper: "bg-content2" }}
-                  />
+                  <Input labelPlacement="inside" label="API Key"
+                  type="password"
+                  value={draft.vast.api_key ?? ""}
+                  onValueChange={(v) =>
+                                    setDraft({ ...draft, vast: { ...draft.vast, api_key: v.trim() ? v : null } })
+                  }
+                                  description="API key"
+                  size="sm"
+                                  variant="flat"
+                                  classNames={{ inputWrapper: "bg-content2" }} />
+                  <Input labelPlacement="inside" label="Console URL"
+                  value={draft.vast.url}
+                  onValueChange={(v) =>
+                                    setDraft({ ...draft, vast: { ...draft.vast, url: v } })
+                  }
+                  size="sm"
+                                  variant="flat"
+                                  classNames={{ inputWrapper: "bg-content2" }} />
                 </div>
 
-            <Divider />
-
-            {/* SSH Settings */}
-            <div>
-              <h4 className="text-sm font-medium mb-3">SSH Settings</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    label="SSH User"
-                    value={draft.vast.ssh_user}
-                    onValueChange={(v) =>
-                    setDraft({ ...draft, vast: { ...draft.vast, ssh_user: v } })
-                    }
-                    size="sm"
-                  variant="flat"
-                  classNames={{ inputWrapper: "bg-content2" }}
-                  />
-                  <Input
-                    label="SSH Key Path"
-                    value={draft.vast.ssh_key_path ?? ""}
-                    onValueChange={(v) =>
-                    setDraft({ ...draft, vast: { ...draft.vast, ssh_key_path: v.trim() ? v : null } })
-                    }
-                    placeholder="~/.ssh/id_ed25519"
-                    size="sm"
-                  variant="flat"
-                  classNames={{ inputWrapper: "bg-content2" }}
-                  />
-                </div>
-
-              {/* Detected Keys */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-foreground/50">Detected keys:</span>
-                    {keysQuery.isLoading ? (
-                  <Spinner size="sm" />
-                    ) : keysQuery.data && keysQuery.data.length > 0 ? (
-                      keysQuery.data.map((p) => (
-                    <Chip
-                          key={p}
-                          size="sm"
-                          variant={draft.vast.ssh_key_path === p ? "solid" : "flat"}
-                          color={draft.vast.ssh_key_path === p ? "primary" : "default"}
-                      className="cursor-pointer"
-                      onClick={() => setDraft({ ...draft, vast: { ...draft.vast, ssh_key_path: p } })}
-                        >
-                          {p.split("/").slice(-2).join("/")}
-                    </Chip>
-                      ))
-                    ) : (
-                  <span className="text-xs text-foreground/40">none</span>
-                    )}
-                  </div>
-
-              {/* SSH Key Actions */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      isDisabled={!draft.vast.ssh_key_path || pubKeyLoading}
-                      isLoading={pubKeyLoading}
-                      onPress={async () => {
-                        if (!draft.vast.ssh_key_path) return;
-                        setPubKeyError(null);
-                        setPubKey("");
-                        setPubKeyLoading(true);
-                        try {
-                          const key = await sshPublicKey(draft.vast.ssh_key_path);
-                          setPubKey(key);
-                        } catch (e) {
-                      setPubKeyError(e instanceof Error ? e.message : String(e));
-                        } finally {
-                          setPubKeyLoading(false);
-                        }
-                      }}
-                    >
-                  Show Public Key
-                    </Button>
-                <Button size="sm" variant="flat" onPress={() => genModal.onOpen()}>
-                  Generate New Key
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      isDisabled={!pubKey.trim()}
-                  onPress={() => navigator.clipboard.writeText(pubKey.trim())}
-                    >
-                  Copy Public Key
-                    </Button>
-                <span className="text-xs text-foreground/50">
-                  Add to Vast.ai Console → Account → SSH Keys
-                    </span>
-                  </div>
-
-              {pubKeyError && <div className="mt-2 text-xs text-danger">{pubKeyError}</div>}
-                {pubKey.trim() && (
-                  <Textarea
-                  className="mt-3"
-                    value={pubKey}
-                    minRows={2}
-                    isReadOnly
-                  variant="flat"
-                  classNames={{ input: "font-mono text-xs", inputWrapper: "bg-content2" }}
-                  />
-                )}
+            <VastPricingSection />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input labelPlacement="inside" label="SSH User"
+              value={draft.vast.ssh_user}
+              onValueChange={(v) =>
+              setDraft({ ...draft, vast: { ...draft.vast, ssh_user: v } })
+              }
+              size="sm"
+                                variant="flat"
+                                classNames={{ inputWrapper: "bg-content2" }} />
+              <Input labelPlacement="inside" label="SSH Key Path"
+              value={draft.vast.ssh_key_path ?? ""}
+              onValueChange={(v) =>
+              setDraft({ ...draft, vast: { ...draft.vast, ssh_key_path: v.trim() ? v : null } })
+              }
+              placeholder="~/.ssh/id_ed25519"
+              size="sm"
+                                variant="flat"
+                                classNames={{ inputWrapper: "bg-content2" }} />
             </div>
-
-            <Divider />
-
-            {/* Vast Pricing Rates */}
-                <VastPricingSection />
               </div>
         </SectionCard>
 
-        {/* Section 3: Google Colab (Subscription + GPU Pricing) */}
         <SectionCard icon="beaker" title="Google Colab" subtitle="Subscription pricing and GPU compute unit rates">
-                <ColabPricingSection />
-        </SectionCard>
-
-        {/* Section 4: Secrets */}
-        <SectionCard icon="key" title="Secrets" subtitle="API keys and tokens stored securely in OS keychain">
-                <SecretsSection />
-        </SectionCard>
-
-      {/* Generate SSH Key Modal */}
-        <Modal isOpen={genModal.isOpen} onOpenChange={genModal.onOpenChange}>
-        <ModalContent>
-          {(onClose) => (
-            <>
-                <ModalHeader>Generate SSH Key</ModalHeader>
-                <ModalBody className="gap-4">
-                <Input
-                    label="Key Path"
-                  value={genPath}
-                  onValueChange={setGenPath}
-                  placeholder="~/.ssh/doppio_ed25519"
-                    description="Will run ssh-keygen -t ed25519; only ~/.ssh paths allowed"
-                    variant="bordered"
-                />
-                <Input
-                    label="Comment"
-                  value={genComment}
-                  onValueChange={setGenComment}
-                  placeholder="doppio"
-                    variant="bordered"
-                />
-                  {genError && <div className="text-sm text-danger">{genError}</div>}
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="flat" onPress={onClose} isDisabled={genLoading}>
-                  Cancel
-                </Button>
-                <Button
-                  color="primary"
-                  isLoading={genLoading}
-                  onPress={async () => {
-                    setGenError(null);
-                    setGenLoading(true);
-                    try {
-                      const info = await sshGenerateKey({
-                        path: genPath.trim(),
-                          comment: genComment.trim() || null
-                      });
-                      if (draft) {
-                        setDraft({ ...draft, vast: { ...draft.vast, ssh_key_path: info.private_key_path } });
-                      }
-                      setPubKey(info.public_key);
-                      await keysQuery.refetch();
-                      onClose();
-                    } catch (e) {
-                        setGenError(e instanceof Error ? e.message : String(e));
-                    } finally {
-                      setGenLoading(false);
-                    }
+                <ColabPricingSection
+                  onDirtyChange={setIsColabDirty}
+                  registerSave={(saveFn) => {
+                    colabSaveRef.current = saveFn;
                   }}
-                >
-                  Generate
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+                />
+        </SectionCard>
+
+        <SectionCard icon="key" title="Secrets" subtitle="SSH keys and tokens stored securely, Use {secret:name} syntax in recipes.">
+          <div className="space-y-6">
+            <SecretsSection />
+          </div>
+        </SectionCard>
+
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Display Currency Section
+// ============================================================
+
+function DisplayCurrencySection() {
+  const pricingQuery = usePricingSettings();
+  const updateDisplayCurrency = useUpdateDisplayCurrency();
+
+  if (pricingQuery.isLoading) {
+    return <Spinner size="sm" />;
+  }
+
+  if (!pricingQuery.data) {
+    return null;
+  }
+
+  const displayCurrency = pricingQuery.data.display_currency ?? "USD";
+  const updatedAt = pricingQuery.data.exchange_rates.updated_at;
+
+  return (
+    <div className="space-y-3">
+      <Select labelPlacement="inside" label="Default Currency"
+      selectedKeys={[displayCurrency]}
+      onSelectionChange={async (keys) => {
+        const selected = Array.from(keys)[0] as Currency;
+        if (!selected || selected === displayCurrency) return;
+        await updateDisplayCurrency.mutateAsync(selected);
+      }}
+      size="sm"
+      variant="flat"
+      classNames={{ trigger: "bg-content2" }}>{CURRENCIES.map((c) => (
+        <SelectItem key={c.value} textValue={`${c.symbol} ${c.label}`}>
+          {c.symbol} {c.label}
+        </SelectItem>
+      ))}</Select>
+      <p className="text-xs text-foreground/50">
+        Exchange rates updated: {new Date(updatedAt).toLocaleString()}
+      </p>
     </div>
   );
 }
@@ -578,25 +434,30 @@ function VastPricingSection() {
     return null;
   }
 
+  const displayCurrency = settings.display_currency ?? "USD";
+  const exchangeRates = settings.exchange_rates;
+  const formatRate = (value: number, decimals = 4) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
+
   return (
     <div className="space-y-3">
-      <h4 className="text-sm font-medium">Default Pricing Rates</h4>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="flex justify-between items-center p-3 bg-content2 rounded-lg">
           <span className="text-sm text-foreground/60">Storage</span>
-          <span className="font-mono text-sm">${settings.vast_rates.storage_per_gb_month}/GB/mo</span>
+          <span className="font-mono text-sm">{formatRate(settings.vast_rates.storage_per_gb_month)}/GB/mo</span>
         </div>
         <div className="flex justify-between items-center p-3 bg-content2 rounded-lg">
           <span className="text-sm text-foreground/60">Egress</span>
-          <span className="font-mono text-sm">${settings.vast_rates.network_egress_per_gb}/GB</span>
+          <span className="font-mono text-sm">{formatRate(settings.vast_rates.network_egress_per_gb)}/GB</span>
         </div>
         <div className="flex justify-between items-center p-3 bg-content2 rounded-lg">
           <span className="text-sm text-foreground/60">Ingress</span>
-          <span className="font-mono text-sm">${settings.vast_rates.network_ingress_per_gb}/GB</span>
+          <span className="font-mono text-sm">{formatRate(settings.vast_rates.network_ingress_per_gb)}/GB</span>
         </div>
       </div>
       <p className="text-xs text-foreground/40">
-        GPU hourly rates are fetched from Vast.ai API per instance.
+        Default pricing rates apply to storage/egress/ingress. GPU hourly rates are fetched from Vast.ai API per
+        instance.
       </p>
     </div>
   );
@@ -606,8 +467,12 @@ function VastPricingSection() {
 // Colab Pricing Section (Subscription + GPU Pricing together)
 // ============================================================
 
-function ColabPricingSection() {
-  const queryClient = useQueryClient();
+type ColabPricingSectionProps = {
+  onDirtyChange?: (dirty: boolean) => void;
+  registerSave?: (saveFn: () => Promise<void>) => void;
+};
+
+function ColabPricingSection({ onDirtyChange, registerSave }: ColabPricingSectionProps) {
   const pricingQuery = useQuery({ queryKey: ["pricing"], queryFn: pricingApi.get });
   const calculationQuery = useColabPricingCalculation();
   const updateSubscription = useUpdateColabSubscription();
@@ -657,6 +522,56 @@ function ColabPricingSection() {
   };
 
   const calculation = calculationQuery.data;
+  const displayCurrency = pricingQuery.data?.display_currency ?? "USD";
+  const exchangeRates = pricingQuery.data?.exchange_rates;
+  const formatUsd = (value: number, decimals = 4) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
+
+  const initialSubscription = pricingQuery.data?.colab.subscription;
+  const initialGpuPricing = pricingQuery.data?.colab.gpu_pricing ?? [];
+
+  const isSubscriptionDirty = useMemo(() => {
+    if (!initialSubscription) return false;
+    const price = Number(subPrice);
+    const units = Number(subUnits);
+    return (
+      subName !== initialSubscription.name ||
+      subCurrency !== initialSubscription.currency ||
+      price !== initialSubscription.price ||
+      units !== initialSubscription.total_units
+    );
+  }, [initialSubscription, subCurrency, subName, subPrice, subUnits]);
+
+  const isGpuPricingDirty = useMemo(() => {
+    if (!pricingQuery.data) return false;
+    if (gpuList.length !== initialGpuPricing.length) return true;
+    return gpuList.some((gpu, idx) => {
+      const original = initialGpuPricing[idx];
+      if (!original) return true;
+      return (
+        gpu.gpu_name !== original.gpu_name ||
+        gpu.units_per_hour !== original.units_per_hour
+      );
+    });
+  }, [gpuList, initialGpuPricing, pricingQuery.data]);
+
+  const saveAll = useCallback(async () => {
+    if (!pricingQuery.data) return;
+    if (isSubscriptionDirty) {
+      await handleSaveSubscription();
+    }
+    if (isGpuPricingDirty) {
+      await handleSaveGpuPricing();
+    }
+  }, [handleSaveSubscription, handleSaveGpuPricing, isSubscriptionDirty, isGpuPricingDirty, pricingQuery.data]);
+
+  useEffect(() => {
+    onDirtyChange?.(isSubscriptionDirty || isGpuPricingDirty);
+  }, [isSubscriptionDirty, isGpuPricingDirty, onDirtyChange]);
+
+  useEffect(() => {
+    registerSave?.(saveAll);
+  }, [registerSave, saveAll]);
 
   if (pricingQuery.isLoading) {
     return <Spinner size="lg" className="mx-auto" />;
@@ -664,106 +579,65 @@ function ColabPricingSection() {
 
   return (
     <div className="space-y-6">
-      {/* Subscription Settings */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">Subscription</h4>
-          <Button
-            size="sm"
-            color="primary"
-            variant="flat"
-            onPress={handleSaveSubscription}
-            isLoading={updateSubscription.isPending}
-          >
-            Save
-          </Button>
-        </div>
-
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Input
-            label="Plan Name"
-            value={subName}
-            onValueChange={setSubName}
-            placeholder="Colab Pro"
-            size="sm"
-            variant="flat"
-            classNames={{ inputWrapper: "bg-content2" }}
-          />
-          <Input
-            label="Price"
-            type="number"
-            value={subPrice}
-            onValueChange={setSubPrice}
-            placeholder="11.99"
-            startContent={<span className="text-foreground/50 text-xs">{getCurrencySymbol(subCurrency)}</span>}
-            size="sm"
-            variant="flat"
-            classNames={{ inputWrapper: "bg-content2" }}
-          />
-          <Select
-            label="Currency"
-            selectedKeys={[subCurrency]}
-            onSelectionChange={(keys) => {
-              const selected = Array.from(keys)[0] as Currency;
-              if (selected) setSubCurrency(selected);
-            }}
-            size="sm"
-            variant="flat"
-            classNames={{ trigger: "bg-content2" }}
-          >
-            {CURRENCIES.map((c) => (
-              <SelectItem key={c.value} textValue={`${c.symbol} ${c.label}`}>
-                {c.symbol} {c.label}
-              </SelectItem>
-            ))}
-          </Select>
-          <Input
-            label="Compute Units"
-            type="number"
-            value={subUnits}
-            onValueChange={setSubUnits}
-            placeholder="100"
-            size="sm"
-            variant="flat"
-            classNames={{ inputWrapper: "bg-content2" }}
-          />
+          <Input labelPlacement="inside" label="Plan Name"
+          value={subName}
+          onValueChange={setSubName}
+          placeholder="Colab Pro"
+          size="sm"
+          variant="flat"
+          classNames={{ inputWrapper: "bg-content2" }} />
+          <Input labelPlacement="inside" label="Price"
+          type="number"
+          value={subPrice}
+          onValueChange={setSubPrice}
+          placeholder="11.99"
+          startContent={<span className="text-foreground/50 text-xs">{getCurrencySymbol(subCurrency)}</span>}
+          size="sm"
+          variant="flat"
+          classNames={{ inputWrapper: "bg-content2" }} />
+          <Select labelPlacement="inside" label="Currency"
+          selectedKeys={[subCurrency]}
+          onSelectionChange={(keys) => {
+            const selected = Array.from(keys)[0] as Currency;
+            if (selected) setSubCurrency(selected);
+          }}
+          size="sm"
+          variant="flat"
+          classNames={{ trigger: "bg-content2" }}>{CURRENCIES.map((c) => (
+            <SelectItem key={c.value} textValue={`${c.symbol} ${c.label}`}>
+              {c.symbol} {c.label}
+            </SelectItem>
+          ))}</Select>
+          <Input labelPlacement="inside" label="Compute Units"
+          type="number"
+          value={subUnits}
+          onValueChange={setSubUnits}
+          placeholder="100"
+          size="sm"
+          variant="flat"
+          classNames={{ inputWrapper: "bg-content2" }} />
         </div>
 
         {calculation && (
           <div className="flex justify-between items-center p-3 bg-success/10 rounded-lg">
             <span className="text-sm text-foreground/70">Price per compute unit</span>
             <span className="font-mono font-semibold text-success">
-              {formatPrice(calculation.price_per_unit_usd, "USD")}
+              {formatUsd(calculation.price_per_unit_usd)}
             </span>
           </div>
         )}
       </div>
 
-      <Divider />
-
-      {/* GPU Pricing Table */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">GPU Pricing</h4>
-            <Button
-              size="sm"
-              color="primary"
-            variant="flat"
-              onPress={handleSaveGpuPricing}
-              isLoading={updateGpuPricing.isPending}
-              isDisabled={gpuList.length === 0}
-            >
-              Save
-            </Button>
-        </div>
-
         <Table removeWrapper aria-label="GPU pricing" classNames={{ base: "max-h-[280px] overflow-auto" }}>
           <TableHeader>
             <TableColumn>GPU</TableColumn>
             <TableColumn width={90}>Units/Hr</TableColumn>
             <TableColumn width={100}>Units/24Hr</TableColumn>
-            <TableColumn width={85}>USD/Hr</TableColumn>
-            <TableColumn width={95}>USD/24Hr</TableColumn>
+            <TableColumn width={85}>{displayCurrency}/Hr</TableColumn>
+            <TableColumn width={95}>{displayCurrency}/24Hr</TableColumn>
             <TableColumn width={40}> </TableColumn>
           </TableHeader>
           <TableBody emptyContent="No GPUs configured">
@@ -772,41 +646,37 @@ function ColabPricingSection() {
               return (
                 <TableRow key={idx}>
                   <TableCell>
-                    <Input
-                      value={gpu.gpu_name}
-                      onValueChange={(v) => {
-                        if (v.trim()) {
-                          setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, gpu_name: v } : g)));
-                        }
-                      }}
-                      size="sm"
-                      variant="underlined"
-                      classNames={{ input: "font-semibold", inputWrapper: "h-8" }}
-                    />
+                    <Input labelPlacement="inside" value={gpu.gpu_name}
+                    onValueChange={(v) => {
+                      if (v.trim()) {
+                        setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, gpu_name: v } : g)));
+                      }
+                    }}
+                    size="sm"
+                    variant="underlined"
+                    classNames={{ input: "font-semibold", inputWrapper: "h-8" }} />
                   </TableCell>
                   <TableCell>
-                    <Input
-                      type="number"
-                      value={gpu.units_per_hour.toString()}
-                      onValueChange={(v) => {
-                        const val = parseFloat(v);
-                        if (!isNaN(val) && val > 0) {
-                          setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, units_per_hour: val } : g)));
-                        }
-                      }}
-                      size="sm"
-                      variant="underlined"
-                      classNames={{ input: "text-center w-14", inputWrapper: "h-8" }}
-                    />
+                    <Input labelPlacement="inside" type="number"
+                    value={gpu.units_per_hour.toString()}
+                    onValueChange={(v) => {
+                      const val = parseFloat(v);
+                      if (!isNaN(val) && val > 0) {
+                        setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, units_per_hour: val } : g)));
+                      }
+                    }}
+                    size="sm"
+                    variant="underlined"
+                    classNames={{ input: "text-center w-14", inputWrapper: "h-8" }} />
                   </TableCell>
                   <TableCell className="font-mono text-foreground/60">
                     {(gpu.units_per_hour * 24).toFixed(1)}
                   </TableCell>
                   <TableCell className="font-mono text-success">
-                    {calcGpu ? formatPrice(calcGpu.price_usd_per_hour, "USD") : "-"}
+                    {calcGpu ? formatUsd(calcGpu.price_usd_per_hour) : "-"}
                   </TableCell>
                   <TableCell className="font-mono text-warning">
-                    {calcGpu ? formatPrice(calcGpu.price_usd_per_hour * 24, "USD", 2) : "-"}
+                    {calcGpu ? formatUsd(calcGpu.price_usd_per_hour * 24, 2) : "-"}
                   </TableCell>
                   <TableCell>
                     <Button
@@ -825,31 +695,27 @@ function ColabPricingSection() {
           </TableBody>
         </Table>
 
-        {/* Add new GPU */}
         <div className="flex items-end gap-3">
-          <Input
-            label="New GPU"
-            value={newGpuName}
-            onValueChange={setNewGpuName}
-            placeholder="e.g., A100"
-            size="sm"
-            variant="flat"
-            classNames={{ inputWrapper: "bg-content2", base: "flex-1" }}
-          />
-          <Input
-            label="Units/Hr"
-            type="number"
-            value={newGpuUnits}
-            onValueChange={setNewGpuUnits}
-            placeholder="12.29"
-            size="sm"
-            variant="flat"
-            classNames={{ inputWrapper: "bg-content2", base: "w-28" }}
-          />
+          <Input labelPlacement="inside" label="New GPU"
+          value={newGpuName}
+          onValueChange={setNewGpuName}
+          placeholder="e.g., A100"
+          size="sm"
+          variant="flat"
+          classNames={{ inputWrapper: "bg-content2", base: "flex-1" }} />
+          <Input labelPlacement="inside" label="Units/Hr"
+          type="number"
+          value={newGpuUnits}
+          onValueChange={setNewGpuUnits}
+          placeholder="12.29"
+          size="sm"
+          variant="flat"
+          classNames={{ inputWrapper: "bg-content2", base: "w-28" }} />
           <Button
             color="primary"
             variant="flat"
             size="sm"
+            className="h-12 min-h-12"
             onPress={handleAddGpu}
             isDisabled={!newGpuName.trim() || !newGpuUnits.trim()}
           >
@@ -860,7 +726,14 @@ function ColabPricingSection() {
         {calculation && (
           <p className="text-xs text-foreground/40">
             Based on {calculation.subscription.name} at{" "}
-            {formatPrice(calculation.subscription.price, calculation.subscription.currency, 2)} for{" "}
+            {formatPriceWithRates(
+              calculation.subscription.price,
+              calculation.subscription.currency,
+              displayCurrency,
+              exchangeRates,
+              2
+            )}{" "}
+            for{" "}
             {calculation.subscription.total_units} compute units
           </p>
         )}
@@ -876,6 +749,10 @@ function ColabPricingSection() {
 function SecretsSection() {
   const queryClient = useQueryClient();
 
+  const keysQuery = useQuery({
+    queryKey: ["sshKeyCandidates"],
+    queryFn: sshKeyCandidates
+  });
   const secretsQuery = useQuery({ queryKey: ["secrets"], queryFn: secretsApi.list });
   const suggestionsQuery = useQuery({ queryKey: ["secretSuggestions"], queryFn: secretsApi.suggestions });
 
@@ -895,6 +772,10 @@ function SecretsSection() {
   const [isEditing, setIsEditing] = useState(false);
   const [showValue, setShowValue] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [sshKeyError, setSshKeyError] = useState<string | null>(null);
+  const [sshKeyAction, setSshKeyAction] = useState<{ path: string; kind: "public" | "private" } | null>(null);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const copyNoticeTimer = useRef<number | null>(null);
 
   const openAddModal = (suggestion?: SecretSuggestion) => {
     setIsEditing(false);
@@ -922,27 +803,103 @@ function SecretsSection() {
   const secrets = secretsQuery.data || [];
   const suggestions = suggestionsQuery.data || [];
   const unusedSuggestions = suggestions.filter((s) => !secrets.find((sec) => sec.name === s.name));
+  const keyPaths = keysQuery.data || [];
+  const showEmptyState = !keysQuery.isLoading && keyPaths.length === 0 && secrets.length === 0;
 
   if (secretsQuery.isLoading) {
     return <Spinner size="lg" className="mx-auto" />;
   }
 
+  const handleCopyKey = async (path: string, kind: "public" | "private") => {
+    setSshKeyError(null);
+    setSshKeyAction({ path, kind });
+    try {
+      const key = kind === "public" ? await sshPublicKey(path) : await sshPrivateKey(path);
+      await copyText(key);
+      const id = `ssh:${kind}:${path}`;
+      if (copyNoticeTimer.current) {
+        window.clearTimeout(copyNoticeTimer.current);
+      }
+      setCopyNotice(id);
+      copyNoticeTimer.current = window.setTimeout(() => setCopyNotice(null), 1200);
+    } catch (e) {
+      setSshKeyError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSshKeyAction(null);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyNoticeTimer.current) {
+        window.clearTimeout(copyNoticeTimer.current);
+      }
+    };
+  }, []);
+
   return (
     <div className="space-y-4">
-      {/* Info banner */}
-      <div className="p-3 bg-primary/10 rounded-lg flex items-start gap-2">
-        <IconKey className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
-        <p className="text-sm text-foreground/80">
-          <strong>Secure Storage:</strong> Secrets are stored in your OS keychain.
-          Use <code className="px-1 py-0.5 bg-content2 rounded text-xs font-mono">${"{secret:name}"}</code> syntax in recipes.
-        </p>
-      </div>
-
-      {/* Secrets list */}
-      {secrets.length === 0 ? (
+      {showEmptyState ? (
         <div className="text-sm text-foreground/50 py-4 text-center">No secrets configured</div>
       ) : (
         <div className="space-y-2">
+          {keysQuery.isLoading ? (
+            <div className="flex items-center justify-center p-3 bg-content2 rounded-lg">
+              <Spinner size="sm" />
+            </div>
+          ) : (
+            keyPaths.map((path) => {
+              const filename = path.split("/").slice(-1)[0] ?? path;
+              const isPublicLoading =
+                sshKeyAction?.path === path && sshKeyAction?.kind === "public";
+              const isPrivateLoading =
+                sshKeyAction?.path === path && sshKeyAction?.kind === "private";
+              return (
+                <div key={path} className="flex items-center gap-2 p-3 bg-content2 rounded-lg">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-sm truncate">ssh/{filename}</div>
+                    <div className="text-xs text-foreground/50 truncate">{path}</div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Tooltip
+                      content={
+                        copyNotice === `ssh:private:${path}` ? "Copied" : "Copy private key"
+                      }
+                      isOpen={copyNotice === `ssh:private:${path}` ? true : undefined}
+                    >
+                      <Button
+                        size="sm"
+                        variant="light"
+                        isIconOnly
+                        isDisabled={sshKeyAction !== null}
+                        isLoading={isPrivateLoading}
+                        onPress={() => handleCopyKey(path, "private")}
+                      >
+                        <IconCopy className="w-4 h-4" />
+                      </Button>
+                    </Tooltip>
+                    <Tooltip
+                      content={
+                        copyNotice === `ssh:public:${path}` ? "Copied" : "Copy public key"
+                      }
+                      isOpen={copyNotice === `ssh:public:${path}` ? true : undefined}
+                    >
+                      <Button
+                        size="sm"
+                        variant="light"
+                        isIconOnly
+                        isDisabled={sshKeyAction !== null}
+                        isLoading={isPublicLoading}
+                        onPress={() => handleCopyKey(path, "public")}
+                      >
+                        <IconCopy className="w-4 h-4" />
+                      </Button>
+                    </Tooltip>
+                  </div>
+                </div>
+              );
+            })
+          )}
           {secrets.map((secret) => (
             <div key={secret.name} className="flex items-center gap-2 p-3 bg-content2 rounded-lg">
               <div className="flex-1 min-w-0">
@@ -954,12 +911,25 @@ function SecretsSection() {
               <span className="text-xs text-foreground/40">
                 {new Date(secret.updated_at).toLocaleDateString()}
               </span>
-              <Tooltip content="Copy reference">
+              <Tooltip
+                content={
+                  copyNotice === `secret:${secret.name}` ? "Copied" : "Copy reference"
+                }
+                isOpen={copyNotice === `secret:${secret.name}` ? true : undefined}
+              >
                 <Button
                   size="sm"
                   variant="light"
                   isIconOnly
-                  onPress={() => navigator.clipboard.writeText(`\${secret:${secret.name}}`)}
+                  onPress={async () => {
+                    await copyText(`\${secret:${secret.name}}`);
+                    const id = `secret:${secret.name}`;
+                    if (copyNoticeTimer.current) {
+                      window.clearTimeout(copyNoticeTimer.current);
+                    }
+                    setCopyNotice(id);
+                    copyNoticeTimer.current = window.setTimeout(() => setCopyNotice(null), 1200);
+                  }}
                 >
                   <IconCopy className="w-4 h-4" />
                 </Button>
@@ -981,7 +951,8 @@ function SecretsSection() {
         </div>
       )}
 
-      {/* Quick add buttons */}
+      {sshKeyError && <div className="text-xs text-danger">{sshKeyError}</div>}
+
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" color="primary" variant="flat" onPress={() => openAddModal()}>
           + Add Secret
@@ -995,42 +966,35 @@ function SecretsSection() {
         ))}
       </div>
 
-      {/* Add/Edit Modal */}
       <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
         <ModalContent>
           {(onClose) => (
             <>
               <ModalHeader>{isEditing ? "Edit Secret" : "Add Secret"}</ModalHeader>
               <ModalBody className="gap-4">
-                <Input
-                  label="Name"
-                  value={editName}
-                  onValueChange={setEditName}
-                  placeholder="github/token"
-                  description="Use forward slashes to organize (e.g., github/token)"
-                  isReadOnly={isEditing}
-                  variant="bordered"
-                />
-                <Input
-                  label="Value"
-                  type={showValue ? "text" : "password"}
-                  value={editValue}
-                  onValueChange={setEditValue}
-                  placeholder="Enter API key or token"
-                  variant="bordered"
-                  endContent={
-                    <Button size="sm" variant="light" isIconOnly onPress={() => setShowValue(!showValue)}>
-                      {showValue ? <IconEyeOff className="w-4 h-4" /> : <IconEye className="w-4 h-4" />}
-                    </Button>
-                  }
-                />
-                <Input
-                  label="Description (optional)"
-                  value={editDescription}
-                  onValueChange={setEditDescription}
-                  placeholder="What is this secret used for?"
-                  variant="bordered"
-                />
+                <Input labelPlacement="inside" label="Name"
+                value={editName}
+                onValueChange={setEditName}
+                placeholder="github/token"
+                description="Use slashes"
+                isReadOnly={isEditing}
+                variant="bordered" />
+                <Input labelPlacement="inside" label="Value"
+                type={showValue ? "text" : "password"}
+                value={editValue}
+                onValueChange={setEditValue}
+                placeholder="Enter API key or token"
+                variant="bordered"
+                endContent={
+                  <Button size="sm" variant="light" isIconOnly onPress={() => setShowValue(!showValue)}>
+                    {showValue ? <IconEyeOff className="w-4 h-4" /> : <IconEye className="w-4 h-4" />}
+                  </Button>
+                } />
+                <Input labelPlacement="inside" label="Description (optional)"
+                value={editDescription}
+                onValueChange={setEditDescription}
+                placeholder="What is this secret used for?"
+                variant="bordered" />
               </ModalBody>
               <ModalFooter>
                 <Button variant="flat" onPress={onClose}>Cancel</Button>
@@ -1055,7 +1019,6 @@ function SecretsSection() {
         </ModalContent>
       </Modal>
 
-      {/* Delete Modal */}
       <Modal isOpen={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <ModalContent>
           {() => (

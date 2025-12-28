@@ -261,6 +261,9 @@ pub struct PricingSettings {
     pub host_pricing: HashMap<String, HostPricing>,
     /// Exchange rates
     pub exchange_rates: ExchangeRates,
+    /// Display currency for UI
+    #[serde(default)]
+    pub display_currency: Currency,
     /// Cached storage usages (for all storage types)
     #[serde(default)]
     pub storage_usages_cache: Vec<StorageUsage>,
@@ -273,6 +276,7 @@ impl Default for PricingSettings {
             vast_rates: VastPricingRates::default(),
             host_pricing: HashMap::new(),
             exchange_rates: ExchangeRates::default(),
+            display_currency: Currency::Usd,
             storage_usages_cache: Vec::new(),
         }
     }
@@ -490,6 +494,15 @@ impl PricingStore {
         Ok(self.get_settings().await)
     }
 
+    pub async fn update_display_currency(&self, display_currency: Currency) -> Result<PricingSettings, AppError> {
+        {
+            let mut settings = self.settings.write().await;
+            settings.display_currency = display_currency;
+        }
+        self.save_to_file().await?;
+        Ok(self.get_settings().await)
+    }
+
     pub async fn reset_to_defaults(&self) -> Result<PricingSettings, AppError> {
         {
             let mut settings = self.settings.write().await;
@@ -558,6 +571,15 @@ pub async fn pricing_fetch_rates(app: AppHandle) -> Result<ExchangeRates, AppErr
     let store = app.state::<Arc<PricingStore>>();
     store.update_exchange_rates(rates.clone()).await?;
     Ok(rates)
+}
+
+#[tauri::command]
+pub async fn pricing_update_display_currency(
+    app: AppHandle,
+    display_currency: Currency,
+) -> Result<PricingSettings, AppError> {
+    let store = app.state::<Arc<PricingStore>>();
+    store.update_display_currency(display_currency).await
 }
 
 #[tauri::command]
@@ -724,4 +746,3 @@ pub async fn pricing_save_r2_cache(
     }
     store.save_to_file().await
 }
-

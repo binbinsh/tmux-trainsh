@@ -33,6 +33,9 @@ type TerminalContextType = {
   toggleRecipePanel: () => void;
   /** Check if current terminal has an associated recipe */
   hasActiveRecipe: boolean;
+  historyPanelVisible: boolean;
+  setHistoryPanelVisible: (visible: boolean) => void;
+  toggleHistoryPanel: () => void;
 };
 
 const TerminalContext = createContext<TerminalContextType | null>(null);
@@ -54,6 +57,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [recipePanelVisible, setRecipePanelVisible] = useState(false);
+  const [historyPanelVisible, setHistoryPanelVisible] = useState(false);
   const [userToggledPanel, setUserToggledPanel] = useState(false);
   const lastSessionCount = useRef(0);
 
@@ -73,6 +77,10 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const toggleRecipePanel = useCallback(() => {
     setUserToggledPanel(true);
     setRecipePanelVisible((prev) => !prev);
+  }, []);
+
+  const toggleHistoryPanel = useCallback(() => {
+    setHistoryPanelVisible((prev) => !prev);
   }, []);
 
   // Refresh sessions from backend
@@ -247,10 +255,12 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         setRecipePanelVisible,
         toggleRecipePanel,
         hasActiveRecipe,
+        historyPanelVisible,
+        setHistoryPanelVisible,
+        toggleHistoryPanel,
       }}
     >
       {children}
     </TerminalContext.Provider>
   );
 }
-

@@ -335,8 +335,6 @@ export type StorageBackendGoogleDrive = {
   client_secret?: string | null;
   token?: string | null;
   root_folder_id?: string | null;
-  /** Service Account JSON (alternative to OAuth) */
-  service_account_json?: string | null;
 };
 
 export type StorageBackendCloudflareR2 = {
@@ -581,6 +579,7 @@ export type PricingSettings = {
   vast_rates: VastPricingRates;
   host_pricing: Record<string, HostPricing>;
   exchange_rates: ExchangeRates;
+  display_currency: Currency;
 };
 
 // ============================================================
@@ -1012,6 +1011,7 @@ export type InteractiveExecution = {
   intervention_locked: boolean;
   current_step?: string | null;
   steps: InteractiveStepState[];
+  step_progress?: Record<string, string>;
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
@@ -1026,6 +1026,7 @@ export type InteractiveRecipeEvent =
   | { type: "command_sent"; execution_id: string; step_id: string; command: string }
   | { type: "step_completed"; execution_id: string; step_id: string }
   | { type: "step_failed"; execution_id: string; step_id: string; error: string }
+  | { type: "step_progress"; execution_id: string; step_id: string; progress?: string | null }
   | { type: "intervention_lock_changed"; execution_id: string; locked: boolean }
   | { type: "waiting_for_confirmation"; execution_id: string; step_id: string; command: string }
   | { type: "execution_paused"; execution_id: string }

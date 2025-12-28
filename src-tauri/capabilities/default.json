@@ -16,7 +16,7 @@
     "core:window:allow-is-maximized",
     "core:window:allow-unmaximize",
     "core:app:default",
+    "clipboard-manager:allow-write-text",
     "shell:allow-open"
   ]
 }
-

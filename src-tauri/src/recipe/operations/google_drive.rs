@@ -14,6 +14,7 @@ use crate::storage::{Storage, StorageBackend};
 use super::ssh as ssh_ops;
 
 /// Mount Google Drive on a remote host using rclone
+/// Returns success message on success
 pub async fn mount(
     host_id: &str,
     storage_id: &str,
@@ -22,7 +23,14 @@ pub async fn mount(
     vfs_cache: bool,
     cache_mode: &str,
     background: bool,
-) -> Result<(), AppError> {
+    progress: Option<std::sync::Arc<dyn Fn(&str) + Send + Sync>>,
+) -> Result<String, AppError> {
+    let report = |msg: &str| {
+        if let Some(cb) = &progress {
+            cb(msg);
+        }
+    };
+
     // Verify host exists and has SSH
     let host_info = host::get_host(host_id).await?;
     if host_info.ssh.is_none() {
@@ -61,9 +69,11 @@ pub async fn mount(
     };
 
     // Install rclone on remote if not present
+    report("Installing rclone if needed");
     install_rclone_if_needed(host_id).await?;
 
     // Create rclone config on remote host
+    report("Configuring OAuth credentials");
     let config_content = create_rclone_config(&client_id, &client_secret, &token);
     let config_path = "~/.config/rclone/rclone.conf";
     
@@ -78,6 +88,7 @@ RCLONE_CONFIG_EOF"#,
     run_ssh(host_id, &setup_commands).await?;
 
     // Create mount point
+    report("Preparing mount point");
     run_ssh(host_id, &format!("mkdir -p {}", mount_path)).await?;
 
     // Build rclone mount command
@@ -122,9 +133,11 @@ RCLONE_CONFIG_EOF"#,
     }
 
     // Execute mount command
+    report("Starting rclone mount");
     run_ssh(host_id, &mount_cmd).await?;
 
     // Verify mount (give it a moment to initialize)
+    report("Verifying mount");
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     
     // Step 1: Check if it's a mount point
@@ -172,8 +185,13 @@ RCLONE_CONFIG_EOF"#,
         list_result.lines().take(5).collect::<Vec<_>>().join(", ") 
     };
     eprintln!("[gdrive_mount] Mount successful at {}. Contents: {}", mount_path, contents_preview);
+    report("Mount verified");
 
-    Ok(())
+    // Return success message for display in terminal
+    Ok(format!(
+        "Google Drive successfully mounted at {}\nContents preview: {}",
+        mount_path, contents_preview
+    ))
 }
 
 /// Unmount Google Drive from a remote host
@@ -378,4 +396,3 @@ async fn run_ssh(host_id: &str, command: &str) -> Result<String, AppError> {
     let result = ssh_ops::execute_command(host_id, command, None, &empty_env).await?;
     Ok(result.unwrap_or_default())
 }
-

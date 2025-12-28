@@ -10,7 +10,7 @@ use crate::gpu::lookup_gpu_capability;
 use crate::ssh::SshSpec;
 
 // Re-export GPU types for other modules that import from host
-pub use crate::gpu::{GpuCapability, GpuInfo};
+pub use crate::gpu::GpuInfo;
 
 // ============================================================
 // Types
@@ -188,6 +188,8 @@ pub fn default_env_vars(host_type: &HostType) -> std::collections::HashMap<Strin
       // Also set CUDA paths
       env.insert("PATH".to_string(),
         "/usr/local/cuda/bin:$PATH".to_string());
+      // Ensure consistent locale for CLI tools
+      env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
     }
     HostType::Vast => {
       // Vast.ai instances typically have NVIDIA libraries in standard paths
@@ -715,4 +717,3 @@ pub async fn refresh_host(id: &str) -> Result<Host, AppError> {
   save_host(&host).await?;
   Ok(host)
 }
-

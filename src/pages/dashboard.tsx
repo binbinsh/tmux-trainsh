@@ -570,11 +570,6 @@ export function DashboardPage() {
                       to="/hosts"
                     />
                     <QuickActionButton
-                      icon={<IconGpu />}
-                      label="Vast.ai"
-                      to="/vast"
-                    />
-                    <QuickActionButton
                       icon={<IconSettings />}
                       label="Settings"
                       to="/settings"

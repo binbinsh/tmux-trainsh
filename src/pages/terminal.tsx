@@ -12,6 +12,7 @@ import { Link } from "@tanstack/react-router";
 import { useTerminal } from "../contexts/TerminalContext";
 import { AnimatePresence, motion } from "framer-motion";
 import { RecipeAutomationPanel } from "../components/recipe/RecipeAutomationPanel";
+import { TerminalHistoryPanel } from "../components/terminal/TerminalHistoryPanel";
 
 interface TerminalPaneProps {
   id: string;
@@ -30,6 +31,8 @@ interface TerminalPaneProps {
 
 // Render throttle interval in ms (higher value = less flashing during fast output)
 const RENDER_THROTTLE_MS = 24;
+// Flush immediately when buffered data grows beyond this size
+const MAX_BUFFERED_CHARS = 64 * 1024;
 
 function TerminalPane(props: TerminalPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -37,9 +40,11 @@ function TerminalPane(props: TerminalPaneProps) {
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
+  const hasExitedRef = useRef(false);
   
   // Data batching refs for smooth rendering
-  const dataBufferRef = useRef<string>("");
+  const dataChunksRef = useRef<string[]>([]);
+  const dataBufferSizeRef = useRef(0);
   const rafIdRef = useRef<number | null>(null);
   const lastFlushRef = useRef<number>(0);
   
@@ -94,6 +99,7 @@ function TerminalPane(props: TerminalPaneProps) {
     if (termRef.current) return;
 
     const term = new Terminal({
+      scrollback: 100000,
       convertEol: true,
       cursorBlink: true,
       cursorStyle: "bar",
@@ -151,6 +157,15 @@ function TerminalPane(props: TerminalPaneProps) {
     });
 
     term.open(hostRef.current);
+
+    // Ensure wheel always scrolls terminal buffer (not shell history)
+    const onWheel = (e: WheelEvent) => {
+      if (!termRef.current) return;
+      const lines = Math.max(1, Math.round(Math.abs(e.deltaY) / 40));
+      termRef.current.scrollLines(e.deltaY > 0 ? lines : -lines);
+      e.preventDefault();
+    };
+    hostRef.current.addEventListener("wheel", onWheel, { passive: false });
 
     // Load WebGL addon for hardware acceleration (after terminal is opened)
     try {
@@ -228,9 +243,11 @@ function TerminalPane(props: TerminalPaneProps) {
 
     // Flush buffered data to terminal with throttling
     const flushBuffer = () => {
-      if (dataBufferRef.current && termRef.current) {
-        termRef.current.write(dataBufferRef.current);
-        dataBufferRef.current = "";
+      if (dataChunksRef.current.length > 0 && termRef.current) {
+        const chunk = dataChunksRef.current.join("");
+        dataChunksRef.current = [];
+        dataBufferSizeRef.current = 0;
+        termRef.current.write(chunk);
         lastFlushRef.current = performance.now();
       }
       rafIdRef.current = null;
@@ -238,12 +255,20 @@ function TerminalPane(props: TerminalPaneProps) {
 
     // Schedule a flush with throttling
     const scheduleFlush = () => {
-      if (rafIdRef.current !== null) return; // Already scheduled
+      const shouldFlushNow = dataBufferSizeRef.current >= MAX_BUFFERED_CHARS;
+      if (rafIdRef.current !== null) {
+        if (shouldFlushNow) {
+          cancelAnimationFrame(rafIdRef.current);
+          clearTimeout(rafIdRef.current);
+          rafIdRef.current = requestAnimationFrame(flushBuffer);
+        }
+        return;
+      }
       
       const now = performance.now();
       const elapsed = now - lastFlushRef.current;
       
-      if (elapsed >= RENDER_THROTTLE_MS) {
+      if (shouldFlushNow || elapsed >= RENDER_THROTTLE_MS) {
         // Enough time passed, flush immediately on next frame
         rafIdRef.current = requestAnimationFrame(flushBuffer);
       } else {
@@ -263,7 +288,8 @@ function TerminalPane(props: TerminalPaneProps) {
       const dataUnlisten = await listen<{ id: string; data: string }>("term:data", (evt) => {
         if (evt.payload.id === props.id) {
           // Buffer data instead of writing immediately
-          dataBufferRef.current += evt.payload.data;
+          dataChunksRef.current.push(evt.payload.data);
+          dataBufferSizeRef.current += evt.payload.data.length;
           scheduleFlush();
         }
       });
@@ -275,16 +301,19 @@ function TerminalPane(props: TerminalPaneProps) {
       }
       unlistenData = dataUnlisten;
       
-      // Listen for terminal exit and close the tab
+      // Listen for terminal exit and keep the tab open for debugging
       const exitUnlisten = await listen<{ id: string }>("term:exit", (evt) => {
         if (evt.payload.id === props.id) {
           // Flush any remaining data first
-          if (dataBufferRef.current && termRef.current) {
-            termRef.current.write(dataBufferRef.current);
-            dataBufferRef.current = "";
+          if (dataChunksRef.current.length > 0 && termRef.current) {
+            termRef.current.write(dataChunksRef.current.join(""));
+            dataChunksRef.current = [];
+            dataBufferSizeRef.current = 0;
           }
-          // Close the tab
-          props.onClose();
+          if (termRef.current && !hasExitedRef.current) {
+            termRef.current.write("\r\n[Session ended] Terminal tab kept open for debugging.\r\n");
+            hasExitedRef.current = true;
+          }
         }
       });
       
@@ -306,15 +335,17 @@ function TerminalPane(props: TerminalPaneProps) {
         rafIdRef.current = null;
       }
       // Flush remaining buffer before cleanup
-      if (dataBufferRef.current && termRef.current) {
-        termRef.current.write(dataBufferRef.current);
-        dataBufferRef.current = "";
+      if (dataChunksRef.current.length > 0 && termRef.current) {
+        termRef.current.write(dataChunksRef.current.join(""));
+        dataChunksRef.current = [];
+        dataBufferSizeRef.current = 0;
       }
       ro.disconnect();
       window.removeEventListener("resize", handleWindowResize);
       onDataDispose.dispose();
       if (unlistenData) unlistenData();
       if (unlistenExit) unlistenExit();
+      hostRef.current?.removeEventListener("wheel", onWheel);
       if (webglRef.current) webglRef.current.dispose();
       if (searchRef.current) searchRef.current.dispose();
       term.dispose();
@@ -391,6 +422,7 @@ export function TerminalPage() {
     isLoading,
     recipePanelVisible,
     toggleRecipePanel,
+    historyPanelVisible,
   } = useTerminal();
   
   // Search state
@@ -527,29 +559,27 @@ export function TerminalPage() {
               className="overflow-hidden bg-content1/80 backdrop-blur-md border-b border-divider"
             >
               <div className="flex items-center gap-2 px-3 py-2">
-                <Input
-                  ref={searchInputRef}
-                  size="sm"
-                  placeholder="Search in terminal..."
-                  value={searchQuery}
-                  onValueChange={setSearchQuery}
-                  onKeyDown={handleSearchKeyDown}
-                  startContent={<SearchIcon className="text-foreground/50" />}
-                  endContent={
-                    searchQuery && searchResult.total > 0 ? (
-                      <span className="text-xs text-foreground/60 whitespace-nowrap">
-                        {searchResult.current}/{searchResult.total}
-                      </span>
-                    ) : searchQuery ? (
-                      <span className="text-xs text-danger whitespace-nowrap">No results</span>
-                    ) : null
-                  }
-                  classNames={{
-                    base: "max-w-xs",
-                    inputWrapper: "h-8 bg-content2/50",
-                    input: "text-sm",
-                  }}
-                />
+                <Input labelPlacement="inside" ref={searchInputRef}
+                size="sm"
+                placeholder="Search in terminal..."
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+                onKeyDown={handleSearchKeyDown}
+                startContent={<SearchIcon className="text-foreground/50" />}
+                endContent={
+                  searchQuery && searchResult.total > 0 ? (
+                    <span className="text-xs text-foreground/60 whitespace-nowrap">
+                      {searchResult.current}/{searchResult.total}
+                    </span>
+                  ) : searchQuery ? (
+                    <span className="text-xs text-danger whitespace-nowrap">No results</span>
+                  ) : null
+                }
+                classNames={{
+                  base: "max-w-xs",
+                  inputWrapper: "h-8 bg-content2/50",
+                  input: "text-sm",
+                }} />
                 <div className="flex items-center gap-1">
                   <Button
                     isIconOnly
@@ -636,6 +666,9 @@ export function TerminalPage() {
                   />
                 </div>
               ))}
+              <AnimatePresence>
+                {historyPanelVisible && <TerminalHistoryPanel />}
+              </AnimatePresence>
             </div>
           </>
         )}
@@ -650,5 +683,3 @@ export function TerminalPage() {
     </div>
   );
 }
-
-

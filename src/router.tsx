@@ -6,7 +6,6 @@ import { DashboardPage } from "./pages/dashboard";
 import { HostListPage } from "./pages/hosts";
 import { HostDetailPage } from "./pages/host-detail";
 import { SettingsPage } from "./pages/settings";
-import { VastPage } from "./pages/vast";
 import { ColabPage } from "./pages/colab";
 import { JobPage } from "./pages/job";
 import { TerminalPage } from "./pages/terminal";
@@ -74,12 +73,6 @@ const tasksRedirectRoute = createRoute({
 });
 
 // Legacy routes
-const vastRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/vast",
-  component: VastPage,
-});
-
 const colabRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/colab",
@@ -154,7 +147,6 @@ const routeTree = rootRoute.addChildren([
   sessionsRedirectRoute,
   tasksRedirectRoute,
   // Legacy routes
-  vastRoute,
   colabRoute,
   jobRoute,
   terminalRoute,

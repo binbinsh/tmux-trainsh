@@ -4,7 +4,6 @@
 //! with proper dependency resolution and parallel execution.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use tokio::sync::{mpsc, RwLock, Mutex};
 use uuid::Uuid;
@@ -523,7 +522,7 @@ async fn execute_step_with_retry(
             }
         }
         
-        let result = execute_step(&step.operation, variables).await;
+        let result = execute_step(&step.operation, variables, None).await;
         
         match result {
             Ok(output) => return Ok(output),
@@ -547,9 +546,11 @@ async fn execute_step_with_retry(
 }
 
 /// Execute a single step operation
-async fn execute_step(
+/// Public so it can be used by interactive recipe execution
+pub async fn execute_step(
     operation: &Operation,
     variables: &HashMap<String, String>,
+    progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> Result<Option<String>, AppError> {
     match operation {
         // New unified run_commands operation
@@ -854,7 +855,7 @@ async fn execute_step(
                 interpolate(&op.cache_mode, variables)
             };
             
-            operations::google_drive::mount(
+            let success_msg = operations::google_drive::mount(
                 &host_id,
                 &storage_id,
                 &mount_path,
@@ -862,8 +863,9 @@ async fn execute_step(
                 op.vfs_cache,
                 &cache_mode,
                 op.background,
+                progress.clone(),
             ).await?;
-            Ok(None)
+            Ok(Some(success_msg))
         }
         
         Operation::GdriveUnmount(op) => {
@@ -977,4 +979,4 @@ fn compute_execution_order(steps: &[Step]) -> Result<Vec<String>, AppError> {
     
     Ok(order)
 }
-
+use std::sync::Arc;

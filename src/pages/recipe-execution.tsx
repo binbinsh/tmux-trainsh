@@ -10,6 +10,7 @@ import {
 import { Button } from "../components/ui";
 import { Link, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { copyText } from "../lib/clipboard";
 import {
   listenRecipeEvents,
   useCancelExecution,
@@ -90,7 +91,7 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -451,4 +452,3 @@ export function RecipeExecutionPage() {
     </div>
   );
 }
-

@@ -14,10 +14,7 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
-  Select,
-  SelectItem,
   Spinner,
-  Switch,
   Tab,
   Table,
   TableBody,
@@ -26,19 +23,19 @@ import {
   TableHeader,
   TableRow,
   Tabs,
-  Textarea,
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect } from "react";
+import { copyText } from "../lib/clipboard";
 import {
   hostApi,
   useVastInstances,
-  vastSearchOffers,
-  vastCreateInstance,
+  useColabPricingCalculation,
+  usePricingSettings,
   vastStartInstance,
   vastStopInstance,
   vastDestroyInstance,
@@ -46,8 +43,11 @@ import {
   getConfig,
   sshPublicKey,
 } from "../lib/tauri-api";
-import type { Host, HostConfig, HostType, VastInstance, VastOffer } from "../lib/types";
+import type { Host, HostConfig, HostType, VastInstance, ColabPricingResult, ColabGpuHourlyPrice, Currency, ExchangeRates } from "../lib/types";
 import { StatusBadge } from "../components/shared/StatusBadge";
+import { AppIcon } from "../components/AppIcon";
+import { formatPriceWithRates } from "../lib/currency";
+import { open } from "@tauri-apps/plugin-shell";
 
 // Icons
 function IconPlus() {
@@ -74,14 +74,6 @@ function IconEllipsis() {
   );
 }
 
-function IconSearch() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-    </svg>
-  );
-}
-
 function IconCopy() {
   return (
     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -103,7 +95,7 @@ function CodeBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(code);
+    await copyText(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -129,7 +121,6 @@ function CodeBlock({ code }: { code: string }) {
 export function HostListPage() {
   const queryClient = useQueryClient();
   const addHostModal = useDisclosure();
-  const rentModal = useDisclosure();
   const labelModal = useDisclosure();
 
   // Hosts query
@@ -140,6 +131,15 @@ export function HostListPage() {
 
   // Vast instances query
   const vastQuery = useVastInstances();
+
+  const colabPricingQuery = useColabPricingCalculation();
+  const colabPricing = colabPricingQuery.data ?? null;
+  const colabPricingLoading = colabPricingQuery.isLoading;
+  const pricingSettingsQuery = usePricingSettings();
+  const displayCurrency = pricingSettingsQuery.data?.display_currency ?? "USD";
+  const exchangeRates = pricingSettingsQuery.data?.exchange_rates;
+  const formatUsd = (value: number, decimals = 3) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
 
   // Mutations
   const addHostMutation = useMutation({
@@ -188,50 +188,6 @@ export function HostListPage() {
     ssh_user: "root",
   });
 
-  // Vast search state
-  const [offerGpuName, setOfferGpuName] = useState("");
-  const [offerNumGpus, setOfferNumGpus] = useState("1");
-  const [offerMaxDph, setOfferMaxDph] = useState("");
-  const [offerMinRel, setOfferMinRel] = useState("");
-  const [offerMinRam, setOfferMinRam] = useState("");
-  const [offerLimit, setOfferLimit] = useState("30");
-  const [offers, setOffers] = useState<VastOffer[]>([]);
-
-  const searchMut = useMutation({
-    mutationFn: () =>
-      vastSearchOffers({
-        gpu_name: offerGpuName.trim() || null,
-        num_gpus: offerNumGpus.trim() ? Number(offerNumGpus) : null,
-        min_gpu_ram: offerMinRam.trim() ? Number(offerMinRam) : null,
-        max_dph_total: offerMaxDph.trim() ? Number(offerMaxDph) : null,
-        min_reliability2: offerMinRel.trim() ? Number(offerMinRel) : null,
-        limit: offerLimit.trim() ? Number(offerLimit) : 30,
-        order: "dph_total",
-        type: "on-demand",
-      } as any),
-    onSuccess: (rows) => setOffers(rows),
-  });
-
-  // Rent modal state
-  const [rentDraft, setRentDraft] = useState<{
-    offer: VastOffer;
-    image: string;
-    disk: string;
-    label: string;
-    direct: boolean;
-    cancelUnavail: boolean;
-    onstart: string;
-  } | null>(null);
-
-  const createMut = useMutation({
-    mutationFn: (input: Parameters<typeof vastCreateInstance>[0]) => vastCreateInstance(input),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["vastInstances"] });
-      rentModal.onClose();
-      addHostModal.onClose();
-    },
-  });
-
   // Label modal state
   const [labelDraft, setLabelDraft] = useState<{ id: number; label: string } | null>(null);
 
@@ -270,6 +226,13 @@ export function HostListPage() {
     };
   }, [addHostTab, addHostModal.isOpen]);
 
+  useEffect(() => {
+    if (!addHostModal.isOpen) {
+      setColabPubKey("");
+      setColabPubKeyError("");
+    }
+  }, [addHostModal.isOpen]);
+
   function handleAddHost() {
     if (!newHost.name) return;
     addHostMutation.mutate(newHost as HostConfig);
@@ -300,6 +263,16 @@ export function HostListPage() {
   const vastInstances = vastQuery.data ?? [];
   const runningVast = vastInstances.filter((i) => i.actual_status?.includes("running")).length;
 
+  async function openVastConsole() {
+    const cfg = await getConfig();
+    const rawUrl = cfg.vast?.url?.trim();
+    const url =
+      rawUrl && rawUrl !== "https://console.vast.ai"
+        ? rawUrl
+        : "https://cloud.vast.ai/";
+    await open(url);
+  }
+
   return (
     <div className="h-full p-6 overflow-auto">
       <div className="max-w-7xl mx-auto">
@@ -323,7 +296,7 @@ export function HostListPage() {
             </Button>
             <Button 
               variant="flat"
-              onPress={() => { setAddHostTab("vast"); addHostModal.onOpen(); }}
+              onPress={() => { void openVastConsole(); }}
             >
               Rent from Vast.ai
             </Button>
@@ -388,7 +361,14 @@ export function HostListPage() {
                     transition={{ delay: index * 0.05 }}
                     className="h-full"
                   >
-                    <HostCard host={host} onDelete={() => removeHostMutation.mutate(host.id)} />
+                    <HostCard
+                      host={host}
+                      onDelete={() => removeHostMutation.mutate(host.id)}
+                      colabPricing={colabPricing}
+                      colabPricingLoading={colabPricingLoading}
+                      displayCurrency={displayCurrency}
+                      exchangeRates={exchangeRates}
+                    />
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -416,7 +396,7 @@ export function HostListPage() {
                 <TableColumn>ID</TableColumn>
                 <TableColumn>Status</TableColumn>
                 <TableColumn>GPU</TableColumn>
-                <TableColumn>$/hr</TableColumn>
+                <TableColumn>{displayCurrency}/hr</TableColumn>
                 <TableColumn>SSH</TableColumn>
                 <TableColumn>Label</TableColumn>
                 <TableColumn>Actions</TableColumn>
@@ -434,7 +414,7 @@ export function HostListPage() {
                       {inst.num_gpus}x {inst.gpu_name ?? "-"}
                     </TableCell>
                     <TableCell className="text-sm font-mono">
-                      ${inst.dph_total?.toFixed(3) ?? "-"}
+                      {inst.dph_total != null ? formatUsd(inst.dph_total) : "-"}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
                       {inst.ssh_host ? `${inst.ssh_host}:${inst.ssh_port}` : "-"}
@@ -508,16 +488,7 @@ export function HostListPage() {
       {/* Add Host Modal */}
       <Modal 
         isOpen={addHostModal.isOpen} 
-        onOpenChange={(open) => {
-          if (open) {
-            addHostModal.onOpen();
-          } else {
-            addHostModal.onClose();
-            // Reset state when modal closes
-            setColabPubKey("");
-            setColabPubKeyError("");
-          }
-        }} 
+        onOpenChange={addHostModal.onOpenChange}
         isDismissable={true}
         size="3xl" 
         scrollBehavior="inside"
@@ -530,164 +501,30 @@ export function HostListPage() {
                 <Tabs selectedKey={addHostTab} onSelectionChange={(k) => setAddHostTab(k as string)}>
                   <Tab key="custom" title="Custom SSH">
                     <div className="space-y-4 pt-4">
-                      <Input
-                        label="Host Name"
-                        placeholder="my-training-server"
-                        value={newHost.name ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, name: v })}
-                        isRequired
-                      />
-                      <Input
-                        label="SSH Host"
-                        placeholder="192.168.1.100 or hostname.example.com"
-                        value={newHost.ssh_host ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, ssh_host: v })}
-                        isRequired
-                      />
+                      <Input labelPlacement="inside" label="Host Name"
+                      placeholder="my-training-server"
+                      value={newHost.name ?? ""}
+                      onValueChange={(v) => setNewHost({ ...newHost, name: v })}
+                      isRequired />
+                      <Input labelPlacement="inside" label="SSH Host"
+                      placeholder="192.168.1.100 or hostname.example.com"
+                      value={newHost.ssh_host ?? ""}
+                      onValueChange={(v) => setNewHost({ ...newHost, ssh_host: v })}
+                      isRequired />
                       <div className="grid grid-cols-2 gap-4">
-                        <Input
-                          label="SSH Port"
-                          type="number"
-                          value={String(newHost.ssh_port ?? 22)}
-                          onValueChange={(v) => setNewHost({ ...newHost, ssh_port: parseInt(v) || 22 })}
-                        />
-                        <Input
-                          label="SSH User"
-                          placeholder="root"
-                          value={newHost.ssh_user ?? ""}
-                          onValueChange={(v) => setNewHost({ ...newHost, ssh_user: v })}
-                        />
+                        <Input labelPlacement="inside" label="SSH Port"
+                        type="number"
+                        value={String(newHost.ssh_port ?? 22)}
+                        onValueChange={(v) => setNewHost({ ...newHost, ssh_port: parseInt(v) || 22 })} />
+                        <Input labelPlacement="inside" label="SSH User"
+                        placeholder="root"
+                        value={newHost.ssh_user ?? ""}
+                        onValueChange={(v) => setNewHost({ ...newHost, ssh_user: v })} />
                       </div>
-                      <Input
-                        label="SSH Key Path (optional)"
-                        placeholder="~/.ssh/id_rsa"
-                        value={newHost.ssh_key_path ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, ssh_key_path: v || null })}
-                      />
-                    </div>
-                  </Tab>
-
-                  <Tab key="vast" title="Rent from Vast.ai">
-                    <div className="space-y-4 pt-4">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm text-foreground/60">
-                          Search for GPU instances on Vast.ai
-                        </p>
-                        <Button
-                          color="primary"
-                          size="sm"
-                          startContent={<IconSearch />}
-                          isLoading={searchMut.isPending}
-                          onPress={() => searchMut.mutate()}
-                        >
-                          Search
-                        </Button>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-3">
-                        <Input
-                          size="sm"
-                          label="GPU Name"
-                          placeholder="H100, 4090, A100"
-                          value={offerGpuName}
-                          onValueChange={setOfferGpuName}
-                        />
-                        <Input
-                          size="sm"
-                          label="# GPUs"
-                          type="number"
-                          value={offerNumGpus}
-                          onValueChange={setOfferNumGpus}
-                        />
-                        <Input
-                          size="sm"
-                          label="Min VRAM (GB)"
-                          type="number"
-                          value={offerMinRam}
-                          onValueChange={setOfferMinRam}
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 gap-3">
-                        <Input
-                          size="sm"
-                          label="Max $/hr"
-                          type="number"
-                          value={offerMaxDph}
-                          onValueChange={setOfferMaxDph}
-                        />
-                        <Input
-                          size="sm"
-                          label="Min Reliability"
-                          type="number"
-                          placeholder="0.95"
-                          value={offerMinRel}
-                          onValueChange={setOfferMinRel}
-                        />
-                        <Input
-                          size="sm"
-                          label="Limit"
-                          type="number"
-                          value={offerLimit}
-                          onValueChange={setOfferLimit}
-                        />
-                      </div>
-
-                      {searchMut.error && (
-                        <p className="text-sm text-danger">
-                          Search failed: {(searchMut.error as any)?.message ?? "Unknown error"}
-                        </p>
-                      )}
-
-                      {offers.length > 0 && (
-                        <div className="max-h-64 overflow-auto">
-                          <Table removeWrapper aria-label="Vast offers" isCompact>
-                            <TableHeader>
-                              <TableColumn>GPU</TableColumn>
-                              <TableColumn>VRAM</TableColumn>
-                              <TableColumn>$/hr</TableColumn>
-                              <TableColumn>Reliability</TableColumn>
-                              <TableColumn>Action</TableColumn>
-                            </TableHeader>
-                            <TableBody>
-                              {offers.map((o) => (
-                                <TableRow key={o.id}>
-                                  <TableCell className="text-sm">
-                                    {o.num_gpus}x {o.gpu_name ?? "-"}
-                                  </TableCell>
-                                  <TableCell className="text-sm">{o.gpu_ram ? `${(o.gpu_ram / 1024).toFixed(0)} GB` : "-"}</TableCell>
-                                  <TableCell className="text-sm font-mono">
-                                    ${o.dph_total?.toFixed(3) ?? "-"}
-                                  </TableCell>
-                                  <TableCell className="text-sm">
-                                    {o.reliability2?.toFixed(2) ?? "-"}
-                                  </TableCell>
-                                  <TableCell>
-                                    <Button
-                                      size="sm"
-                                      color="primary"
-                                      variant="flat"
-                                      onPress={() => {
-                                        setRentDraft({
-                                          offer: o,
-                                          image: "pytorch/pytorch:latest",
-                                          disk: "40",
-                                          label: "",
-                                          direct: false,
-                                          cancelUnavail: false,
-                                          onstart: "",
-                                        });
-                                        rentModal.onOpen();
-                                      }}
-                                    >
-                                      Rent
-                                    </Button>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      )}
+                      <Input labelPlacement="inside" label="SSH Key Path (optional)"
+                      placeholder="~/.ssh/id_rsa"
+                      value={newHost.ssh_key_path ?? ""}
+                      onValueChange={(v) => setNewHost({ ...newHost, ssh_key_path: v || null })} />
                     </div>
                   </Tab>
 
@@ -747,26 +584,20 @@ for _ in range(30):
 
                       <Divider />
 
-                      <Input
-                        label="Host Name"
-                        placeholder="my-colab"
-                        value={newHost.name ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, name: v, type: "colab" })}
-                        isRequired
-                      />
-                      <Input
-                        label="Cloudflared Hostname"
-                        placeholder="xxxx-xxxx.trycloudflare.com"
-                        value={newHost.cloudflared_hostname ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, cloudflared_hostname: v })}
-                        isRequired
-                      />
-                      <Input
-                        label="SSH User"
-                        placeholder="root"
-                        value={newHost.ssh_user ?? "root"}
-                        onValueChange={(v) => setNewHost({ ...newHost, ssh_user: v })}
-                      />
+                      <Input labelPlacement="inside" label="Host Name"
+                      placeholder="my-colab"
+                      value={newHost.name ?? ""}
+                      onValueChange={(v) => setNewHost({ ...newHost, name: v, type: "colab" })}
+                      isRequired />
+                      <Input labelPlacement="inside" label="Cloudflared Hostname"
+                      placeholder="xxxx-xxxx.trycloudflare.com"
+                      value={newHost.cloudflared_hostname ?? ""}
+                      onValueChange={(v) => setNewHost({ ...newHost, cloudflared_hostname: v })}
+                      isRequired />
+                      <Input labelPlacement="inside" label="SSH User"
+                      placeholder="root"
+                      value={newHost.ssh_user ?? "root"}
+                      onValueChange={(v) => setNewHost({ ...newHost, ssh_user: v })} />
                     </div>
                   </Tab>
                 </Tabs>
@@ -775,114 +606,16 @@ for _ in range(30):
                 <Button variant="flat" onPress={onClose}>
                   Cancel
                 </Button>
-                {addHostTab !== "vast" && (
-                  <Button
-                    color="primary"
-                    onPress={() => {
-                      setNewHost({ ...newHost, type: addHostTab as HostType });
-                      handleAddHost();
-                    }}
-                    isLoading={addHostMutation.isPending}
-                    isDisabled={!newHost.name}
-                  >
-                    Add Host
-                  </Button>
-                )}
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-
-      {/* Rent Instance Modal */}
-      <Modal isOpen={rentModal.isOpen} onOpenChange={(open) => open ? rentModal.onOpen() : rentModal.onClose()} isDismissable={true} size="2xl">
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader>Rent Vast.ai Instance</ModalHeader>
-              <ModalBody className="gap-4">
-                <div className="text-sm text-foreground/60">
-                  <span className="font-medium">Offer #{rentDraft?.offer.id}</span> ·{" "}
-                  {rentDraft?.offer.num_gpus}x {rentDraft?.offer.gpu_name} ·{" "}
-                  ${rentDraft?.offer.dph_total?.toFixed(3)}/hr
-                </div>
-
-                <Input
-                  label="Docker Image"
-                  value={rentDraft?.image ?? ""}
-                  onValueChange={(v) => setRentDraft((p) => (p ? { ...p, image: v } : p))}
-                  placeholder="pytorch/pytorch:latest"
-                  isRequired
-                />
-
-                <div className="grid grid-cols-2 gap-4">
-                  <Input
-                    label="Disk (GB)"
-                    type="number"
-                    value={rentDraft?.disk ?? ""}
-                    onValueChange={(v) => setRentDraft((p) => (p ? { ...p, disk: v } : p))}
-                  />
-                  <Input
-                    label="Label"
-                    value={rentDraft?.label ?? ""}
-                    onValueChange={(v) => setRentDraft((p) => (p ? { ...p, label: v } : p))}
-                    placeholder="my-training"
-                  />
-                </div>
-
-                <div className="flex gap-6">
-                  <Switch
-                    size="sm"
-                    isSelected={rentDraft?.direct ?? false}
-                    onValueChange={(v) => setRentDraft((p) => (p ? { ...p, direct: v } : p))}
-                  >
-                    Direct SSH
-                  </Switch>
-                  <Switch
-                    size="sm"
-                    isSelected={rentDraft?.cancelUnavail ?? false}
-                    onValueChange={(v) => setRentDraft((p) => (p ? { ...p, cancelUnavail: v } : p))}
-                  >
-                    Cancel if unavailable
-                  </Switch>
-                </div>
-
-                <Textarea
-                  label="Onstart Script"
-                  value={rentDraft?.onstart ?? ""}
-                  onValueChange={(v) => setRentDraft((p) => (p ? { ...p, onstart: v } : p))}
-                  placeholder="apt-get update && pip install ..."
-                  minRows={2}
-                  classNames={{ input: "font-mono text-xs" }}
-                />
-
-                {createMut.error && (
-                  <p className="text-sm text-danger">
-                    Failed: {(createMut.error as any)?.message ?? "Unknown error"}
-                  </p>
-                )}
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="flat" onPress={onClose}>
-                  Cancel
-                </Button>
                 <Button
                   color="primary"
-                  isLoading={createMut.isPending}
-                  onPress={async () => {
-                    if (!rentDraft) return;
-                    await createMut.mutateAsync({
-                      offer_id: rentDraft.offer.id,
-                      image: rentDraft.image,
-                      disk: Number(rentDraft.disk) || 40,
-                      label: rentDraft.label.trim() || null,
-                      onstart: rentDraft.onstart.trim() || null,
-                      direct: rentDraft.direct,
-                      cancel_unavail: rentDraft.cancelUnavail,
-                    });
+                  onPress={() => {
+                    setNewHost({ ...newHost, type: addHostTab as HostType });
+                    handleAddHost();
                   }}
+                  isLoading={addHostMutation.isPending}
+                  isDisabled={!newHost.name}
                 >
-                  Create Instance
+                  Add Host
                 </Button>
               </ModalFooter>
             </>
@@ -897,12 +630,10 @@ for _ in range(30):
             <>
               <ModalHeader>Set Instance Label</ModalHeader>
               <ModalBody>
-                <Input
-                  label="Label"
-                  value={labelDraft?.label ?? ""}
-                  onValueChange={(v) => setLabelDraft((p) => (p ? { ...p, label: v } : p))}
-                  placeholder="my-training-job"
-                />
+                <Input labelPlacement="inside" label="Label"
+                value={labelDraft?.label ?? ""}
+                onValueChange={(v) => setLabelDraft((p) => (p ? { ...p, label: v } : p))}
+                placeholder="my-training-job" />
               </ModalBody>
               <ModalFooter>
                 <Button variant="flat" onPress={onClose}>
@@ -928,25 +659,163 @@ for _ in range(30):
   );
 }
 
+function getGpuShortName(name: string): string {
+  const tokens = normalizeGpuTokens(name);
+  const model = tokens.find((token) => /[A-Z]+\d+/.test(token)) ?? tokens.find((token) => /\d{3,4}/.test(token));
+  const size = tokens.find((token) => /\d+G$/.test(token));
+  if (!model) {
+    return name;
+  }
+  if (size && size !== model) {
+    return `${model} ${size}`;
+  }
+  return model;
+}
+
+type GpuCount = {
+  name: string;
+  count: number;
+};
+
+function getHostGpuCounts(host: Host): GpuCount[] {
+  const gpuList = host.system_info?.gpu_list ?? [];
+  if (gpuList.length > 0) {
+    const counts = new Map<string, number>();
+    for (const gpu of gpuList) {
+      counts.set(gpu.name, (counts.get(gpu.name) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).map(([name, count]) => ({ name, count }));
+  }
+  if (host.gpu_name) {
+    return [{ name: host.gpu_name, count: host.num_gpus ?? 1 }];
+  }
+  return [];
+}
+
+function normalizeGpuTokens(name: string): string[] {
+  const rawTokens = name
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter((token) => token.length > 0);
+  const tokenSet = new Set<string>();
+
+  for (const raw of rawTokens) {
+    let token = raw;
+    if (token.endsWith("GIB")) {
+      token = `${token.slice(0, -3)}G`;
+    } else if (token.endsWith("GB")) {
+      token = `${token.slice(0, -2)}G`;
+    }
+    if (token) {
+      tokenSet.add(token);
+    }
+    const subTokens = token.match(/[A-Z]+\d+/g);
+    if (subTokens) {
+      for (const subToken of subTokens) {
+        tokenSet.add(subToken);
+      }
+    }
+  }
+
+  return Array.from(tokenSet);
+}
+
+function findColabGpuPrice(prices: ColabGpuHourlyPrice[], gpuName: string): ColabGpuHourlyPrice | null {
+  const gpuTokens = new Set(normalizeGpuTokens(gpuName));
+  let bestMatch: { price: ColabGpuHourlyPrice; score: number } | null = null;
+
+  for (const price of prices) {
+    const priceTokens = normalizeGpuTokens(price.gpu_name);
+    if (priceTokens.length === 0) {
+      continue;
+    }
+    const matchesAll = priceTokens.every((token) => gpuTokens.has(token));
+    if (!matchesAll) {
+      continue;
+    }
+    const score = priceTokens.length;
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { price, score };
+    }
+  }
+
+  return bestMatch?.price ?? null;
+}
+
+function calculateColabHourlyUsd(
+  gpuCounts: GpuCount[],
+  colabPricing: ColabPricingResult | null
+): number | null {
+  if (!colabPricing || gpuCounts.length === 0) {
+    return null;
+  }
+  let total = 0;
+  for (const gpu of gpuCounts) {
+    const price = findColabGpuPrice(colabPricing.gpu_prices, gpu.name);
+    if (!price) {
+      return null;
+    }
+    total += price.price_usd_per_hour * gpu.count;
+  }
+  return total;
+}
+
 // Host Card Component
-function HostCard({ host, onDelete }: { host: Host; onDelete: () => void }) {
+function HostCard({
+  host,
+  onDelete,
+  colabPricing,
+  colabPricingLoading,
+  displayCurrency,
+  exchangeRates,
+}: {
+  host: Host;
+  onDelete: () => void;
+  colabPricing?: ColabPricingResult | null;
+  colabPricingLoading?: boolean;
+  displayCurrency: Currency;
+  exchangeRates?: ExchangeRates;
+}) {
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
+  const navigate = useNavigate();
   
   const handleConfirmDelete = () => {
     onDelete();
     onDeleteClose();
   };
   
-  const hostIcon = host.type === "vast" ? "🚀" : host.type === "colab" ? "🔬" : "🖥️";
+  const hostIcon = host.type === "vast" ? "vast" : host.type === "colab" ? "colab" : "host";
+  const openDetails = () => {
+    navigate({ to: "/hosts/$id", params: { id: host.id } });
+  };
+  const gpuCounts = getHostGpuCounts(host);
+  const colabHourlyUsd =
+    host.type === "colab" ? calculateColabHourlyUsd(gpuCounts, colabPricing ?? null) : null;
+  const hasColabGpuInfo = host.type === "colab" && gpuCounts.length > 0;
+  const hasColabPricing = !!colabPricing;
+  const formatUsd = (value: number, decimals = 4) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
 
   return (
     <>
-      <Card className="h-full border border-divider hover:border-primary/50 transition-colors">
+      <Card
+        as="div"
+        isPressable
+        disableAnimation
+        disableRipple
+        onPress={(event) => {
+          if (event.target.closest("[data-host-card-action]")) {
+            return;
+          }
+          openDetails();
+        }}
+        className="h-full border border-divider hover:border-primary/50 transition-colors data-[pressed=true]:scale-100"
+      >
         <CardBody className="p-3 flex flex-col gap-2">
           {/* Header: Icon, Name, Status, Actions */}
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-2 min-w-0 flex-1">
-              <span className="text-lg shrink-0 mt-0.5">{hostIcon}</span>
+              <AppIcon name={hostIcon} className="w-6 h-6 shrink-0 mt-0.5" alt={`${host.type} icon`} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-semibold break-words">{host.name}</h3>
@@ -954,16 +823,7 @@ function HostCard({ host, onDelete }: { host: Host; onDelete: () => void }) {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <Button
-                as={Link}
-                to={`/hosts/${host.id}`}
-                size="sm"
-                color="primary"
-                variant="flat"
-              >
-                Details
-              </Button>
+            <div className="flex items-center gap-1 shrink-0" data-host-card-action>
               <Dropdown>
                 <DropdownTrigger>
                   <Button isIconOnly size="sm" variant="light">
@@ -986,19 +846,49 @@ function HostCard({ host, onDelete }: { host: Host; onDelete: () => void }) {
             </div>
           </div>
 
-          {/* GPU info */}
-          {host.gpu_name && (
-            <p className="text-xs text-foreground/60">
-              <span className="text-foreground/40">GPU: </span>
-              {host.num_gpus}x {host.gpu_name}
+          {/* SSH address */}
+          {host.ssh && (
+            <p className="text-xs font-mono text-foreground/50 whitespace-nowrap overflow-hidden text-ellipsis">
+              {host.ssh.user}@{host.ssh.host}:{host.ssh.port}
             </p>
           )}
 
-          {/* SSH address - wrap on overflow */}
-          {host.ssh && (
-            <p className="text-xs font-mono text-foreground/50 break-all">
-              {host.ssh.user}@{host.ssh.host}:{host.ssh.port}
-            </p>
+          {/* GPU + pricing pills */}
+          {(gpuCounts.length > 0 || host.type === "colab") && (
+            <div className="flex flex-wrap gap-2">
+              {gpuCounts.map((gpu) => (
+                <Chip key={gpu.name} size="sm" variant="flat" color="default">
+                  {gpu.count}x {getGpuShortName(gpu.name)}
+                </Chip>
+              ))}
+              {host.type === "colab" && (
+                <>
+                  {colabPricingLoading ? (
+                    <Chip size="sm" variant="flat" color="default">
+                      <span className="flex items-center gap-1">
+                        <Spinner size="sm" className="w-3 h-3" /> Loading...
+                      </span>
+                    </Chip>
+                  ) : !hasColabGpuInfo ? (
+                    <Chip size="sm" variant="flat" color="default">
+                      GPU unknown
+                    </Chip>
+                  ) : colabHourlyUsd != null ? (
+                    <Chip size="sm" variant="flat" color="warning">
+                      {formatUsd(colabHourlyUsd) + "/hr"}
+                    </Chip>
+                  ) : hasColabPricing ? (
+                    <Chip size="sm" variant="flat" color="default">
+                      No matching GPU price
+                    </Chip>
+                  ) : (
+                    <Chip size="sm" variant="flat" color="default">
+                      Pricing unavailable
+                    </Chip>
+                  )}
+                </>
+              )}
+            </div>
           )}
 
           {/* Spacer to push last seen to bottom */}

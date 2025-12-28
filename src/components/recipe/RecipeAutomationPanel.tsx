@@ -345,6 +345,10 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
 
   // Find current step index
   const currentStepIndex = execution.steps.findIndex((s) => s.status === "running");
+  const currentProgress =
+    execution.current_step && execution.step_progress
+      ? execution.step_progress[execution.current_step]
+      : undefined;
 
   return (
     <div className="flex flex-col h-full">
@@ -359,6 +363,11 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
           {execution.intervention_locked && (
             <Chip size="sm" variant="flat" color="warning" startContent={<LockIcon />}>
               Locked
+            </Chip>
+          )}
+          {currentProgress && (
+            <Chip size="sm" variant="flat" color="primary" className="max-w-full truncate">
+              {currentProgress}
             </Chip>
           )}
         </div>

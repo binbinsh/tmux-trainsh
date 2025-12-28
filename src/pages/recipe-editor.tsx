@@ -19,10 +19,11 @@ import {
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
+import { AppIcon } from "../components/AppIcon";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { motion, Reorder, useDragControls } from "framer-motion";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import {
   interactiveRecipeApi,
@@ -177,7 +178,7 @@ type OperationCategory = "commands" | "transfer" | "vastai" | "tmux" | "gdrive" 
 type OperationDef = {
   key: string;
   label: string;
-  icon: string;
+  icon: ReactNode;
   category: OperationCategory;
   description: string;
 };
@@ -199,17 +200,17 @@ const OPERATION_TYPES: OperationDef[] = [
   // Transfer
   { key: "transfer", label: "Transfer Files", icon: "📦", category: "transfer", description: "Transfer files between hosts/storage" },
   // Vast.ai
-  { key: "vast_start", label: "Start Instance", icon: "🚀", category: "vastai", description: "Start a Vast.ai instance" },
-  { key: "vast_stop", label: "Stop Instance", icon: "⏹️", category: "vastai", description: "Stop a Vast.ai instance" },
-  { key: "vast_destroy", label: "Destroy Instance", icon: "💥", category: "vastai", description: "Destroy a Vast.ai instance" },
+  { key: "vast_start", label: "Start Instance", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Start a Vast.ai instance" },
+  { key: "vast_stop", label: "Stop Instance", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Stop a Vast.ai instance" },
+  { key: "vast_destroy", label: "Destroy Instance", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Destroy a Vast.ai instance" },
   // Tmux
   { key: "tmux_new", label: "New Session", icon: "📺", category: "tmux", description: "Create new tmux session" },
   { key: "tmux_send", label: "Send Keys", icon: "⌨️", category: "tmux", description: "Send keys to tmux session" },
   { key: "tmux_capture", label: "Capture Output", icon: "📷", category: "tmux", description: "Capture tmux session output" },
   { key: "tmux_kill", label: "Kill Session", icon: "❌", category: "tmux", description: "Kill tmux session" },
   // Google Drive
-  { key: "gdrive_mount", label: "Mount Google Drive", icon: "📂", category: "gdrive", description: "Mount Google Drive on target host" },
-  { key: "gdrive_unmount", label: "Unmount Drive", icon: "⏏️", category: "gdrive", description: "Unmount Google Drive" },
+  { key: "gdrive_mount", label: "Mount Google Drive", icon: <AppIcon name="googledrive" className="w-5 h-5" alt="Google Drive" />, category: "gdrive", description: "Mount Google Drive on target host" },
+  { key: "gdrive_unmount", label: "Unmount Drive", icon: <AppIcon name="googledrive" className="w-5 h-5" alt="Google Drive" />, category: "gdrive", description: "Unmount Google Drive" },
   // Git & ML
   { key: "git_clone", label: "Git Clone", icon: "📥", category: "git", description: "Clone a Git repository" },
   { key: "hf_download", label: "HF Download", icon: "🤗", category: "git", description: "Download from HuggingFace" },
@@ -557,51 +558,43 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
       <div className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-black/60 w-20">Source</span>
-          <Select
-            selectedKeys={[getSourceType()]}
-            onSelectionChange={(keys) => {
-              const type = Array.from(keys)[0] as string;
-              if (type === 'local') updateOp('source', { local: { path: '' } });
-              else if (type === 'target') updateOp('source', { host: { host_id: null, path: '' } });
-              else if (type === 'host') updateOp('source', { host: { host_id: '', path: '' } });
-              else if (type === 'storage') updateOp('source', { storage: { storage_id: '', path: '' } });
-            }}
-            size="sm"
-            variant="bordered"
-            classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}
-          >
-            <SelectItem key="local">Local</SelectItem>
-            <SelectItem key="target">Target Host</SelectItem>
-            <SelectItem key="host">Host</SelectItem>
-            <SelectItem key="storage">Storage</SelectItem>
-          </Select>
+          <Select labelPlacement="inside" selectedKeys={[getSourceType()]}
+          onSelectionChange={(keys) => {
+            const type = Array.from(keys)[0] as string;
+            if (type === 'local') updateOp('source', { local: { path: '' } });
+            else if (type === 'target') updateOp('source', { host: { host_id: null, path: '' } });
+            else if (type === 'host') updateOp('source', { host: { host_id: '', path: '' } });
+            else if (type === 'storage') updateOp('source', { storage: { storage_id: '', path: '' } });
+          }}
+          size="sm"
+          variant="bordered"
+          classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}><SelectItem key="local">Local</SelectItem>
+          <SelectItem key="target">Target Host</SelectItem>
+          <SelectItem key="host">Host</SelectItem>
+          <SelectItem key="storage">Storage</SelectItem></Select>
           
           {/* Target: just path input */}
           {getSourceType() === 'target' && (
-            <Input
-              placeholder="/workspace/data"
-              value={source?.host?.path ?? ''}
-              onValueChange={(v) => updateSource('target', { path: v })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[200px]"
-              classNames={inputClasses}
-              startContent={<span className="text-xs text-primary whitespace-nowrap">${"{target}"}:</span>}
-            />
+            <Input labelPlacement="inside" placeholder="/workspace/data"
+            value={source?.host?.path ?? ''}
+            onValueChange={(v) => updateSource('target', { path: v })}
+            size="sm"
+            variant="bordered"
+            className="flex-1 min-w-[200px]"
+            classNames={inputClasses}
+            startContent={<span className="text-xs text-primary whitespace-nowrap">${"{target}"}:</span>} />
           )}
           
           {/* Local: path input + browse */}
           {getSourceType() === 'local' && (
             <>
-              <Input
-                placeholder="/path/to/local"
-                value={source?.local?.path ?? ''}
-                onValueChange={(v) => updateSource('local', { path: v })}
-                size="sm"
-                variant="bordered"
-                className="flex-1 min-w-[200px]"
-                classNames={inputClasses}
-              />
+              <Input labelPlacement="inside" placeholder="/path/to/local"
+              value={source?.local?.path ?? ''}
+              onValueChange={(v) => updateSource('local', { path: v })}
+              size="sm"
+              variant="bordered"
+              className="flex-1 min-w-[200px]"
+              classNames={inputClasses} />
               <BrowseButton target="source" />
             </>
           )}
@@ -609,31 +602,25 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Host: dropdown + path + browse */}
           {getSourceType() === 'host' && (
             <>
-              <Select
-                selectedKeys={source?.host?.host_id ? [source.host.host_id] : []}
-                onSelectionChange={(keys) => {
-                  const hostId = Array.from(keys)[0] as string;
-                  updateOp('source', { host: { ...source?.host, host_id: hostId || '' } });
-                }}
-                placeholder="Select host..."
-                size="sm"
-                variant="bordered"
-                className="w-40"
-                classNames={selectClasses}
-              >
-                {hosts.map((h: Host) => (
-                  <SelectItem key={h.id}>{h.name}</SelectItem>
-                ))}
-              </Select>
-              <Input
-                placeholder="/remote/path"
-                value={source?.host?.path ?? ''}
-                onValueChange={(v) => updateOp('source', { host: { ...source?.host, path: v } })}
-                size="sm"
-                variant="bordered"
-                className="flex-1 min-w-[150px]"
-                classNames={inputClasses}
-              />
+              <Select labelPlacement="inside" selectedKeys={source?.host?.host_id ? [source.host.host_id] : []}
+              onSelectionChange={(keys) => {
+                const hostId = Array.from(keys)[0] as string;
+                updateOp('source', { host: { ...source?.host, host_id: hostId || '' } });
+              }}
+              placeholder="Select host..."
+              size="sm"
+              variant="bordered"
+              className="w-40"
+              classNames={selectClasses}>{hosts.map((h: Host) => (
+                <SelectItem key={h.id}>{h.name}</SelectItem>
+              ))}</Select>
+              <Input labelPlacement="inside" placeholder="/remote/path"
+              value={source?.host?.path ?? ''}
+              onValueChange={(v) => updateOp('source', { host: { ...source?.host, path: v } })}
+              size="sm"
+              variant="bordered"
+              className="flex-1 min-w-[150px]"
+              classNames={inputClasses} />
               <BrowseButton target="source" />
             </>
           )}
@@ -641,31 +628,25 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Storage: dropdown + path + browse */}
           {getSourceType() === 'storage' && (
             <>
-              <Select
-                selectedKeys={source?.storage?.storage_id ? [source.storage.storage_id] : []}
-                onSelectionChange={(keys) => {
-                  const storageId = Array.from(keys)[0] as string;
-                  updateOp('source', { storage: { ...source?.storage, storage_id: storageId || '' } });
-                }}
-                placeholder="Select storage..."
-                size="sm"
-                variant="bordered"
-                className="w-40"
-                classNames={selectClasses}
-              >
-                {storages.map((s: Storage) => (
-                  <SelectItem key={s.id}>{s.name}</SelectItem>
-                ))}
-              </Select>
-              <Input
-                placeholder="/path/in/storage"
-                value={source?.storage?.path ?? ''}
-                onValueChange={(v) => updateOp('source', { storage: { ...source?.storage, path: v } })}
-                size="sm"
-                variant="bordered"
-                className="flex-1 min-w-[150px]"
-                classNames={inputClasses}
-              />
+              <Select labelPlacement="inside" selectedKeys={source?.storage?.storage_id ? [source.storage.storage_id] : []}
+              onSelectionChange={(keys) => {
+                const storageId = Array.from(keys)[0] as string;
+                updateOp('source', { storage: { ...source?.storage, storage_id: storageId || '' } });
+              }}
+              placeholder="Select storage..."
+              size="sm"
+              variant="bordered"
+              className="w-40"
+              classNames={selectClasses}>{storages.map((s: Storage) => (
+                <SelectItem key={s.id}>{s.name}</SelectItem>
+              ))}</Select>
+              <Input labelPlacement="inside" placeholder="/path/in/storage"
+              value={source?.storage?.path ?? ''}
+              onValueChange={(v) => updateOp('source', { storage: { ...source?.storage, path: v } })}
+              size="sm"
+              variant="bordered"
+              className="flex-1 min-w-[150px]"
+              classNames={inputClasses} />
               <BrowseButton target="source" />
             </>
           )}
@@ -676,51 +657,43 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
       <div className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-black/60 w-20">Destination</span>
-          <Select
-            selectedKeys={[getDestType()]}
-            onSelectionChange={(keys) => {
-              const type = Array.from(keys)[0] as string;
-              if (type === 'local') updateOp('destination', { local: { path: '' } });
-              else if (type === 'target') updateOp('destination', { host: { host_id: null, path: '' } });
-              else if (type === 'host') updateOp('destination', { host: { host_id: '', path: '' } });
-              else if (type === 'storage') updateOp('destination', { storage: { storage_id: '', path: '' } });
-            }}
-            size="sm"
-            variant="bordered"
-            classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}
-          >
-            <SelectItem key="local">Local</SelectItem>
-            <SelectItem key="target">Target Host</SelectItem>
-            <SelectItem key="host">Host</SelectItem>
-            <SelectItem key="storage">Storage</SelectItem>
-          </Select>
+          <Select labelPlacement="inside" selectedKeys={[getDestType()]}
+          onSelectionChange={(keys) => {
+            const type = Array.from(keys)[0] as string;
+            if (type === 'local') updateOp('destination', { local: { path: '' } });
+            else if (type === 'target') updateOp('destination', { host: { host_id: null, path: '' } });
+            else if (type === 'host') updateOp('destination', { host: { host_id: '', path: '' } });
+            else if (type === 'storage') updateOp('destination', { storage: { storage_id: '', path: '' } });
+          }}
+          size="sm"
+          variant="bordered"
+          classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}><SelectItem key="local">Local</SelectItem>
+          <SelectItem key="target">Target Host</SelectItem>
+          <SelectItem key="host">Host</SelectItem>
+          <SelectItem key="storage">Storage</SelectItem></Select>
           
           {/* Target: just path input */}
           {getDestType() === 'target' && (
-            <Input
-              placeholder="/workspace/data"
-              value={destination?.host?.path ?? ''}
-              onValueChange={(v) => updateDest('target', { path: v })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[200px]"
-              classNames={inputClasses}
-              startContent={<span className="text-xs text-primary whitespace-nowrap">${"{target}"}:</span>}
-            />
+            <Input labelPlacement="inside" placeholder="/workspace/data"
+            value={destination?.host?.path ?? ''}
+            onValueChange={(v) => updateDest('target', { path: v })}
+            size="sm"
+            variant="bordered"
+            className="flex-1 min-w-[200px]"
+            classNames={inputClasses}
+            startContent={<span className="text-xs text-primary whitespace-nowrap">${"{target}"}:</span>} />
           )}
           
           {/* Local: path input + browse */}
           {getDestType() === 'local' && (
             <>
-              <Input
-                placeholder="/path/to/local"
-                value={destination?.local?.path ?? ''}
-                onValueChange={(v) => updateDest('local', { path: v })}
-                size="sm"
-                variant="bordered"
-                className="flex-1 min-w-[200px]"
-                classNames={inputClasses}
-              />
+              <Input labelPlacement="inside" placeholder="/path/to/local"
+              value={destination?.local?.path ?? ''}
+              onValueChange={(v) => updateDest('local', { path: v })}
+              size="sm"
+              variant="bordered"
+              className="flex-1 min-w-[200px]"
+              classNames={inputClasses} />
               <BrowseButton target="destination" />
             </>
           )}
@@ -728,31 +701,25 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Host: dropdown + path + browse */}
           {getDestType() === 'host' && (
             <>
-              <Select
-                selectedKeys={destination?.host?.host_id ? [destination.host.host_id] : []}
-                onSelectionChange={(keys) => {
-                  const hostId = Array.from(keys)[0] as string;
-                  updateOp('destination', { host: { ...destination?.host, host_id: hostId || '' } });
-                }}
-                placeholder="Select host..."
-                size="sm"
-                variant="bordered"
-                className="w-40"
-                classNames={selectClasses}
-              >
-                {hosts.map((h: Host) => (
-                  <SelectItem key={h.id}>{h.name}</SelectItem>
-                ))}
-              </Select>
-              <Input
-                placeholder="/remote/path"
-                value={destination?.host?.path ?? ''}
-                onValueChange={(v) => updateOp('destination', { host: { ...destination?.host, path: v } })}
-                size="sm"
-                variant="bordered"
-                className="flex-1 min-w-[150px]"
-                classNames={inputClasses}
-              />
+              <Select labelPlacement="inside" selectedKeys={destination?.host?.host_id ? [destination.host.host_id] : []}
+              onSelectionChange={(keys) => {
+                const hostId = Array.from(keys)[0] as string;
+                updateOp('destination', { host: { ...destination?.host, host_id: hostId || '' } });
+              }}
+              placeholder="Select host..."
+              size="sm"
+              variant="bordered"
+              className="w-40"
+              classNames={selectClasses}>{hosts.map((h: Host) => (
+                <SelectItem key={h.id}>{h.name}</SelectItem>
+              ))}</Select>
+              <Input labelPlacement="inside" placeholder="/remote/path"
+              value={destination?.host?.path ?? ''}
+              onValueChange={(v) => updateOp('destination', { host: { ...destination?.host, path: v } })}
+              size="sm"
+              variant="bordered"
+              className="flex-1 min-w-[150px]"
+              classNames={inputClasses} />
               <BrowseButton target="destination" />
             </>
           )}
@@ -760,31 +727,25 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Storage: dropdown + path + browse */}
           {getDestType() === 'storage' && (
             <>
-              <Select
-                selectedKeys={destination?.storage?.storage_id ? [destination.storage.storage_id] : []}
-                onSelectionChange={(keys) => {
-                  const storageId = Array.from(keys)[0] as string;
-                  updateOp('destination', { storage: { ...destination?.storage, storage_id: storageId || '' } });
-                }}
-                placeholder="Select storage..."
-                size="sm"
-                variant="bordered"
-                className="w-40"
-                classNames={selectClasses}
-              >
-                {storages.map((s: Storage) => (
-                  <SelectItem key={s.id}>{s.name}</SelectItem>
-                ))}
-              </Select>
-              <Input
-                placeholder="/path/in/storage"
-                value={destination?.storage?.path ?? ''}
-                onValueChange={(v) => updateOp('destination', { storage: { ...destination?.storage, path: v } })}
-                size="sm"
-                variant="bordered"
-                className="flex-1 min-w-[150px]"
-                classNames={inputClasses}
-              />
+              <Select labelPlacement="inside" selectedKeys={destination?.storage?.storage_id ? [destination.storage.storage_id] : []}
+              onSelectionChange={(keys) => {
+                const storageId = Array.from(keys)[0] as string;
+                updateOp('destination', { storage: { ...destination?.storage, storage_id: storageId || '' } });
+              }}
+              placeholder="Select storage..."
+              size="sm"
+              variant="bordered"
+              className="w-40"
+              classNames={selectClasses}>{storages.map((s: Storage) => (
+                <SelectItem key={s.id}>{s.name}</SelectItem>
+              ))}</Select>
+              <Input labelPlacement="inside" placeholder="/path/in/storage"
+              value={destination?.storage?.path ?? ''}
+              onValueChange={(v) => updateOp('destination', { storage: { ...destination?.storage, path: v } })}
+              size="sm"
+              variant="bordered"
+              className="flex-1 min-w-[150px]"
+              classNames={inputClasses} />
               <BrowseButton target="destination" />
             </>
           )}
@@ -812,22 +773,20 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
             ) : (
               includePaths.map((p, i) => (
                 <div key={i} className="flex items-center gap-1">
-                  <Input
-                    placeholder="src/"
-                    value={p}
-                    onValueChange={(v) => {
-                      const newPaths = [...includePaths];
-                      newPaths[i] = v;
-                      updateOp('include_paths', newPaths);
-                    }}
-                    size="sm"
-                    variant="bordered"
-                    className="flex-1"
-                    classNames={{
-                      inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 h-7",
-                      input: "text-black placeholder:text-black/40 text-xs",
-                    }}
-                  />
+                  <Input labelPlacement="inside" placeholder="src/"
+                  value={p}
+                  onValueChange={(v) => {
+                    const newPaths = [...includePaths];
+                    newPaths[i] = v;
+                    updateOp('include_paths', newPaths);
+                  }}
+                  size="sm"
+                  variant="bordered"
+                  className="flex-1"
+                  classNames={{
+                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 h-7",
+                    input: "text-black placeholder:text-black/40 text-xs",
+                  }} />
                   <Button
                     isIconOnly
                     size="sm"
@@ -865,22 +824,20 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
             ) : (
               excludePatterns.map((p, i) => (
                 <div key={i} className="flex items-center gap-1">
-                  <Input
-                    placeholder="*.pyc"
-                    value={p}
-                    onValueChange={(v) => {
-                      const newPatterns = [...excludePatterns];
-                      newPatterns[i] = v;
-                      updateOp('exclude_patterns', newPatterns);
-                    }}
-                    size="sm"
-                    variant="bordered"
-                    className="flex-1"
-                    classNames={{
-                      inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 h-7",
-                      input: "text-black placeholder:text-black/40 text-xs",
-                    }}
-                  />
+                  <Input labelPlacement="inside" placeholder="*.pyc"
+                  value={p}
+                  onValueChange={(v) => {
+                    const newPatterns = [...excludePatterns];
+                    newPatterns[i] = v;
+                    updateOp('exclude_patterns', newPatterns);
+                  }}
+                  size="sm"
+                  variant="bordered"
+                  className="flex-1"
+                  classNames={{
+                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 h-7",
+                    input: "text-black placeholder:text-black/40 text-xs",
+                  }} />
                   <Button
                     isIconOnly
                     size="sm"
@@ -1001,23 +958,19 @@ function ConditionEditor({ condition, onChange }: { condition: unknown; onChange
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-sm text-black/60 w-20">Condition</span>
-        <Select
-          selectedKeys={[conditionType]}
-          onSelectionChange={(keys) => {
-            const type = Array.from(keys)[0] as ConditionType;
-            updateConditionType(type);
-          }}
-          size="sm"
-          variant="bordered"
-          classNames={{
-            trigger: "bg-white/80 border-black/10 hover:border-black/20",
-            value: "text-black",
-          }}
-        >
-          {CONDITION_TYPES.map(c => (
-            <SelectItem key={c.key}>{c.label}</SelectItem>
-          ))}
-        </Select>
+        <Select labelPlacement="inside" selectedKeys={[conditionType]}
+        onSelectionChange={(keys) => {
+          const type = Array.from(keys)[0] as ConditionType;
+          updateConditionType(type);
+        }}
+        size="sm"
+        variant="bordered"
+        classNames={{
+          trigger: "bg-white/80 border-black/10 hover:border-black/20",
+          value: "text-black",
+        }}>{CONDITION_TYPES.map(c => (
+          <SelectItem key={c.key}>{c.label}</SelectItem>
+        ))}</Select>
       </div>
 
       {/* Render fields based on condition type */}
@@ -1027,46 +980,40 @@ function ConditionEditor({ condition, onChange }: { condition: unknown; onChange
             <div key={field} className="flex items-center gap-2">
               <span className="text-xs text-black/50 w-20 capitalize">{field.replace('_', ' ')}</span>
               {field === 'min_count' ? (
-                <Input
-                  type="number"
-                  placeholder="1"
-                  value={String(conditionData[field] ?? 1)}
-                  onValueChange={(v) => updateField(field, parseInt(v) || 1)}
-                  size="sm"
-                  variant="bordered"
-                  className="max-w-[100px]"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                    input: "text-black placeholder:text-black/40",
-                  }}
-                />
+                <Input labelPlacement="inside" type="number"
+                placeholder="1"
+                value={String(conditionData[field] ?? 1)}
+                onValueChange={(v) => updateField(field, parseInt(v) || 1)}
+                size="sm"
+                variant="bordered"
+                className="max-w-[100px]"
+                classNames={{
+                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                  input: "text-black placeholder:text-black/40",
+                }} />
               ) : field === 'command' ? (
-                <Textarea
-                  placeholder="command to run"
-                  value={(conditionData[field] as string) ?? ''}
-                  onValueChange={(v) => updateField(field, v)}
-                  minRows={1}
-                  size="sm"
-                  variant="bordered"
-                  className="flex-1"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                    input: "text-black placeholder:text-black/40 font-mono text-xs",
-                  }}
-                />
+                <Textarea labelPlacement="inside" placeholder="command to run"
+                value={(conditionData[field] as string) ?? ''}
+                onValueChange={(v) => updateField(field, v)}
+                minRows={1}
+                size="sm"
+                variant="bordered"
+                className="flex-1"
+                classNames={{
+                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                  input: "text-black placeholder:text-black/40 font-mono text-xs",
+                }} />
               ) : (
-                <Input
-                  placeholder={field === 'host_id' ? '${target}' : field === 'pattern' ? 'regex pattern' : field}
-                  value={(conditionData[field] as string) ?? ''}
-                  onValueChange={(v) => updateField(field, v)}
-                  size="sm"
-                  variant="bordered"
-                  className="flex-1"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                    input: "text-black placeholder:text-black/40",
-                  }}
-                />
+                <Input labelPlacement="inside" placeholder={field === 'host_id' ? '${target}' : field === 'pattern' ? 'regex pattern' : field}
+                value={(conditionData[field] as string) ?? ''}
+                onValueChange={(v) => updateField(field, v)}
+                size="sm"
+                variant="bordered"
+                className="flex-1"
+                classNames={{
+                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                  input: "text-black placeholder:text-black/40",
+                }} />
               )}
             </div>
           ))}
@@ -1195,33 +1142,29 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${target} (uses recipe target)"
-                value={(opData.host_id as string) ?? ""}
-                onValueChange={(v) => updateOp("host_id", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${target} (uses recipe target)"
+              value={(opData.host_id as string) ?? ""}
+              onValueChange={(v) => updateOp("host_id", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sm text-black/60 w-20 pt-2">Commands</span>
               <div className="flex-1 flex flex-col gap-1">
-                <Textarea
-                  placeholder="cd /workspace&#10;pip install -r requirements.txt&#10;python train.py"
-                  value={opData.commands as string}
-                  onValueChange={(v) => updateOp("commands", v)}
-                  minRows={4}
-                  size="sm"
-                  variant="bordered"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                    input: "text-black placeholder:text-black/40 font-mono text-sm",
-                  }}
-                />
+                <Textarea labelPlacement="inside" placeholder="cd /workspace&#10;pip install -r requirements.txt&#10;python train.py"
+                value={opData.commands as string}
+                onValueChange={(v) => updateOp("commands", v)}
+                minRows={4}
+                size="sm"
+                variant="bordered"
+                classNames={{
+                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                  input: "text-black placeholder:text-black/40 font-mono text-sm",
+                }} />
                 <div className="flex justify-end">
                   <ExternalEditorButton 
                     content={opData.commands as string}
@@ -1232,53 +1175,45 @@ function StepBlock({
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Tmux Mode</span>
-              <Select
-                selectedKeys={[(opData.tmux_mode as string) || "none"]}
-                onSelectionChange={(keys) => {
-                  const mode = Array.from(keys)[0] as string;
-                  updateOp("tmux_mode", mode);
-                }}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[180px]",
-                  value: "text-black",
-                }}
-              >
-                <SelectItem key="none">Direct (blocks)</SelectItem>
-                <SelectItem key="new">New tmux session</SelectItem>
-                <SelectItem key="existing">Existing tmux</SelectItem>
-              </Select>
+              <Select labelPlacement="inside" selectedKeys={[(opData.tmux_mode as string) || "none"]}
+              onSelectionChange={(keys) => {
+                const mode = Array.from(keys)[0] as string;
+                updateOp("tmux_mode", mode);
+              }}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[180px]",
+                value: "text-black",
+              }}><SelectItem key="none">Direct (blocks)</SelectItem>
+              <SelectItem key="new">New tmux session</SelectItem>
+              <SelectItem key="existing">Existing tmux</SelectItem></Select>
             </div>
             {((opData.tmux_mode as string) === "new" || (opData.tmux_mode as string) === "existing") && (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-black/60 w-20">Session</span>
-                <Input
-                  placeholder="train"
-                  value={(opData.session_name as string) ?? ""}
-                  onValueChange={(v) => updateOp("session_name", v || null)}
-                  size="sm"
-                  variant="bordered"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                    input: "text-black placeholder:text-black/40",
-                  }}
-                />
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Directory</span>
-              <Input
-                placeholder="/workspace"
-                value={(opData.workdir as string) ?? ""}
-                onValueChange={(v) => updateOp("workdir", v || null)}
+                <Input labelPlacement="inside" placeholder="train"
+                value={(opData.session_name as string) ?? ""}
+                onValueChange={(v) => updateOp("session_name", v || null)}
                 size="sm"
                 variant="bordered"
                 classNames={{
                   inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
                   input: "text-black placeholder:text-black/40",
-                }}
-              />
+                }} />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-black/60 w-20">Directory</span>
+              <Input labelPlacement="inside" placeholder="/workspace"
+              value={(opData.workdir as string) ?? ""}
+              onValueChange={(v) => updateOp("workdir", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1293,73 +1228,63 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${target} (uses recipe target)"
-                value={(opData.host_id as string) ?? ""}
-                onValueChange={(v) => updateOp("host_id", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${target} (uses recipe target)"
+              value={(opData.host_id as string) ?? ""}
+              onValueChange={(v) => updateOp("host_id", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Repo URL</span>
-              <Input
-                placeholder="https://github.com/user/repo.git"
-                value={opData.repo_url as string}
-                onValueChange={(v) => updateOp("repo_url", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="https://github.com/user/repo.git"
+              value={opData.repo_url as string}
+              onValueChange={(v) => updateOp("repo_url", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Destination</span>
-              <Input
-                placeholder="/workspace/project"
-                value={opData.destination as string}
-                onValueChange={(v) => updateOp("destination", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="/workspace/project"
+              value={opData.destination as string}
+              onValueChange={(v) => updateOp("destination", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Branch</span>
-              <Input
-                placeholder="main (optional)"
-                value={(opData.branch as string) ?? ""}
-                onValueChange={(v) => updateOp("branch", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[200px]",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="main (optional)"
+              value={(opData.branch as string) ?? ""}
+              onValueChange={(v) => updateOp("branch", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[200px]",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Auth Token</span>
-              <Input
-                placeholder="${secret:github/token}"
-                value={(opData.auth_token as string) ?? ""}
-                onValueChange={(v) => updateOp("auth_token", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${secret:github/token}"
+              value={(opData.auth_token as string) ?? ""}
+              onValueChange={(v) => updateOp("auth_token", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1370,79 +1295,67 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${target} (uses recipe target)"
-                value={(opData.host_id as string) ?? ""}
-                onValueChange={(v) => updateOp("host_id", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${target} (uses recipe target)"
+              value={(opData.host_id as string) ?? ""}
+              onValueChange={(v) => updateOp("host_id", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Repo ID</span>
-              <Input
-                placeholder="meta-llama/Llama-2-7b"
-                value={opData.repo_id as string}
-                onValueChange={(v) => updateOp("repo_id", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="meta-llama/Llama-2-7b"
+              value={opData.repo_id as string}
+              onValueChange={(v) => updateOp("repo_id", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Destination</span>
-              <Input
-                placeholder="/workspace/models/llama2"
-                value={opData.destination as string}
-                onValueChange={(v) => updateOp("destination", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="/workspace/models/llama2"
+              value={opData.destination as string}
+              onValueChange={(v) => updateOp("destination", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Type</span>
-              <Select
-                selectedKeys={[(opData.repo_type as string) || "model"]}
-                onSelectionChange={(keys) => {
-                  const type = Array.from(keys)[0] as string;
-                  updateOp("repo_type", type);
-                }}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[150px]",
-                  value: "text-black",
-                }}
-              >
-                <SelectItem key="model">Model</SelectItem>
-                <SelectItem key="dataset">Dataset</SelectItem>
-                <SelectItem key="space">Space</SelectItem>
-              </Select>
+              <Select labelPlacement="inside" selectedKeys={[(opData.repo_type as string) || "model"]}
+              onSelectionChange={(keys) => {
+                const type = Array.from(keys)[0] as string;
+                updateOp("repo_type", type);
+              }}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[150px]",
+                value: "text-black",
+              }}><SelectItem key="model">Model</SelectItem>
+              <SelectItem key="dataset">Dataset</SelectItem>
+              <SelectItem key="space">Space</SelectItem></Select>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Auth Token</span>
-              <Input
-                placeholder="${secret:huggingface/token}"
-                value={(opData.auth_token as string) ?? ""}
-                onValueChange={(v) => updateOp("auth_token", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${secret:huggingface/token}"
+              value={(opData.auth_token as string) ?? ""}
+              onValueChange={(v) => updateOp("auth_token", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1453,47 +1366,41 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${host}"
-                value={opData.host_id as string}
-                onValueChange={(v) => updateOp("host_id", v)}
+              <Input labelPlacement="inside" placeholder="${host}"
+              value={opData.host_id as string}
+              onValueChange={(v) => updateOp("host_id", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-sm text-black/60 w-20 pt-2">Command</span>
+              <Textarea labelPlacement="inside" placeholder="python train.py"
+              value={opData.command as string}
+              onValueChange={(v) => updateOp("command", v)}
+              minRows={2}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40 font-mono text-sm",
+              }} />
+            </div>
+            {opData.workdir !== undefined && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-black/60 w-20">Directory</span>
+                <Input labelPlacement="inside" placeholder="/workspace"
+                value={(opData.workdir as string) ?? ""}
+                onValueChange={(v) => updateOp("workdir", v || null)}
                 size="sm"
                 variant="bordered"
                 classNames={{
                   inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
                   input: "text-black placeholder:text-black/40",
-                }}
-              />
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-sm text-black/60 w-20 pt-2">Command</span>
-              <Textarea
-                placeholder="python train.py"
-                value={opData.command as string}
-                onValueChange={(v) => updateOp("command", v)}
-                minRows={2}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40 font-mono text-sm",
-                }}
-              />
-            </div>
-            {opData.workdir !== undefined && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-black/60 w-20">Directory</span>
-                <Input
-                  placeholder="/workspace"
-                  value={(opData.workdir as string) ?? ""}
-                  onValueChange={(v) => updateOp("workdir", v || null)}
-                  size="sm"
-                  variant="bordered"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                    input: "text-black placeholder:text-black/40",
-                  }}
-                />
+                }} />
               </div>
             )}
           </div>
@@ -1505,45 +1412,39 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${host}"
-                value={opData.host_id as string}
-                onValueChange={(v) => updateOp("host_id", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${host}"
+              value={opData.host_id as string}
+              onValueChange={(v) => updateOp("host_id", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Local</span>
-              <Input
-                placeholder="/path/to/local"
-                value={opData.local_path as string}
-                onValueChange={(v) => updateOp("local_path", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="/path/to/local"
+              value={opData.local_path as string}
+              onValueChange={(v) => updateOp("local_path", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Remote</span>
-              <Input
-                placeholder="/workspace/remote"
-                value={opData.remote_path as string}
-                onValueChange={(v) => updateOp("remote_path", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="/workspace/remote"
+              value={opData.remote_path as string}
+              onValueChange={(v) => updateOp("remote_path", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1559,17 +1460,15 @@ function StepBlock({
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-24">Mount Path</span>
-              <Input
-                placeholder="/content/drive/MyDrive"
-                value={(opData.mount_path as string) || "/content/drive/MyDrive"}
-                onValueChange={(v) => updateOp("mount_path", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="/content/drive/MyDrive"
+              value={(opData.mount_path as string) || "/content/drive/MyDrive"}
+              onValueChange={(v) => updateOp("mount_path", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1579,31 +1478,27 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${target}"
-                value={opData.host_id as string}
-                onValueChange={(v) => updateOp("host_id", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${target}"
+              value={opData.host_id as string}
+              onValueChange={(v) => updateOp("host_id", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Mount Path</span>
-              <Input
-                placeholder="/mnt/gdrive"
-                value={opData.mount_path as string}
-                onValueChange={(v) => updateOp("mount_path", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="/mnt/gdrive"
+              value={opData.mount_path as string}
+              onValueChange={(v) => updateOp("mount_path", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1614,18 +1509,16 @@ function StepBlock({
         return (
           <div className="flex items-center gap-2">
             <span className="text-sm text-black/60 w-24">Instance ID</span>
-            <Input
-              type="number"
-              placeholder="12345"
-              value={String(opData.instance_id ?? 0)}
-              onValueChange={(v) => updateOp("instance_id", parseInt(v) || 0)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[150px]",
-                input: "text-black placeholder:text-black/40",
-              }}
-            />
+            <Input labelPlacement="inside" type="number"
+            placeholder="12345"
+            value={String(opData.instance_id ?? 0)}
+            onValueChange={(v) => updateOp("instance_id", parseInt(v) || 0)}
+            size="sm"
+            variant="bordered"
+            classNames={{
+              inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[150px]",
+              input: "text-black placeholder:text-black/40",
+            }} />
           </div>
         );
         
@@ -1634,46 +1527,40 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${host}"
-                value={opData.host_id as string}
-                onValueChange={(v) => updateOp("host_id", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${host}"
+              value={opData.host_id as string}
+              onValueChange={(v) => updateOp("host_id", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Session</span>
-              <Input
-                placeholder="train"
-                value={opData.session_name as string}
-                onValueChange={(v) => updateOp("session_name", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="train"
+              value={opData.session_name as string}
+              onValueChange={(v) => updateOp("session_name", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sm text-black/60 w-20 pt-2">Command</span>
-              <Textarea
-                placeholder="Optional initial command"
-                value={(opData.command as string) ?? ""}
-                onValueChange={(v) => updateOp("command", v || null)}
-                minRows={2}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40 font-mono text-sm",
-                }}
-              />
+              <Textarea labelPlacement="inside" placeholder="Optional initial command"
+              value={(opData.command as string) ?? ""}
+              onValueChange={(v) => updateOp("command", v || null)}
+              minRows={2}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40 font-mono text-sm",
+              }} />
             </div>
           </div>
         );
@@ -1683,45 +1570,39 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Host</span>
-              <Input
-                placeholder="${host}"
-                value={opData.host_id as string}
-                onValueChange={(v) => updateOp("host_id", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="${host}"
+              value={opData.host_id as string}
+              onValueChange={(v) => updateOp("host_id", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Session</span>
-              <Input
-                placeholder="train"
-                value={opData.session_name as string}
-                onValueChange={(v) => updateOp("session_name", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="train"
+              value={opData.session_name as string}
+              onValueChange={(v) => updateOp("session_name", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Keys</span>
-              <Input
-                placeholder="C-c or Enter"
-                value={opData.keys as string}
-                onValueChange={(v) => updateOp("keys", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40 font-mono",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="C-c or Enter"
+              value={opData.keys as string}
+              onValueChange={(v) => updateOp("keys", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40 font-mono",
+              }} />
             </div>
           </div>
         );
@@ -1730,19 +1611,17 @@ function StepBlock({
         return (
           <div className="flex items-center gap-2">
             <span className="text-sm text-black/60 w-20">Duration</span>
-            <Input
-              type="number"
-              placeholder="60"
-              value={String(opData.duration_secs ?? 5)}
-              onValueChange={(v) => updateOp("duration_secs", parseInt(v) || 5)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[120px]",
-                input: "text-black placeholder:text-black/40",
-              }}
-              endContent={<span className="text-black/50 text-sm">sec</span>}
-            />
+            <Input labelPlacement="inside" type="number"
+            placeholder="60"
+            value={String(opData.duration_secs ?? 5)}
+            onValueChange={(v) => updateOp("duration_secs", parseInt(v) || 5)}
+            size="sm"
+            variant="bordered"
+            classNames={{
+              inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[120px]",
+              input: "text-black placeholder:text-black/40",
+            }}
+            endContent={<span className="text-black/50 text-sm">sec</span>} />
           </div>
         );
 
@@ -1756,35 +1635,31 @@ function StepBlock({
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
                 <span className="text-sm text-black/60 w-20">Timeout</span>
-                <Input
-                  type="number"
-                  placeholder="300"
-                  value={String(opData.timeout_secs ?? 300)}
-                  onValueChange={(v) => updateOp("timeout_secs", parseInt(v) || 300)}
-                  size="sm"
-                  variant="bordered"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[100px]",
-                    input: "text-black placeholder:text-black/40",
-                  }}
-                  endContent={<span className="text-black/50 text-xs">sec</span>}
-                />
+                <Input labelPlacement="inside" type="number"
+                placeholder="300"
+                value={String(opData.timeout_secs ?? 300)}
+                onValueChange={(v) => updateOp("timeout_secs", parseInt(v) || 300)}
+                size="sm"
+                variant="bordered"
+                classNames={{
+                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[100px]",
+                  input: "text-black placeholder:text-black/40",
+                }}
+                endContent={<span className="text-black/50 text-xs">sec</span>} />
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-black/60">Poll every</span>
-                <Input
-                  type="number"
-                  placeholder="10"
-                  value={String(opData.poll_interval_secs ?? 10)}
-                  onValueChange={(v) => updateOp("poll_interval_secs", parseInt(v) || 10)}
-                  size="sm"
-                  variant="bordered"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[80px]",
-                    input: "text-black placeholder:text-black/40",
-                  }}
-                  endContent={<span className="text-black/50 text-xs">sec</span>}
-                />
+                <Input labelPlacement="inside" type="number"
+                placeholder="10"
+                value={String(opData.poll_interval_secs ?? 10)}
+                onValueChange={(v) => updateOp("poll_interval_secs", parseInt(v) || 10)}
+                size="sm"
+                variant="bordered"
+                classNames={{
+                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[80px]",
+                  input: "text-black placeholder:text-black/40",
+                }}
+                endContent={<span className="text-black/50 text-xs">sec</span>} />
               </div>
             </div>
           </div>
@@ -1799,17 +1674,15 @@ function StepBlock({
             />
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Message</span>
-              <Input
-                placeholder="Error message if assertion fails"
-                value={(opData.message as string) ?? ""}
-                onValueChange={(v) => updateOp("message", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="Error message if assertion fails"
+              value={(opData.message as string) ?? ""}
+              onValueChange={(v) => updateOp("message", v || null)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1819,31 +1692,27 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Name</span>
-              <Input
-                placeholder="my_var"
-                value={opData.name as string}
-                onValueChange={(v) => updateOp("name", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40 font-mono",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="my_var"
+              value={opData.name as string}
+              onValueChange={(v) => updateOp("name", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40 font-mono",
+              }} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Value</span>
-              <Input
-                placeholder="value"
-                value={opData.value as string}
-                onValueChange={(v) => updateOp("value", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="value"
+              value={opData.value as string}
+              onValueChange={(v) => updateOp("value", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1853,39 +1722,33 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Method</span>
-              <Select
-                selectedKeys={[opData.method as string]}
-                onSelectionChange={(keys) => {
-                  const method = Array.from(keys)[0] as string;
-                  updateOp("method", method);
-                }}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[120px]",
-                  value: "text-black",
-                }}
-              >
-                <SelectItem key="GET">GET</SelectItem>
-                <SelectItem key="POST">POST</SelectItem>
-                <SelectItem key="PUT">PUT</SelectItem>
-                <SelectItem key="DELETE">DELETE</SelectItem>
-                <SelectItem key="PATCH">PATCH</SelectItem>
-              </Select>
+              <Select labelPlacement="inside" selectedKeys={[opData.method as string]}
+              onSelectionChange={(keys) => {
+                const method = Array.from(keys)[0] as string;
+                updateOp("method", method);
+              }}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[120px]",
+                value: "text-black",
+              }}><SelectItem key="GET">GET</SelectItem>
+              <SelectItem key="POST">POST</SelectItem>
+              <SelectItem key="PUT">PUT</SelectItem>
+              <SelectItem key="DELETE">DELETE</SelectItem>
+              <SelectItem key="PATCH">PATCH</SelectItem></Select>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">URL</span>
-              <Input
-                placeholder="https://api.example.com"
-                value={opData.url as string}
-                onValueChange={(v) => updateOp("url", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="https://api.example.com"
+              value={opData.url as string}
+              onValueChange={(v) => updateOp("url", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -1895,32 +1758,28 @@ function StepBlock({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-black/60 w-20">Title</span>
-              <Input
-                placeholder="Training Complete"
-                value={opData.title as string}
-                onValueChange={(v) => updateOp("title", v)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="Training Complete"
+              value={opData.title as string}
+              onValueChange={(v) => updateOp("title", v)}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sm text-black/60 w-20 pt-2">Message</span>
-              <Textarea
-                placeholder="Optional message body"
-                value={(opData.message as string) ?? ""}
-                onValueChange={(v) => updateOp("message", v || null)}
-                minRows={2}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }}
-              />
+              <Textarea labelPlacement="inside" placeholder="Optional message body"
+              value={(opData.message as string) ?? ""}
+              onValueChange={(v) => updateOp("message", v || null)}
+              minRows={2}
+              size="sm"
+              variant="bordered"
+              classNames={{
+                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+                input: "text-black placeholder:text-black/40",
+              }} />
             </div>
           </div>
         );
@@ -2593,26 +2452,22 @@ export function RecipeEditorPage() {
               <div className="space-y-3">
                 {Object.entries(recipe.variables).map(([key, value]) => (
                   <div key={key} className="flex items-center gap-2">
-                    <Input
-                      placeholder="name"
-                      value={key}
-                      onValueChange={(newKey) => {
-                        const vars = { ...recipe.variables };
-                        delete vars[key];
-                        vars[newKey] = value;
-                        updateRecipe({ variables: vars });
-                      }}
-                      size="sm"
-                      className="flex-1"
-                      startContent={<span className="text-foreground/50">$</span>}
-                    />
-                    <Input
-                      placeholder="value"
-                      value={value}
-                      onValueChange={(v) => updateVariable(key, v)}
-                      size="sm"
-                      className="flex-1"
-                    />
+                    <Input labelPlacement="inside" placeholder="name"
+                    value={key}
+                    onValueChange={(newKey) => {
+                      const vars = { ...recipe.variables };
+                      delete vars[key];
+                      vars[newKey] = value;
+                      updateRecipe({ variables: vars });
+                    }}
+                    size="sm"
+                    className="flex-1"
+                    startContent={<span className="text-foreground/50">$</span>} />
+                    <Input labelPlacement="inside" placeholder="value"
+                    value={value}
+                    onValueChange={(v) => updateVariable(key, v)}
+                    size="sm"
+                    className="flex-1" />
                     <Button
                       isIconOnly
                       size="sm"
@@ -2665,32 +2520,28 @@ export function RecipeEditorPage() {
               {/* Host Type */}
               <div className="flex items-center gap-4">
                 <span className="text-sm font-medium w-24">Host Type</span>
-                <Select
-                  selectedKeys={recipe?.target?.type ? [recipe.target.type] : []}
-                  onSelectionChange={(keys) => {
-                    const type = Array.from(keys)[0] as TargetHostType | undefined;
-                    if (type) {
-                      updateRecipe({ 
-                        target: { 
-                          ...(recipe?.target ?? {}), 
-                          type 
-                        } as TargetRequirements 
-                      });
-                    } else {
-                      updateRecipe({ target: null });
-                    }
-                  }}
-                  placeholder="Select host type..."
-                  size="sm"
-                  variant="bordered"
-                  className="flex-1"
-                >
-                  <SelectItem key="any">Any (All hosts + Local)</SelectItem>
-                  <SelectItem key="local">Local</SelectItem>
-                  <SelectItem key="colab">Colab</SelectItem>
-                  <SelectItem key="vast">Vast.ai</SelectItem>
-                  <SelectItem key="custom">Custom SSH</SelectItem>
-                </Select>
+                <Select labelPlacement="inside" selectedKeys={recipe?.target?.type ? [recipe.target.type] : []}
+                onSelectionChange={(keys) => {
+                  const type = Array.from(keys)[0] as TargetHostType | undefined;
+                  if (type) {
+                    updateRecipe({ 
+                      target: { 
+                        ...(recipe?.target ?? {}), 
+                        type 
+                      } as TargetRequirements 
+                    });
+                  } else {
+                    updateRecipe({ target: null });
+                  }
+                }}
+                placeholder="Select host type..."
+                size="sm"
+                variant="bordered"
+                className="flex-1"><SelectItem key="any">Any (All hosts + Local)</SelectItem>
+                <SelectItem key="local">Local</SelectItem>
+                <SelectItem key="colab">Colab</SelectItem>
+                <SelectItem key="vast">Vast.ai</SelectItem>
+                <SelectItem key="custom">Custom SSH</SelectItem></Select>
                 {recipe?.target && (
                   <Button
                     size="sm"
@@ -2708,49 +2559,43 @@ export function RecipeEditorPage() {
                   {/* GPU Type */}
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-medium w-24">GPU Type</span>
-                    <Input
-                      placeholder="Any (e.g., T4, A100, H100)"
-                      value={recipe.target.gpu_type ?? ""}
-                      onValueChange={(v) => updateRecipe({
-                        target: { ...recipe.target!, gpu_type: v || null }
-                      })}
-                      size="sm"
-                      variant="bordered"
-                      className="flex-1"
-                    />
+                    <Input labelPlacement="inside" placeholder="Any (e.g., T4, A100, H100)"
+                    value={recipe.target.gpu_type ?? ""}
+                    onValueChange={(v) => updateRecipe({
+                      target: { ...recipe.target!, gpu_type: v || null }
+                    })}
+                    size="sm"
+                    variant="bordered"
+                    className="flex-1" />
                   </div>
                   
                   {/* Min GPUs */}
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-medium w-24">Min GPUs</span>
-                    <Input
-                      type="number"
-                      placeholder="1"
-                      value={recipe.target.min_gpus?.toString() ?? ""}
-                      onValueChange={(v) => updateRecipe({
-                        target: { ...recipe.target!, min_gpus: v ? parseInt(v) : null }
-                      })}
-                      size="sm"
-                      variant="bordered"
-                      className="max-w-[100px]"
-                    />
+                    <Input labelPlacement="inside" type="number"
+                    placeholder="1"
+                    value={recipe.target.min_gpus?.toString() ?? ""}
+                    onValueChange={(v) => updateRecipe({
+                      target: { ...recipe.target!, min_gpus: v ? parseInt(v) : null }
+                    })}
+                    size="sm"
+                    variant="bordered"
+                    className="max-w-[100px]" />
                   </div>
                   
                   {/* Min Memory */}
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-medium w-24">Min Memory</span>
-                    <Input
-                      type="number"
-                      placeholder="16"
-                      value={recipe.target.min_memory_gb?.toString() ?? ""}
-                      onValueChange={(v) => updateRecipe({
-                        target: { ...recipe.target!, min_memory_gb: v ? parseFloat(v) : null }
-                      })}
-                      size="sm"
-                      variant="bordered"
-                      className="max-w-[100px]"
-                      endContent={<span className="text-foreground/50 text-xs">GB</span>}
-                    />
+                    <Input labelPlacement="inside" type="number"
+                    placeholder="16"
+                    value={recipe.target.min_memory_gb?.toString() ?? ""}
+                    onValueChange={(v) => updateRecipe({
+                      target: { ...recipe.target!, min_memory_gb: v ? parseFloat(v) : null }
+                    })}
+                    size="sm"
+                    variant="bordered"
+                    className="max-w-[100px]"
+                    endContent={<span className="text-foreground/50 text-xs">GB</span>} />
                   </div>
                 </>
               )}

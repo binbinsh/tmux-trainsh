@@ -52,6 +52,36 @@ pub async fn read_public_key(private_key_path: String) -> Result<String, AppErro
   Ok(out.stdout.trim().to_string())
 }
 
+pub async fn read_private_key(private_key_path: String) -> Result<String, AppError> {
+  let priv_path = expand_tilde(&private_key_path);
+  if !priv_path.exists() {
+    return Err(AppError::invalid_input(format!(
+      "SSH private key not found: {}",
+      priv_path.display()
+    )));
+  }
+
+  if let Some(ext) = priv_path.extension() {
+    if ext == "pub" {
+      return Err(AppError::invalid_input(
+        "Private key path must not be a .pub file",
+      ));
+    }
+  }
+
+  let home = dirs::home_dir().ok_or_else(|| AppError::io("Cannot resolve home directory"))?;
+  let ssh_dir = home.join(".ssh");
+  if !priv_path.starts_with(&ssh_dir) {
+    return Err(AppError::invalid_input(format!(
+      "For safety, key path must be under {}",
+      ssh_dir.display()
+    )));
+  }
+
+  let s = tokio::fs::read_to_string(&priv_path).await?;
+  Ok(s.trim().to_string())
+}
+
 pub async fn generate_key(path: String, comment: Option<String>) -> Result<SshKeyInfo, AppError> {
   ensure_bin("ssh-keygen").await?;
 
@@ -104,5 +134,4 @@ pub async fn generate_key(path: String, comment: Option<String>) -> Result<SshKe
     public_key,
   })
 }
-
 

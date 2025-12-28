@@ -24,7 +24,6 @@ export function AppLayout() {
           <NavLink to="/dashboard" label="Dashboard" />
           <NavLink to="/hosts" label="Hosts" />
           <NavLink to="/sessions" label="Sessions" />
-          <NavLink to="/vast" label="Vast.ai" />
           <NavLink to="/colab" label="Colab" />
           <NavLink to="/job" label="Run" />
           <NavLink to="/terminal" label="Terminal" />

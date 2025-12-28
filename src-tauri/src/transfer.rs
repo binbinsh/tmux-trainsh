@@ -433,7 +433,7 @@ fn build_remote_spec(storage: &Storage, path: &str) -> Result<(Option<serde_json
             let full_path = format!("{}/{}", share, path.trim_start_matches('/'));
             Ok((Some(config), full_path))
         }
-        StorageBackend::SshRemote { host_id, root_path } => {
+        StorageBackend::SshRemote { host_id, root_path: _ } => {
             // SSH remotes use SFTP via rclone - need async resolution
             Err(AppError::invalid_input(format!(
                 "SSH remote {} requires async resolution - use build_remote_spec_async",
@@ -686,4 +686,3 @@ async fn process_transfer_queue(app: AppHandle) {
         transfer_store.set_running(None).await;
     }
 }
-

@@ -236,17 +236,41 @@ async fn list_host_files(host_id: String, path: String) -> Result<Vec<storage::F
 #[tauri::command]
 async fn ssh_key_candidates() -> Result<Vec<String>, AppError> {
   let home = dirs::home_dir().ok_or_else(|| AppError::io("Cannot resolve home directory"))?;
-  let cands: [PathBuf; 3] = [
-    home.join(".ssh").join("id_ed25519"),
-    home.join(".ssh").join("id_rsa"),
-    home.join(".ssh").join("id_ecdsa"),
-  ];
-  let mut out: Vec<String> = vec![];
-  for p in cands {
-    if p.exists() {
-      out.push(p.to_string_lossy().to_string());
-    }
+  let ssh_dir = home.join(".ssh");
+  if !ssh_dir.exists() {
+    return Ok(vec![]);
   }
+
+  let mut out: Vec<String> = vec![];
+  let mut entries = tokio::fs::read_dir(&ssh_dir).await?;
+  while let Some(entry) = entries.next_entry().await? {
+    let file_type = entry.file_type().await?;
+    if !file_type.is_file() {
+      continue;
+    }
+    let path = entry.path();
+    let file_name = match path.file_name().and_then(|s| s.to_str()) {
+      Some(name) => name,
+      None => continue,
+    };
+    if file_name.is_empty() {
+      continue;
+    }
+    if file_name == "config"
+      || file_name == "known_hosts"
+      || file_name == "known_hosts.old"
+      || file_name == "authorized_keys"
+    {
+      continue;
+    }
+    if let Some(ext) = path.extension() {
+      if ext == "pub" {
+        continue;
+      }
+    }
+    out.push(path.to_string_lossy().to_string());
+  }
+  out.sort();
   Ok(out)
 }
 
@@ -254,6 +278,12 @@ async fn ssh_key_candidates() -> Result<Vec<String>, AppError> {
 #[allow(non_snake_case)]
 async fn ssh_public_key(privateKeyPath: String) -> Result<String, AppError> {
   ssh_keys::read_public_key(privateKeyPath).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+async fn ssh_private_key(privateKeyPath: String) -> Result<String, AppError> {
+  ssh_keys::read_private_key(privateKeyPath).await
 }
 
 #[tauri::command]
@@ -569,6 +599,7 @@ fn main() {
   std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
   
   tauri::Builder::default()
+    .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_shell::init())
     .manage(terminal::TerminalManager::default())
     .manage(LogManager::default())
@@ -590,6 +621,7 @@ fn main() {
       // SSH Keys
       ssh_key_candidates,
       ssh_public_key,
+      ssh_private_key,
       ssh_generate_key,
       // Hosts
       host_list,
@@ -643,6 +675,10 @@ fn main() {
       terminal::term_close,
       terminal::term_open_native_ssh,
       terminal::term_open_host,
+      terminal::term_history_info,
+      terminal::term_history_range,
+      terminal::term_history_tail,
+      terminal::term_history_steps,
       // Storage
       storage::storage_list,
       storage::storage_get,
@@ -664,6 +700,7 @@ fn main() {
       // Pricing (unified)
       pricing::pricing_get,
       pricing::pricing_fetch_rates,
+      pricing::pricing_update_display_currency,
       pricing::pricing_reset,
       // Colab Pricing
       pricing::pricing_colab_update_subscription,

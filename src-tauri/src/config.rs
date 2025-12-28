@@ -61,7 +61,7 @@ impl Default for VastConfig {
   fn default() -> Self {
     Self {
       api_key: None,
-      url: "https://console.vast.ai".to_string(),
+      url: "https://cloud.vast.ai/".to_string(),
       ssh_user: "root".to_string(),
       ssh_key_path: None,
     }

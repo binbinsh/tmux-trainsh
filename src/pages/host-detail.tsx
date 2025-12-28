@@ -21,12 +21,14 @@ import {
   ListboxItem,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
-import type { GpuInfo } from "../lib/types";
+import { AppIcon } from "../components/AppIcon";
+import type { GpuInfo, Storage } from "../lib/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { hostApi, termOpenSshTmux, pricingApi, useSyncVastPricing, useHostCostBreakdown, useStorages, type RemoteTmuxSession } from "../lib/tauri-api";
+import { hostApi, termOpenSshTmux, pricingApi, useSyncVastPricing, useHostCostBreakdown, usePricingSettings, useStorages, type RemoteTmuxSession } from "../lib/tauri-api";
 import { StatusBadge } from "../components/shared/StatusBadge";
+import { formatPriceWithRates } from "../lib/currency";
 
 // Icons
 function IconArrowLeft() {
@@ -35,6 +37,21 @@ function IconArrowLeft() {
       <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
     </svg>
   );
+}
+
+function getStorageIconNode(storage: Storage) {
+  switch (storage.backend.type) {
+    case "google_drive":
+      return <AppIcon name="googledrive" className="w-5 h-5" alt="Google Drive" />;
+    case "cloudflare_r2":
+      return <AppIcon name="cloudflare" className="w-5 h-5" alt="Cloudflare R2" />;
+    case "ssh_remote":
+      return <AppIcon name="ssh" className="w-5 h-5" alt="SSH" />;
+    case "smb":
+      return <AppIcon name="smb" className="w-5 h-5" alt="SMB" />;
+    default:
+      return <span>{storage.icon || "📁"}</span>;
+  }
 }
 
 function IconTerminal() {
@@ -87,11 +104,6 @@ function getTempColor(temp: number | null | undefined): string {
   return "text-danger";
 }
 
-// Format price helper
-function formatUsd(value: number, decimals = 4): string {
-  return `$${value.toFixed(decimals)}`;
-}
-
 // Vast.ai Pricing Card Component
 function VastPricingCard({
   hostId,
@@ -104,6 +116,12 @@ function VastPricingCard({
 }) {
   const costQuery = useHostCostBreakdown(hostId, hostName);
   const syncMutation = useSyncVastPricing();
+  const pricingQuery = usePricingSettings();
+
+  const displayCurrency = pricingQuery.data?.display_currency ?? "USD";
+  const exchangeRates = pricingQuery.data?.exchange_rates;
+  const formatDisplayPrice = (value: number, decimals = 4) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
 
   const handleSync = async () => {
     await syncMutation.mutateAsync({ hostId, vastInstanceId });
@@ -141,22 +159,22 @@ function VastPricingCard({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <p className="text-sm text-foreground/60">GPU Cost</p>
-              <p className="font-mono text-success">{formatUsd(cost.gpu_per_hour_usd)}/hr</p>
+              <p className="font-mono text-success">{formatDisplayPrice(cost.gpu_per_hour_usd)}/hr</p>
             </div>
             <div>
               <p className="text-sm text-foreground/60">Storage Cost</p>
-              <p className="font-mono">{formatUsd(cost.storage_per_hour_usd, 6)}/hr</p>
+              <p className="font-mono">{formatDisplayPrice(cost.storage_per_hour_usd, 6)}/hr</p>
               {cost.storage_gb > 0 && (
                 <p className="text-xs text-foreground/50">{cost.storage_gb.toFixed(1)} GB</p>
               )}
             </div>
             <div>
               <p className="text-sm text-foreground/60">Total Hourly</p>
-              <p className="font-mono font-semibold text-primary">{formatUsd(cost.total_per_hour_usd)}/hr</p>
+              <p className="font-mono font-semibold text-primary">{formatDisplayPrice(cost.total_per_hour_usd)}/hr</p>
             </div>
             <div>
               <p className="text-sm text-foreground/60">Monthly Est.</p>
-              <p className="font-mono">{formatUsd(cost.total_per_month_usd, 2)}/mo</p>
+              <p className="font-mono">{formatDisplayPrice(cost.total_per_month_usd, 2)}/mo</p>
             </div>
           </div>
         ) : (
@@ -253,17 +271,15 @@ function TmuxSessionSelectModal({
           <div>
             <p className="text-sm font-medium mb-2">Or create a new session:</p>
             <div className="flex gap-2">
-              <Input
-                placeholder="Session name (default: main)"
-                value={newSessionName}
-                onValueChange={setNewSessionName}
-                size="sm"
-                className="flex-1"
-                classNames={{ input: "font-mono" }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreate();
-                }}
-              />
+              <Input labelPlacement="inside" placeholder="Session name (default: main)"
+              value={newSessionName}
+              onValueChange={setNewSessionName}
+              size="sm"
+              className="flex-1"
+              classNames={{ input: "font-mono" }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreate();
+              }} />
               <Button
                 color="primary"
                 size="sm"
@@ -1124,7 +1140,7 @@ export function HostDetailPage() {
                           className="flex items-center justify-between p-2 rounded-lg bg-default-100 hover:bg-default-200 transition-colors"
                         >
                           <div className="flex items-center gap-2">
-                            <span>{storage.icon || "📁"}</span>
+                            {getStorageIconNode(storage)}
                             <div>
                               <p className="font-medium text-sm">{storage.name}</p>
                               <p className="text-xs text-foreground/60 font-mono">
@@ -1240,73 +1256,59 @@ export function HostDetailPage() {
         <ModalContent>
           <ModalHeader>Edit Host: {host.name}</ModalHeader>
           <ModalBody className="gap-4">
-            <Input
-              label="Host Name"
-              value={editName}
-              onValueChange={setEditName}
-              placeholder="My Server"
-            />
+            <Input labelPlacement="inside" label="Host Name"
+            value={editName}
+            onValueChange={setEditName}
+            placeholder="My Server" />
             
             <Divider />
             <p className="text-sm font-medium">SSH Connection</p>
             
             <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="SSH Host"
-                value={editSshHost}
-                onValueChange={setEditSshHost}
-                placeholder="hostname or IP"
-                className="col-span-2"
-              />
-              <Input
-                label="SSH Port"
-                value={editSshPort}
-                onValueChange={setEditSshPort}
-                placeholder="22"
-                type="number"
-              />
-              <Input
-                label="SSH User"
-                value={editSshUser}
-                onValueChange={setEditSshUser}
-                placeholder="root"
-              />
-              <Input
-                label="SSH Key Path"
-                value={editSshKeyPath}
-                onValueChange={setEditSshKeyPath}
-                placeholder="~/.ssh/id_rsa"
-                description="Leave empty for default key"
-                className="col-span-2"
-              />
+              <Input labelPlacement="inside" label="SSH Host"
+              value={editSshHost}
+              onValueChange={setEditSshHost}
+              placeholder="hostname or IP"
+              className="col-span-2" />
+              <Input labelPlacement="inside" label="SSH Port"
+              value={editSshPort}
+              onValueChange={setEditSshPort}
+              placeholder="22"
+              type="number" />
+              <Input labelPlacement="inside" label="SSH User"
+              value={editSshUser}
+              onValueChange={setEditSshUser}
+              placeholder="root" />
+              <Input labelPlacement="inside" label="SSH Key Path"
+              value={editSshKeyPath}
+              onValueChange={setEditSshKeyPath}
+              placeholder="~/.ssh/id_rsa"
+              description="Leave empty for default key"
+              className="col-span-2" />
             </div>
 
             {host.type === "colab" && (
               <>
                 <Divider />
                 <p className="text-sm font-medium">Colab Connection</p>
-                <Input
-                  label="Cloudflared Hostname"
-                  value={editCloudflaredHostname}
-                  onValueChange={setEditCloudflaredHostname}
-                  placeholder="xxx-xxx-xxx.trycloudflare.com"
-                  description="Run cloudflared tunnel in Colab to get this"
-                />
+                <Input labelPlacement="inside" label="Cloudflared Hostname"
+                value={editCloudflaredHostname}
+                onValueChange={setEditCloudflaredHostname}
+                placeholder="xxx-xxx-xxx.trycloudflare.com"
+                description="Run cloudflared tunnel in Colab to get this" />
               </>
             )}
 
             <Divider />
             <p className="text-sm font-medium">Environment Variables</p>
-            <Textarea
-              label="Environment Variables"
-              value={editEnvVars}
-              onValueChange={setEditEnvVars}
-              placeholder="LD_LIBRARY_PATH=/usr/lib64-nvidia:$LD_LIBRARY_PATH&#10;PATH=/usr/local/cuda/bin:$PATH"
-              description="One variable per line: KEY=value. Lines starting with # are ignored."
-              minRows={3}
-              maxRows={8}
-              classNames={{ input: "font-mono text-sm" }}
-            />
+            <Textarea labelPlacement="inside" label="Environment Variables"
+            value={editEnvVars}
+            onValueChange={setEditEnvVars}
+            placeholder="LD_LIBRARY_PATH=/usr/lib64-nvidia:$LD_LIBRARY_PATH&#10;PATH=/usr/local/cuda/bin:$PATH"
+            description="One variable per line: KEY=value. Lines starting with # are ignored."
+            minRows={3}
+            maxRows={8}
+            classNames={{ input: "font-mono text-sm" }} />
 
             {updateMutation.error && (
               <p className="text-sm text-danger">
@@ -1379,4 +1381,3 @@ export function HostDetailPage() {
     </div>
   );
 }
-
