@@ -137,10 +137,11 @@ pub async fn execute_step(
 
             // First, add GitHub/GitLab/Bitbucket host keys to known_hosts to avoid "Host key verification failed"
             let add_host_keys = r#"mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keyscan -t ed25519,rsa github.com gitlab.com bitbucket.org >> ~/.ssh/known_hosts 2>/dev/null"#;
+            let empty_env = HashMap::new();
             if is_local {
-                operations::ssh::execute_local_command(add_host_keys, None, &None).await?;
+                operations::ssh::execute_local_command(add_host_keys, None, &empty_env).await?;
             } else {
-                operations::ssh::execute_command(&target, add_host_keys, None, &None).await?;
+                operations::ssh::execute_command(&target, add_host_keys, None, &empty_env).await?;
             }
 
             // Now clone
@@ -164,9 +165,9 @@ pub async fn execute_step(
             };
 
             if is_local {
-                operations::ssh::execute_local_command(&clone_cmd, None, &None).await?;
+                operations::ssh::execute_local_command(&clone_cmd, None, &empty_env).await?;
             } else {
-                operations::ssh::execute_command(&target, &clone_cmd, None, &None).await?;
+                operations::ssh::execute_command(&target, &clone_cmd, None, &empty_env).await?;
             }
             Ok(None)
         }
@@ -177,7 +178,8 @@ pub async fn execute_step(
                 .get("target")
                 .cloned()
                 .ok_or_else(|| AppError::command("No target host defined"))?;
-            operations::vast::start(&target).await?;
+            let instance_id = resolve_vast_instance_id_for_host(&target).await?;
+            operations::vast::start_instance(instance_id).await?;
             Ok(None)
         }
         Operation::VastStop(_op) => {
@@ -186,7 +188,7 @@ pub async fn execute_step(
                 .cloned()
                 .ok_or_else(|| AppError::command("No target host defined"))?;
             let instance_id = resolve_vast_instance_id_for_host(&target).await?;
-            operations::vast::stop(instance_id).await?;
+            operations::vast::stop_instance(instance_id).await?;
             Ok(None)
         }
         Operation::VastDestroy(_op) => {
@@ -195,7 +197,7 @@ pub async fn execute_step(
                 .cloned()
                 .ok_or_else(|| AppError::command("No target host defined"))?;
             let instance_id = resolve_vast_instance_id_for_host(&target).await?;
-            operations::vast::destroy(instance_id).await?;
+            operations::vast::destroy_instance(instance_id).await?;
             Ok(None)
         }
 
@@ -242,10 +244,11 @@ pub async fn execute_step(
                 cmd = format!("HF_TOKEN='{}' {}", token, cmd);
             }
 
+            let empty_env = HashMap::new();
             if is_local {
-                operations::ssh::execute_local_command(&cmd, None, &None).await?;
+                operations::ssh::execute_local_command(&cmd, None, &empty_env).await?;
             } else {
-                operations::ssh::execute_command(&target, &cmd, None, &None).await?;
+                operations::ssh::execute_command(&target, &cmd, None, &empty_env).await?;
             }
             Ok(None)
         }
@@ -264,14 +267,14 @@ pub async fn execute_step(
             let host_id = interpolate(&op.host_id, variables);
             let local_path = interpolate(&op.local_path, variables);
             let remote_path = interpolate(&op.remote_path, variables);
-            operations::sync::rsync_upload(&host_id, &local_path, &remote_path).await?;
+            operations::sync::upload(&host_id, &local_path, &remote_path, &[], false).await?;
             Ok(None)
         }
         Operation::RsyncDownload(op) => {
             let host_id = interpolate(&op.host_id, variables);
             let remote_path = interpolate(&op.remote_path, variables);
             let local_path = interpolate(&op.local_path, variables);
-            operations::sync::rsync_download(&host_id, &remote_path, &local_path).await?;
+            operations::sync::download(&host_id, &remote_path, &local_path, &[]).await?;
             Ok(None)
         }
 
@@ -306,13 +309,23 @@ pub async fn execute_step(
         Operation::TmuxCapture(op) => {
             let host_id = interpolate(&op.host_id, variables);
             let session_name = interpolate(&op.session_name, variables);
-            operations::tmux::capture(&host_id, &session_name, op.lines).await
+            let output = operations::tmux::capture_pane(&host_id, &session_name, op.lines).await?;
+            Ok(Some(output))
         }
 
         // Google Drive operations
         Operation::GdriveMount(op) => {
-            let host_id = interpolate(&op.host_id, variables);
-            let storage_id = interpolate(&op.storage_id, variables);
+            let host_id = op
+                .host_id
+                .as_ref()
+                .map(|h| interpolate(h, variables))
+                .or_else(|| variables.get("target").cloned())
+                .ok_or_else(|| AppError::command("No host_id specified and no target defined"))?;
+            let storage_id = op
+                .storage_id
+                .as_ref()
+                .map(|s| interpolate(s, variables))
+                .unwrap_or_default();
             let mount_path = if op.mount_path.is_empty() {
                 "/content/drive/MyDrive".to_string()
             } else {

@@ -373,7 +373,7 @@ impl InteractiveRunner {
             steps,
             step_progress: std::collections::HashMap::new(),
             variables,
-            created_at: now,
+            created_at: now.clone(),
             started_at: None,
             completed_at: None,
             updated_at: Some(now),
@@ -460,7 +460,8 @@ impl InteractiveRunner {
         let state = execs
             .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        Ok(*state.active.read().await)
+        let active = *state.active.read().await;
+        Ok(active)
     }
 
     pub async fn set_active(&self, id: &str, active: bool) -> Result<(), AppError> {
@@ -723,7 +724,8 @@ pub async fn restore_persisted_executions() -> Result<(), AppError> {
         restored.push(exec);
     }
 
-    let mut runner = get_runner_inner().lock().await;
+    let runner = get_runner_inner().lock().await;
+    let mut execs = runner.executions.write().await;
     for exec in restored {
         let (control_tx, control_rx) = mpsc::channel(16);
         let state = Arc::new(InteractiveExecutionState {
@@ -732,7 +734,7 @@ pub async fn restore_persisted_executions() -> Result<(), AppError> {
             control_rx: Mutex::new(Some(control_rx)),
             active: RwLock::new(false),
         });
-        runner.executions.insert(exec.id.clone(), state);
+        execs.insert(exec.id.clone(), state);
     }
 
     Ok(())

@@ -155,8 +155,13 @@ fn normalize_ipinfo_target(target: &str) -> Result<String, AppError> {
 }
 
 pub async fn fetch_ip_info(target: &str) -> Result<IpInfo, AppError> {
-    let target = normalize_ipinfo_target(target)?;
-    let url = format!("https://ipinfo.io/{}/json", target);
+    // If target is empty, get info for the caller's IP
+    let url = if target.trim().is_empty() {
+        "https://ipinfo.io/json".to_string()
+    } else {
+        let target = normalize_ipinfo_target(target)?;
+        format!("https://ipinfo.io/{}/json", target)
+    };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(6))
         .build()
@@ -1128,6 +1133,69 @@ pub async fn list_tmux_sessions(id: &str) -> Result<Vec<RemoteTmuxSession>, AppE
         }
     };
 
+    ssh.validate()?;
+
+    // Use tmux list-sessions with a format string to get structured output
+    // Format: session_name:window_count:attached (1 or 0):created_timestamp
+    let tmux_cmd = "tmux list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}:#{session_created}' 2>/dev/null || echo ''";
+
+    let mut cmd = Command::new("ssh");
+    for arg in ssh.common_ssh_options() {
+        cmd.arg(arg);
+    }
+    cmd.arg(ssh.target());
+    cmd.arg(tmux_cmd);
+
+    let output = cmd.output().await?;
+
+    if !output.status.success() {
+        // SSH failed - might be connection issue
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::command(format!(
+            "Failed to list tmux sessions: {}",
+            stderr.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut sessions: Vec<RemoteTmuxSession> = Vec::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() >= 3 {
+            let name = parts[0].to_string();
+            let windows: i32 = parts[1].parse().unwrap_or(1);
+            let attached = parts[2] == "1";
+            let created_at = parts.get(3).map(|s| {
+                // Convert Unix timestamp to ISO 8601 if possible
+                if let Ok(ts) = s.parse::<i64>() {
+                    chrono::DateTime::from_timestamp(ts, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| s.to_string())
+                } else {
+                    s.to_string()
+                }
+            });
+
+            sessions.push(RemoteTmuxSession {
+                name,
+                windows,
+                attached,
+                created_at,
+            });
+        }
+    }
+
+    Ok(sessions)
+}
+
+/// List tmux sessions on a remote host via SSH spec directly (without needing a host ID)
+pub async fn list_tmux_sessions_by_ssh(ssh: &SshSpec) -> Result<Vec<RemoteTmuxSession>, AppError> {
     ssh.validate()?;
 
     // Use tmux list-sessions with a format string to get structured output

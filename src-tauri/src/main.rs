@@ -469,6 +469,11 @@ async fn host_list_tmux_sessions(id: String) -> Result<Vec<host::RemoteTmuxSessi
 }
 
 #[tauri::command]
+async fn host_list_tmux_sessions_by_ssh(ssh: SshSpec) -> Result<Vec<host::RemoteTmuxSession>, AppError> {
+    host::list_tmux_sessions_by_ssh(&ssh).await
+}
+
+#[tauri::command]
 async fn host_ip_info(target: String) -> Result<host::IpInfo, AppError> {
     host::fetch_ip_info(&target).await
 }
@@ -900,6 +905,7 @@ fn main() {
             host_test_connection,
             host_refresh,
             host_list_tmux_sessions,
+            host_list_tmux_sessions_by_ssh,
             host_ip_info,
             // Sessions
             session_list,

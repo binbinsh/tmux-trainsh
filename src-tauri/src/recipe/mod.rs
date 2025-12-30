@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tauri::Emitter;
 use tauri::State;
 use tokio::sync::RwLock;
 
@@ -1817,6 +1818,11 @@ pub async fn recipe_interactive_exec_command(
 
     let runner = interactive::get_runner().await;
     let execution = runner.get_execution(&execution_id).await?;
+
+    let term_id = execution
+        .terminal_id
+        .as_ref()
+        .ok_or_else(|| AppError::invalid_input("Execution has no terminal session"))?;
 
     // Lock intervention while sending command
     runner.lock_intervention(&execution_id).await?;

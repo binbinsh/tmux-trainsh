@@ -220,6 +220,17 @@ export const hostApi = {
     return await safeInvoke<RemoteTmuxSession[]>("host_list_tmux_sessions", { id });
   },
 
+  /** List tmux sessions using SSH spec directly (without host ID) */
+  listTmuxSessionsBySsh: async (ssh: {
+    host: string;
+    port: number;
+    user: string;
+    keyPath: string | null;
+    extraArgs: string[];
+  }): Promise<RemoteTmuxSession[]> => {
+    return await safeInvoke<RemoteTmuxSession[]>("host_list_tmux_sessions_by_ssh", { ssh });
+  },
+
   ipInfo: async (target: string): Promise<IpInfo> => {
     return await safeInvoke<IpInfo>("host_ip_info", { target });
   },

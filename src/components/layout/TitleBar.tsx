@@ -97,7 +97,7 @@ export function TitleBar() {
   const location = useLocation();
   const isTerminalPage = location.pathname.startsWith("/terminal");
   const terminal = useTerminalOptional();
-  const titleBarClassName = "h-9 flex items-center bg-[rgb(var(--doppio-titlebar-bg))] text-foreground border-b border-divider/70 pr-3 shadow-sm";
+  const titleBarClassName = "h-9 flex items-center bg-[rgb(var(--doppio-titlebar-bg))] text-foreground pr-3";
 
   // Handle drag on mousedown - more reliable than data-tauri-drag-region
   const handleMouseDown = async (e: React.MouseEvent) => {

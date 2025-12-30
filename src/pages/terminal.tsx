@@ -532,7 +532,7 @@ export function TerminalPage() {
   const [quickFilter, setQuickFilter] = useState("");
 
   const [tmuxSelect, setTmuxSelect] = useState<{
-    hostId: string;
+    hostId: string | null;
     hostName: string;
     ssh: { host: string; port: number; user: string; keyPath?: string | null; extraArgs?: string[] };
     envVars: Record<string, string> | null;
@@ -686,11 +686,14 @@ export function TerminalPage() {
       try {
         setConnectState({ status: "connecting", label: host.name, detail: "Checking tmux sessions…" });
         tmuxSessions = await hostApi.listTmuxSessions(hostId);
-      } catch {
+      } catch (e) {
+        console.error("Failed to list tmux sessions:", e);
         tmuxSessions = [];
       }
 
-      if (tmuxSessions.length > 1) {
+      // If there are existing sessions, show the selection modal to let user choose
+      // or create a new session
+      if (tmuxSessions.length >= 1) {
         setTmuxSelect({
           hostId,
           hostName: host.name,
@@ -702,7 +705,8 @@ export function TerminalPage() {
         return;
       }
 
-      const sessionName = tmuxSessions[0]?.name ?? "main";
+      // No existing sessions - create a new "main" session
+      const sessionName = "main";
       setConnectState({ status: "connecting", label: host.name, detail: `Connecting to tmux: ${sessionName}` });
       await openSshTmux({
         ssh,
@@ -790,20 +794,45 @@ export function TerminalPage() {
             label: label ?? `Vast #${instanceId}`,
             detail: `Checking SSH (${cand.mode})…`,
           });
-          await sshCheck({
-            host: cand.host,
-            port: cand.port,
-            user: vastUser,
-            keyPath,
-            extraArgs: sshExtraArgs,
-          });
+          const ssh = { host: cand.host, port: cand.port, user: vastUser, keyPath, extraArgs: sshExtraArgs };
+          await sshCheck(ssh);
+
+          // SSH connection successful - now check for existing tmux sessions
           setConnectState({
             status: "connecting",
             label: label ?? `Vast #${instanceId}`,
-            detail: `Opening terminal (${cand.mode})…`,
+            detail: "Checking tmux sessions…",
+          });
+
+          let tmuxSessions: RemoteTmuxSession[] = [];
+          try {
+            tmuxSessions = await hostApi.listTmuxSessionsBySsh(ssh);
+          } catch (e) {
+            console.error("Failed to list tmux sessions:", e);
+            tmuxSessions = [];
+          }
+
+          // If there are existing sessions, show the selection modal
+          if (tmuxSessions.length >= 1) {
+            setTmuxSelect({
+              hostId: null, // No host ID for Vast instances
+              hostName: label ?? `Vast #${instanceId}`,
+              ssh,
+              envVars: null,
+              sessions: tmuxSessions,
+            });
+            setConnectState({ status: "select_tmux", label: label ?? `Vast #${instanceId}` });
+            return;
+          }
+
+          // No existing sessions - create a new "main" session
+          setConnectState({
+            status: "connecting",
+            label: label ?? `Vast #${instanceId}`,
+            detail: "Opening terminal…",
           });
           await openSshTmux({
-            ssh: { host: cand.host, port: cand.port, user: vastUser, keyPath, extraArgs: sshExtraArgs },
+            ssh,
             tmuxSession: "main",
             title: `${label ?? `Vast #${instanceId}`} · main`,
             envVars: null,
