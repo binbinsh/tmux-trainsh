@@ -74,6 +74,32 @@ impl Default for VastExecuteResponse {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct VastCopyResponse {
+    pub success: Option<bool>,
+    pub msg: Option<String>,
+    pub error: Option<String>,
+    pub src_addr: Option<String>,
+    pub src_port: Option<i64>,
+    pub dst_addr: Option<String>,
+    pub dst_port: Option<i64>,
+}
+
+impl Default for VastCopyResponse {
+    fn default() -> Self {
+        Self {
+            success: None,
+            msg: None,
+            error: None,
+            src_addr: None,
+            src_port: None,
+            dst_addr: None,
+            dst_port: None,
+        }
+    }
+}
+
 pub struct VastClient {
     http: reqwest::Client,
     api_base: String,
@@ -322,10 +348,10 @@ impl VastClient {
         if trimmed.len() > 512 {
             return Err(AppError::invalid_input("command must be <= 512 characters"));
         }
-        let url = self.url(&format!("instances/command/{instance_id}"));
+        let url = self.url(&format!("instances/{instance_id}/command"));
         let body = serde_json::json!({ "command": trimmed });
         let v = self
-            .send_json(reqwest::Method::PUT, &url, Some(body))
+            .send_json(reqwest::Method::POST, &url, Some(body))
             .await?;
         serde_json::from_value(v)
             .map_err(|e| AppError::vast_api(format!("Failed to parse Vast execute response: {e}")))
@@ -349,6 +375,55 @@ impl VastClient {
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| AppError::vast_api("Missing result_url from Vast execute response"))?;
         self.wait_for_execute_result(&result_url).await
+    }
+
+    pub async fn copy(
+        &self,
+        src_id: Option<String>,
+        dst_id: Option<String>,
+        src_path: String,
+        dst_path: String,
+        use_rsync_endpoint: bool,
+    ) -> Result<VastCopyResponse, AppError> {
+        if src_path.trim().is_empty() {
+            return Err(AppError::invalid_input("src_path is required"));
+        }
+        if dst_path.trim().is_empty() {
+            return Err(AppError::invalid_input("dst_path is required"));
+        }
+
+        let endpoint = if use_rsync_endpoint {
+            "commands/rsync"
+        } else {
+            "commands/copy_direct"
+        };
+        let url = self.url(endpoint);
+
+        // Build request body based on endpoint
+        // copy_direct requires src_id and dst_id as strings (both instances)
+        // rsync endpoint uses client_id for local operations
+        let body = if use_rsync_endpoint {
+            serde_json::json!({
+                "client_id": "me",
+                "src_id": src_id,
+                "dst_id": dst_id,
+                "src_path": src_path,
+                "dst_path": dst_path,
+            })
+        } else {
+            // copy_direct endpoint: src_id and dst_id are required strings
+            serde_json::json!({
+                "src_id": src_id.unwrap_or_default(),
+                "dst_id": dst_id.unwrap_or_default(),
+                "src_path": src_path,
+                "dst_path": dst_path,
+            })
+        };
+        let v = self
+            .send_json(reqwest::Method::PUT, &url, Some(body))
+            .await?;
+        serde_json::from_value(v)
+            .map_err(|e| AppError::vast_api(format!("Failed to parse Vast copy response: {e}")))
     }
 
     async fn wait_for_execute_result(&self, result_url: &str) -> Result<String, AppError> {

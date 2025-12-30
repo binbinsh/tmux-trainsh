@@ -177,6 +177,7 @@ pub enum Operation {
     VastStart(VastInstanceOp),
     VastStop(VastInstanceOp),
     VastDestroy(VastInstanceOp),
+    VastCopy(VastCopyOp),
 
     // Tmux Operations
     TmuxNew(TmuxNewOp),
@@ -402,6 +403,18 @@ pub enum HfRepoType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VastInstanceOp {}
+
+/// Vast.ai copy operation (CLI-style copy API)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VastCopyOp {
+    /// Source location in Vast copy syntax
+    pub src: String,
+    /// Destination location in Vast copy syntax
+    pub dst: String,
+    /// Optional SSH identity file for rsync transfers
+    #[serde(default)]
+    pub identity_file: Option<String>,
+}
 
 /// Mount Google Drive on remote host using rclone
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -200,6 +200,58 @@ pub async fn execute_step(
             operations::vast::destroy_instance(instance_id).await?;
             Ok(None)
         }
+        Operation::VastCopy(op) => {
+            let src = interpolate(&op.src, variables);
+            let dst = interpolate(&op.dst, variables);
+            let target_host = variables.get("target").cloned();
+            let needs_target = uses_vast_target_alias(&src)
+                || uses_vast_target_alias(&dst)
+                || target_host
+                    .as_ref()
+                    .is_some_and(|host| uses_target_host_prefix(&src, host))
+                || target_host
+                    .as_ref()
+                    .is_some_and(|host| uses_target_host_prefix(&dst, host));
+            let target_instance_id = if needs_target {
+                let target = target_host.clone().ok_or_else(|| {
+                    AppError::invalid_input(
+                        "vast_copy target alias requires a recipe target host",
+                    )
+                })?;
+                Some(resolve_vast_instance_id_for_host(&target).await?)
+            } else {
+                None
+            };
+            let (src, dst) = if let Some(id) = target_instance_id {
+                let src = target_host
+                    .as_ref()
+                    .map(|host| normalize_target_host_prefix(&src, host, id))
+                    .unwrap_or(src);
+                let dst = target_host
+                    .as_ref()
+                    .map(|host| normalize_target_host_prefix(&dst, host, id))
+                    .unwrap_or(dst);
+                (
+                    expand_vast_target_alias(&src, id),
+                    expand_vast_target_alias(&dst, id),
+                )
+            } else {
+                (src, dst)
+            };
+            let identity_file = op
+                .identity_file
+                .as_ref()
+                .map(|p| interpolate(p, variables))
+                .filter(|p| !p.trim().is_empty());
+            let msg = operations::vast::copy(
+                &src,
+                &dst,
+                identity_file.as_deref(),
+                progress.clone(),
+            )
+            .await?;
+            Ok(Some(msg))
+        }
 
         // HF download operation
         Operation::HfDownload(op) => {
@@ -464,6 +516,64 @@ async fn resolve_vast_instance_id_for_host(host_id: &str) -> Result<i64, AppErro
             host_id
         ))
     })
+}
+
+fn uses_vast_target_alias(location: &str) -> bool {
+    let trimmed = location.trim();
+    let Some((left, _)) = trimmed.split_once(':') else {
+        return false;
+    };
+    let left = left.trim().to_ascii_lowercase();
+    left == "target" || left == "c.target" || left == "c."
+}
+
+fn expand_vast_target_alias(location: &str, target_instance_id: i64) -> String {
+    let trimmed = location.trim();
+    let Some((left, right)) = trimmed.split_once(':') else {
+        return trimmed.to_string();
+    };
+    let left_trimmed = left.trim();
+    let left_lower = left_trimmed.to_ascii_lowercase();
+    let id = target_instance_id.to_string();
+    let replacement = if left_lower == "target" {
+        id
+    } else if left_lower == "c.target" || left_lower == "c." {
+        format!("C.{id}")
+    } else {
+        left_trimmed.to_string()
+    };
+    format!("{replacement}:{right}")
+}
+
+fn uses_target_host_prefix(location: &str, target_host_id: &str) -> bool {
+    let trimmed = location.trim();
+    let direct = format!("{target_host_id}:");
+    let container = format!("C.{target_host_id}:");
+    let container_lower = format!("c.{target_host_id}:");
+    trimmed.starts_with(&direct)
+        || trimmed.starts_with(&container)
+        || trimmed.starts_with(&container_lower)
+}
+
+fn normalize_target_host_prefix(
+    location: &str,
+    target_host_id: &str,
+    target_instance_id: i64,
+) -> String {
+    let trimmed = location.trim();
+    let direct = format!("{target_host_id}:");
+    if let Some(rest) = trimmed.strip_prefix(&direct) {
+        return format!("{target_instance_id}:{rest}");
+    }
+    let container = format!("C.{target_host_id}:");
+    if let Some(rest) = trimmed.strip_prefix(&container) {
+        return format!("C.{target_instance_id}:{rest}");
+    }
+    let container_lower = format!("c.{target_host_id}:");
+    if let Some(rest) = trimmed.strip_prefix(&container_lower) {
+        return format!("C.{target_instance_id}:{rest}");
+    }
+    trimmed.to_string()
 }
 
 /// Compute topological order of steps

@@ -1446,7 +1446,7 @@ fn extract_commands_from_step(
             ))
         }
         // Operations that must use backend execution:
-        // GdriveMount/Unmount, Transfer, RsyncUpload/Download, VastStart/Stop/Destroy,
+        // GdriveMount/Unmount, Transfer, RsyncUpload/Download, VastStart/Stop/Destroy/VastCopy,
         // WaitCondition, HttpRequest, SetVar, GetValue, Assert, Group
         _ => None,
     }
@@ -1567,6 +1567,14 @@ fn get_operation_description(
         }
         types::Operation::VastDestroy(_) => {
             format!("Destroying Vast.ai instance{}", vast_target_hint(variables))
+        }
+        types::Operation::VastCopy(op) => {
+            let src = parser::interpolate(&op.src, variables);
+            let dst = parser::interpolate(&op.dst, variables);
+            format!(
+                "Copying data via Vast API\n→ Source: {}\n→ Destination: {}",
+                src, dst
+            )
         }
         types::Operation::WaitCondition(op) => {
             format!("Waiting for condition (timeout: {}s)", op.timeout_secs)

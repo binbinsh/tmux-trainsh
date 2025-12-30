@@ -13,7 +13,7 @@ import type {
   HostConfig,
   HostCostBreakdown,
   HostPricing,
-  IpInfo,
+  ScamalyticsInfo,
   InteractiveExecution,
   InteractiveRecipeEvent,
   LogEntry,
@@ -231,8 +231,12 @@ export const hostApi = {
     return await safeInvoke<RemoteTmuxSession[]>("host_list_tmux_sessions_by_ssh", { ssh });
   },
 
-  ipInfo: async (target: string): Promise<IpInfo> => {
-    return await safeInvoke<IpInfo>("host_ip_info", { target });
+  scamalyticsInfoForHost: async (hostId: string): Promise<ScamalyticsInfo> => {
+    return await safeInvoke<ScamalyticsInfo>("host_scamalytics_info", { hostId });
+  },
+
+  scamalyticsInfoForIp: async (ip: string): Promise<ScamalyticsInfo> => {
+    return await safeInvoke<ScamalyticsInfo>("host_scamalytics_info_for_ip", { ip });
   },
 };
 

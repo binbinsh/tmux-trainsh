@@ -111,16 +111,74 @@ export type HostConfig = {
   cloudflared_path: string | null;
 };
 
-export type IpInfo = {
+export type ScamalyticsMetric = number | string;
+
+export type ScamalyticsProxy = {
+  is_datacenter: boolean | null;
+  is_vpn: boolean | null;
+  is_apple_icloud_private_relay: boolean | null;
+  is_amazon_aws: boolean | null;
+  is_google: boolean | null;
+};
+
+export type ScamalyticsCore = {
+  status: string | null;
   ip: string | null;
-  hostname: string | null;
-  city: string | null;
-  region: string | null;
-  country: string | null;
-  loc: string | null;
-  org: string | null;
-  timezone: string | null;
-  readme: string | null;
+  scamalytics_risk: string | null;
+  scamalytics_score: ScamalyticsMetric | null;
+  scamalytics_isp: string | null;
+  scamalytics_org: string | null;
+  scamalytics_isp_score: ScamalyticsMetric | null;
+  scamalytics_isp_risk: string | null;
+  is_blacklisted_external: boolean | null;
+  scamalytics_url: string | null;
+  scamalytics_proxy: ScamalyticsProxy | null;
+};
+
+export type ScamalyticsIpSource = {
+  ip_country_name: string | null;
+  ip_country_code: string | null;
+  ip_city: string | null;
+  ip_state_name: string | null;
+  ip_district_name: string | null;
+  asn: string | null;
+  as_name: string | null;
+  proxy_type: string | null;
+};
+
+export type ScamalyticsFirehol = {
+  is_proxy: boolean | null;
+};
+
+export type ScamalyticsX4Bnet = {
+  is_datacenter: boolean | null;
+  is_vpn: boolean | null;
+  is_tor: boolean | null;
+  is_blacklisted_spambot: boolean | null;
+  is_bot_operamini: boolean | null;
+  is_bot_semrush: boolean | null;
+};
+
+export type ScamalyticsGoogle = {
+  is_google_general: boolean | null;
+  is_googlebot: boolean | null;
+  is_special_crawler: boolean | null;
+  is_user_triggered_fetcher: boolean | null;
+};
+
+export type ScamalyticsExternalDatasources = {
+  dbip: ScamalyticsIpSource | null;
+  maxmind_geolite2: ScamalyticsIpSource | null;
+  ip2proxy: ScamalyticsIpSource | null;
+  ip2proxy_lite: ScamalyticsIpSource | null;
+  firehol: ScamalyticsFirehol | null;
+  x4bnet: ScamalyticsX4Bnet | null;
+  google: ScamalyticsGoogle | null;
+};
+
+export type ScamalyticsInfo = {
+  scamalytics: ScamalyticsCore | null;
+  external_datasources: ScamalyticsExternalDatasources | null;
 };
 
 // ============================================================
@@ -269,9 +327,16 @@ export type ColabConfig = {
   hf_home: string | null;
 };
 
+export type ScamalyticsConfig = {
+  api_key: string | null;
+  user: string | null;
+  host: string;
+};
+
 export type TrainshConfig = {
   vast: VastConfig;
   colab: ColabConfig;
+  scamalytics: ScamalyticsConfig;
 };
 
 export type VastInstance = {
@@ -699,6 +764,7 @@ export type Operation =
   | { vast_start: VastInstanceOp }
   | { vast_stop: VastInstanceOp }
   | { vast_destroy: VastInstanceOp }
+  | { vast_copy: VastCopyOp }
   // Tmux operations
   | { tmux_new: TmuxNewOp }
   | { tmux_send: TmuxSendOp }
@@ -828,6 +894,15 @@ export type RsyncDownloadOp = {
 };
 
 export type VastInstanceOp = Record<string, never>;
+
+export type VastCopyOp = {
+  /** Source location in Vast copy syntax */
+  src: string;
+  /** Destination location in Vast copy syntax */
+  dst: string;
+  /** Optional SSH identity file for rsync transfers */
+  identity_file?: string | null;
+};
 
 export type TmuxNewOp = {
   host_id: string;

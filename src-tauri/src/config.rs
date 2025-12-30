@@ -103,9 +103,28 @@ impl Default for ColabConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct ScamalyticsConfig {
+    pub api_key: Option<String>,
+    pub user: Option<String>,
+    pub host: String,
+}
+
+impl Default for ScamalyticsConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            user: None,
+            host: "https://api11.scamalytics.com/v3/".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TrainshConfig {
     pub vast: VastConfig,
     pub colab: ColabConfig,
+    pub scamalytics: ScamalyticsConfig,
 }
 
 impl Default for TrainshConfig {
@@ -113,6 +132,7 @@ impl Default for TrainshConfig {
         Self {
             vast: VastConfig::default(),
             colab: ColabConfig::default(),
+            scamalytics: ScamalyticsConfig::default(),
         }
     }
 }

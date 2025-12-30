@@ -71,6 +71,27 @@ Endpoints can be:
 | `vast_start` | Start target Vast host | (none; uses `${target}`) |
 | `vast_stop` | Stop target Vast host | (none; uses `${target}`) |
 | `vast_destroy` | Destroy target Vast host | (none; uses `${target}`) |
+| `vast_copy` | Copy data using Vast copy API | `src`, `dst`, `identity_file?` |
+
+Supported `src`/`dst` formats follow the Vast CLI:
+- `[instance_id:]path`
+- `C.instance_id:path`
+- `target:path` or `C.target:path` (uses the recipe target Vast host)
+- `cloud_service:path` (e.g. `drive:/folder/file.txt`)
+- `cloud_service.connection_id:path` (e.g. `s3.101:/data`)
+- `local:path`
+
+If you use `${target}` as the prefix (for example `C.${target}:/workspace`), it is normalized to the selected target instance ID at runtime.
+
+By default, local rsync transfers use the Vast SSH key configured in Settings. Provide `identity_file` only if you need to override it.
+
+Example (copy from Vast to local without starting the instance):
+
+```toml
+[[step]]
+id = "pull_data"
+vast_copy = { src = "C.6003036:/workspace/", dst = "local:./data" }
+```
 
 #### Tmux
 

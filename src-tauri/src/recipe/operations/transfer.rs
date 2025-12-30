@@ -346,7 +346,9 @@ fn is_local_target(host_id: &str) -> bool {
 }
 
 fn resolve_host_id(explicit: Option<&str>, target: Option<&str>) -> Result<String, AppError> {
+    // Treat empty string as None
     explicit
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .or_else(|| target.map(|s| s.to_string()))
         .ok_or_else(|| AppError::command("No host_id specified and no target defined"))

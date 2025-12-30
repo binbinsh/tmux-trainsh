@@ -205,6 +205,7 @@ const OPERATION_TYPES: OperationDef[] = [
   { key: "vast_start", label: "Start Target Host", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Start the target Vast.ai host" },
   { key: "vast_stop", label: "Stop Target Host", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Stop the target Vast.ai host" },
   { key: "vast_destroy", label: "Destroy Target Host", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Destroy the target Vast.ai host" },
+  { key: "vast_copy", label: "Vast Copy", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Copy data via Vast.ai copy API" },
   // Tmux
   { key: "tmux_new", label: "New Session", icon: "📺", category: "tmux", description: "Create new tmux session" },
   { key: "tmux_send", label: "Send Keys", icon: "⌨️", category: "tmux", description: "Send keys to tmux session" },
@@ -327,6 +328,13 @@ function getOperationSummary(opType: string, opData: Record<string, unknown> | u
     case 'vast_stop':
     case 'vast_destroy': {
       return 'target';
+    }
+
+    case 'vast_copy': {
+      const src = (opData.src as string) || '';
+      const dst = (opData.dst as string) || '';
+      if (!src && !dst) return '';
+      return `${src || '?'} → ${dst || '?'}`;
     }
     
     case 'tmux_new': {
@@ -896,6 +904,228 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
   );
 }
 
+type VastCopyEndpointType = "target" | "host" | "local";
+
+type VastCopyEndpointState = {
+  type: VastCopyEndpointType;
+  hostId?: string | null;
+  instanceId?: string | null;
+  path: string;
+};
+
+function findVastHostByInstanceId(hosts: Host[], instanceId: string): Host | undefined {
+  const trimmed = instanceId.trim();
+  if (!trimmed) return undefined;
+  return hosts.find(
+    (host) => host.type === "vast" && host.vast_instance_id?.toString() === trimmed
+  );
+}
+
+function parseVastCopyLocation(value: string, vastHosts: Host[]): VastCopyEndpointState {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return { type: "target", hostId: null, instanceId: null, path: "" };
+  }
+
+  const [prefixRaw, pathRaw = ""] = trimmed.split(":", 2);
+  const prefix = prefixRaw.trim();
+  const path = pathRaw;
+  const prefixLower = prefix.toLowerCase();
+
+  if (prefixLower === "local") {
+    return { type: "local", hostId: null, instanceId: null, path };
+  }
+  if (prefixLower === "target" || prefixLower === "c.target" || prefixLower === "c.") {
+    return { type: "target", hostId: null, instanceId: null, path };
+  }
+
+  if (prefixLower.startsWith("c.")) {
+    const instanceId = prefix.slice(2);
+    const host = findVastHostByInstanceId(vastHosts, instanceId);
+    return { type: "host", hostId: host?.id ?? null, instanceId, path };
+  }
+
+  if (/^\d+$/.test(prefix)) {
+    const host = findVastHostByInstanceId(vastHosts, prefix);
+    return { type: "host", hostId: host?.id ?? null, instanceId: prefix, path };
+  }
+
+  const host = vastHosts.find((candidate) => candidate.id === prefix);
+  if (host) {
+    return {
+      type: "host",
+      hostId: host.id,
+      instanceId: host.vast_instance_id?.toString() ?? null,
+      path,
+    };
+  }
+
+  return { type: "target", hostId: null, instanceId: null, path };
+}
+
+function buildVastCopyLocation(state: VastCopyEndpointState, vastHosts: Host[]): string {
+  const path = state.path ?? "";
+  if (state.type === "local") return `local:${path}`;
+  if (state.type === "target") return `C.target:${path}`;
+  const host = vastHosts.find((candidate) => candidate.id === state.hostId);
+  const instanceId = host?.vast_instance_id?.toString() ?? state.instanceId ?? "";
+  if (!instanceId) return "";
+  return `C.${instanceId}:${path}`;
+}
+
+function VastCopyOpFields({ opData, updateOp }: { opData: Record<string, unknown>; updateOp: (field: string, value: unknown) => void }) {
+  const { data: hosts = [] } = useHosts();
+  const vastHosts = hosts.filter((host) => host.type === "vast" && host.vast_instance_id);
+
+  const srcValue = (opData.src as string) ?? "";
+  const dstValue = (opData.dst as string) ?? "";
+
+  const srcState = parseVastCopyLocation(srcValue, vastHosts);
+  const dstState = parseVastCopyLocation(dstValue, vastHosts);
+
+  const inputClasses = {
+    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
+    input: "text-black placeholder:text-black/40",
+  };
+
+  const selectClasses = {
+    trigger: "bg-white/80 border-black/10 hover:border-black/20",
+    value: "text-black",
+  };
+
+  const updateEndpoint = (field: "src" | "dst", next: VastCopyEndpointState) => {
+    const value = buildVastCopyLocation(next, vastHosts);
+    updateOp(field, value);
+  };
+
+  const updateType = (field: "src" | "dst", type: VastCopyEndpointType) => {
+    const current = field === "src" ? srcState : dstState;
+    if (type !== "host") {
+      updateEndpoint(field, { ...current, type, hostId: null, instanceId: null });
+      return;
+    }
+
+    const nextHostId = current.hostId || vastHosts[0]?.id || null;
+    const nextHost = vastHosts.find((host) => host.id === nextHostId);
+    const nextInstanceId =
+      nextHost?.vast_instance_id?.toString() ?? current.instanceId ?? null;
+    updateEndpoint(field, {
+      ...current,
+      type,
+      hostId: nextHostId,
+      instanceId: nextInstanceId,
+    });
+  };
+
+  const updateHost = (field: "src" | "dst", hostId: string) => {
+    const current = field === "src" ? srcState : dstState;
+    const host = vastHosts.find((candidate) => candidate.id === hostId);
+    updateEndpoint(field, {
+      ...current,
+      type: "host",
+      hostId,
+      instanceId: host?.vast_instance_id?.toString() ?? null,
+    });
+  };
+
+  const updatePath = (field: "src" | "dst", path: string) => {
+    const current = field === "src" ? srcState : dstState;
+    updateEndpoint(field, { ...current, path });
+  };
+
+  const renderHostSelect = (field: "src" | "dst", state: VastCopyEndpointState) => (
+    <Select
+      labelPlacement="inside"
+      selectedKeys={state.hostId ? [state.hostId] : []}
+      onSelectionChange={(keys) => updateHost(field, Array.from(keys)[0] as string)}
+      placeholder={vastHosts.length === 0 ? "No Vast hosts" : "Select Vast host"}
+      size="sm"
+      variant="bordered"
+      className="w-40"
+      isDisabled={vastHosts.length === 0}
+      classNames={selectClasses}
+    >
+      {vastHosts.map((host) => (
+        <SelectItem key={host.id}>{host.name}</SelectItem>
+      ))}
+    </Select>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <p className="text-sm text-blue-700">
+          Target uses the host you select when running the recipe. Paths map to
+          Vast copy prefixes like <code>C.target:/workspace/</code>. SSH uses
+          the Vast key from Settings.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-black/60 w-20">Source</span>
+          <Select
+            labelPlacement="inside"
+            selectedKeys={[srcState.type]}
+            onSelectionChange={(keys) => updateType("src", Array.from(keys)[0] as VastCopyEndpointType)}
+            size="sm"
+            variant="bordered"
+            classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}
+          >
+            <SelectItem key="target">Target Host</SelectItem>
+            <SelectItem key="host">Vast Host</SelectItem>
+            <SelectItem key="local">Local</SelectItem>
+          </Select>
+
+          {srcState.type === "host" && renderHostSelect("src", srcState)}
+
+          <Input
+            labelPlacement="inside"
+            placeholder={srcState.type === "local" ? "/path/to/local" : "/workspace/data"}
+            value={srcState.path}
+            onValueChange={(v) => updatePath("src", v)}
+            size="sm"
+            variant="bordered"
+            className="flex-1 min-w-[200px]"
+            classNames={inputClasses}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-black/60 w-20">Destination</span>
+          <Select
+            labelPlacement="inside"
+            selectedKeys={[dstState.type]}
+            onSelectionChange={(keys) => updateType("dst", Array.from(keys)[0] as VastCopyEndpointType)}
+            size="sm"
+            variant="bordered"
+            classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}
+          >
+            <SelectItem key="target">Target Host</SelectItem>
+            <SelectItem key="host">Vast Host</SelectItem>
+            <SelectItem key="local">Local</SelectItem>
+          </Select>
+
+          {dstState.type === "host" && renderHostSelect("dst", dstState)}
+
+          <Input
+            labelPlacement="inside"
+            placeholder={dstState.type === "local" ? "/path/to/local" : "/workspace/data"}
+            value={dstState.path}
+            onValueChange={(v) => updatePath("dst", v)}
+            size="sm"
+            variant="bordered"
+            className="flex-1 min-w-[200px]"
+            classNames={inputClasses}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Condition types for the condition editor
 const CONDITION_TYPES = [
   { key: 'file_exists', label: 'File Exists', fields: ['host_id', 'path'] },
@@ -1071,6 +1301,8 @@ function createEmptyStep(id: string, opType: string): Step {
       return { ...baseStep, vast_stop: {} };
     case "vast_destroy":
       return { ...baseStep, vast_destroy: {} };
+    case "vast_copy":
+      return { ...baseStep, vast_copy: { src: "", dst: "", identity_file: null } };
     // Tmux
     case "tmux_new":
       return { ...baseStep, tmux_new: { host_id: "", session_name: "" } };
@@ -1514,6 +1746,9 @@ function StepBlock({
             </p>
           </div>
         );
+
+      case "vast_copy":
+        return <VastCopyOpFields opData={opData} updateOp={updateOp} />;
         
       case "tmux_new":
         return (

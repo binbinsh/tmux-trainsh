@@ -3,6 +3,7 @@ import {
   CardBody,
   CardHeader,
   Input,
+  Link,
   Modal,
   ModalBody,
   ModalContent,
@@ -23,8 +24,9 @@ import {
 import { Button } from "../components/ui";
 import { AppIcon } from "../components/AppIcon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { copyText } from "../lib/clipboard";
+import { open } from "@tauri-apps/plugin-shell";
 import {
   getConfig,
   pricingApi,
@@ -173,6 +175,8 @@ function SectionCard({
 // Main Settings Page
 // ============================================================
 
+const SCAMALYTICS_SIGNUP_URL = "https://scamalytics.com/ip/api/enquiry?monthly_api_calls=5000";
+
 export function SettingsPage() {
   const cfgQuery = useQuery({
     queryKey: ["config"],
@@ -201,6 +205,15 @@ export function SettingsPage() {
     return [...secrets, ...files];
   }, [sshKeysQuery.data, sshSecretKeysQuery.data]);
 
+  const handleOpenScamalyticsSignup = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
+    event?.preventDefault();
+    try {
+      await open(SCAMALYTICS_SIGNUP_URL);
+    } catch (err) {
+      console.error("Failed to open Scamalytics registration:", err);
+    }
+  }, []);
+
   useEffect(() => {
     if (cfgQuery.data) {
       setDraft({
@@ -209,6 +222,12 @@ export function SettingsPage() {
           ...cfgQuery.data.vast,
           ssh_user: cfgQuery.data.vast.ssh_user.trim() || "root",
           ssh_connection_preference: cfgQuery.data.vast.ssh_connection_preference ?? "proxy",
+        },
+        scamalytics: {
+          ...cfgQuery.data.scamalytics,
+          user: cfgQuery.data.scamalytics.user?.trim() || null,
+          api_key: cfgQuery.data.scamalytics.api_key?.trim() || null,
+          host: cfgQuery.data.scamalytics.host.trim() || "https://api11.scamalytics.com/v3/",
         }
       });
     }
@@ -231,6 +250,12 @@ export function SettingsPage() {
           ssh_user: draft.vast.ssh_user.trim() || "root",
           ssh_key_path: draft.vast.ssh_key_path?.trim() || null,
           ssh_connection_preference: draft.vast.ssh_connection_preference === "direct" ? "direct" : "proxy",
+        },
+        scamalytics: {
+          ...draft.scamalytics,
+          user: draft.scamalytics.user?.trim() || null,
+          api_key: draft.scamalytics.api_key?.trim() || null,
+          host: draft.scamalytics.host.trim() || "https://api11.scamalytics.com/v3/",
         }
       };
       setDraft(normalized);
@@ -427,6 +452,51 @@ export function SettingsPage() {
               </Select>
             </div>
               </div>
+        </SectionCard>
+
+        <SectionCard icon="key" title="Scamalytics" subtitle="IP risk intelligence credentials">
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                labelPlacement="inside"
+                label="User"
+                value={draft.scamalytics.user ?? ""}
+                onValueChange={(v) =>
+                  setDraft({ ...draft, scamalytics: { ...draft.scamalytics, user: v.trim() ? v : null } })
+                }
+                description="Account ID"
+                size="sm"
+                variant="flat"
+                classNames={{ inputWrapper: "bg-content2" }}
+              />
+              <Input
+                labelPlacement="inside"
+                label="API Key"
+                type="password"
+                value={draft.scamalytics.api_key ?? ""}
+                onValueChange={(v) =>
+                  setDraft({ ...draft, scamalytics: { ...draft.scamalytics, api_key: v.trim() ? v : null } })
+                }
+                description="API key"
+                size="sm"
+                variant="flat"
+                classNames={{ inputWrapper: "bg-content2" }}
+              />
+            </div>
+            <p className="text-xs text-foreground/60">
+              Need an API key?{" "}
+              <Link
+                href={SCAMALYTICS_SIGNUP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                color="primary"
+                size="sm"
+                onClick={handleOpenScamalyticsSignup}
+              >
+                Register for a Scamalytics API key
+              </Link>
+            </p>
+          </div>
         </SectionCard>
 
         <SectionCard icon="beaker" title="Google Colab" subtitle="Subscription pricing and GPU compute unit rates">

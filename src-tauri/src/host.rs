@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
@@ -105,48 +106,352 @@ pub struct HostConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpInfo {
+#[serde(untagged)]
+pub enum ScamalyticsMetric {
+    Number(f64),
+    Text(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsProxy {
+    pub is_datacenter: Option<bool>,
+    pub is_vpn: Option<bool>,
+    pub is_apple_icloud_private_relay: Option<bool>,
+    pub is_amazon_aws: Option<bool>,
+    pub is_google: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsCore {
+    pub status: Option<String>,
     pub ip: Option<String>,
-    pub hostname: Option<String>,
-    pub city: Option<String>,
-    pub region: Option<String>,
-    pub country: Option<String>,
-    pub loc: Option<String>,
+    #[serde(rename = "scamalytics_risk")]
+    pub risk: Option<String>,
+    #[serde(rename = "scamalytics_score")]
+    pub score: Option<ScamalyticsMetric>,
+    #[serde(rename = "scamalytics_isp")]
+    pub isp: Option<String>,
+    #[serde(rename = "scamalytics_org")]
     pub org: Option<String>,
-    pub timezone: Option<String>,
-    pub readme: Option<String>,
+    #[serde(rename = "scamalytics_isp_score")]
+    pub isp_score: Option<ScamalyticsMetric>,
+    #[serde(rename = "scamalytics_isp_risk")]
+    pub isp_risk: Option<String>,
+    pub is_blacklisted_external: Option<bool>,
+    pub scamalytics_url: Option<String>,
+    pub scamalytics_proxy: Option<ScamalyticsProxy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsIpSource {
+    pub ip_country_name: Option<String>,
+    pub ip_country_code: Option<String>,
+    pub ip_city: Option<String>,
+    pub ip_state_name: Option<String>,
+    pub ip_district_name: Option<String>,
+    pub asn: Option<String>,
+    pub as_name: Option<String>,
+    pub proxy_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsFirehol {
+    pub is_proxy: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsX4Bnet {
+    pub is_datacenter: Option<bool>,
+    pub is_vpn: Option<bool>,
+    pub is_tor: Option<bool>,
+    pub is_blacklisted_spambot: Option<bool>,
+    pub is_bot_operamini: Option<bool>,
+    pub is_bot_semrush: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsGoogle {
+    pub is_google_general: Option<bool>,
+    pub is_googlebot: Option<bool>,
+    pub is_special_crawler: Option<bool>,
+    pub is_user_triggered_fetcher: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsExternalDatasources {
+    pub dbip: Option<ScamalyticsIpSource>,
+    pub maxmind_geolite2: Option<ScamalyticsIpSource>,
+    pub ip2proxy: Option<ScamalyticsIpSource>,
+    pub ip2proxy_lite: Option<ScamalyticsIpSource>,
+    pub firehol: Option<ScamalyticsFirehol>,
+    #[serde(rename = "x4bnet")]
+    pub x4bnet: Option<ScamalyticsX4Bnet>,
+    pub google: Option<ScamalyticsGoogle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScamalyticsInfo {
+    pub scamalytics: Option<ScamalyticsCore>,
+    pub external_datasources: Option<ScamalyticsExternalDatasources>,
 }
 
 // ============================================================
-// IP Info
+// Scamalytics
 // ============================================================
 
-pub async fn fetch_ip_info(_target: &str) -> Result<IpInfo, AppError> {
-    // Simply fetch the caller's public IP info
-    let url = "https://ipinfo.io";
+fn normalize_scamalytics_host(host: &str) -> Result<String, AppError> {
+    let trimmed = host.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("Scamalytics host is required"));
+    }
+    let mut normalized = trimmed.to_string();
+    if !normalized.ends_with('/') {
+        normalized.push('/');
+    }
+    Ok(normalized)
+}
+
+fn normalize_scamalytics_user(user: &str) -> Result<String, AppError> {
+    let trimmed = user.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("Scamalytics user is required"));
+    }
+    Ok(trimmed.trim_matches('/').to_string())
+}
+
+async fn fetch_public_ip_from_ssh(ssh: &SshSpec) -> Result<IpAddr, AppError> {
+    ssh.validate()?;
+    crate::ssh::ensure_bin("ssh").await?;
+
+    let script = r#"
+fetch_ip() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 5 https://api.ipify.org || \
+    curl -fsS --max-time 5 https://ifconfig.me/ip || \
+    curl -fsS --max-time 5 https://icanhazip.com
+    return $?
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -qO- --timeout=5 https://api.ipify.org || \
+    wget -qO- --timeout=5 https://ifconfig.me/ip || \
+    wget -qO- --timeout=5 https://icanhazip.com
+    return $?
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY'
+import sys
+import urllib.request
+
+urls = ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]
+for url in urls:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = resp.read().decode("utf-8").strip()
+        if data:
+            print(data)
+            sys.exit(0)
+    except Exception:
+        continue
+sys.exit(1)
+PY
+    return $?
+  fi
+  if command -v python >/dev/null 2>&1; then
+    python - <<'PY'
+import sys
+import urllib.request
+
+urls = ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]
+for url in urls:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = resp.read().decode("utf-8").strip()
+        if data:
+            print(data)
+            sys.exit(0)
+    except Exception:
+        continue
+sys.exit(1)
+PY
+    return $?
+  fi
+  return 1
+}
+
+ip="$(fetch_ip | head -n 1)"
+if [ -z "$ip" ]; then
+  echo "Public IP lookup returned empty output" >&2
+  exit 1
+fi
+echo "$ip"
+"#;
+
+    let mut cmd = Command::new("ssh");
+    for arg in ssh.common_ssh_options() {
+        cmd.arg(arg);
+    }
+    cmd.arg(ssh.target());
+    cmd.arg("sh -s");
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::command(format!("SSH spawn failed: {}", e)))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin
+            .write_all(script.as_bytes())
+            .await
+            .map_err(|e| AppError::command(format!("Failed to write SSH script: {}", e)))?;
+        stdin.flush().await.ok();
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| AppError::command(format!("SSH failed: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        let message = if detail.is_empty() {
+            "Public IP lookup failed".to_string()
+        } else {
+            format!("Public IP lookup failed: {}", detail)
+        };
+        return Err(AppError::command(message));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let ip_raw = stdout
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| AppError::command("Public IP lookup returned no output".to_string()))?;
+    let ip = ip_raw.trim().parse::<IpAddr>().map_err(|_| {
+        AppError::command(format!("Invalid public IP returned: {}", ip_raw.trim()))
+    })?;
+    Ok(ip)
+}
+
+async fn resolve_public_ip_for_vast_instance(vast_instance_id: i64) -> Result<IpAddr, AppError> {
+    if vast_instance_id <= 0 {
+        return Err(AppError::invalid_input("vast_instance_id must be positive"));
+    }
+    let cfg = load_config().await?;
+    let client = VastClient::from_cfg(&cfg)?;
+    let inst = client.get_instance(vast_instance_id).await?;
+    let raw = inst.public_ipaddr.unwrap_or_default();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::vast_api(
+            "Vast instance has no public IP address",
+        ));
+    }
+    let ip = trimmed.parse::<IpAddr>().map_err(|_| {
+        AppError::vast_api(format!(
+            "Invalid public IP returned from Vast instance: {}",
+            trimmed
+        ))
+    })?;
+    Ok(ip)
+}
+
+async fn resolve_public_ip_for_host(host_id: &str) -> Result<IpAddr, AppError> {
+    let trimmed = host_id.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("host_id is required"));
+    }
+
+    if let Some(vast_instance_id) = trimmed
+        .strip_prefix("vast:")
+        .and_then(|s| s.trim().parse::<i64>().ok())
+    {
+        return resolve_public_ip_for_vast_instance(vast_instance_id).await;
+    }
+    if trimmed.starts_with("vast:") {
+        return Err(AppError::invalid_input(
+            "vast host_id must be in format vast:<id>",
+        ));
+    }
+
+    let host = get_host(trimmed).await?;
+    if host.host_type == HostType::Vast {
+        if let Some(vast_instance_id) = host.vast_instance_id {
+            return resolve_public_ip_for_vast_instance(vast_instance_id).await;
+        }
+        return Err(AppError::invalid_input(
+            "Vast host is missing vast_instance_id",
+        ));
+    }
+
+    let ssh = resolve_ssh_spec(trimmed).await?;
+    fetch_public_ip_from_ssh(&ssh).await
+}
+
+async fn fetch_scamalytics_info_for_ip_addr(ip: IpAddr) -> Result<ScamalyticsInfo, AppError> {
+    let cfg = load_config().await?;
+    let api_key = cfg
+        .scamalytics
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::invalid_input("Scamalytics API key is required"))?;
+    let user = cfg
+        .scamalytics
+        .user
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::invalid_input("Scamalytics user is required"))?;
+    let host = normalize_scamalytics_host(&cfg.scamalytics.host)?;
+    let user = normalize_scamalytics_user(user)?;
+    let endpoint = format!("{}{}/", host, user);
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(6))
         .build()
         .map_err(|e| AppError::http(format!("Failed to create HTTP client: {}", e)))?;
+    let ip_string = ip.to_string();
     let response = client
-        .get(url)
+        .get(endpoint)
+        .query(&[("key", api_key), ("ip", ip_string.as_str())])
         .header(reqwest::header::ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|e| AppError::network(format!("Failed to fetch IP info: {}", e)))?;
+        .map_err(|e| AppError::network(format!("Failed to fetch Scamalytics data: {}", e)))?;
 
     if !response.status().is_success() {
         return Err(AppError::network(format!(
-            "IP info request failed with status: {}",
+            "Scamalytics request failed with status: {}",
             response.status()
         )));
     }
 
     let info = response
-        .json::<IpInfo>()
+        .json::<ScamalyticsInfo>()
         .await
-        .map_err(|e| AppError::network(format!("Failed to parse IP info response: {}", e)))?;
+        .map_err(|e| AppError::network(format!("Failed to parse Scamalytics response: {}", e)))?;
     Ok(info)
+}
+
+pub async fn fetch_scamalytics_info_for_ip(ip: &str) -> Result<ScamalyticsInfo, AppError> {
+    let trimmed = ip.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("IP address is required"));
+    }
+    let ip_addr = trimmed.parse::<IpAddr>().map_err(|_| {
+        AppError::invalid_input(format!("Invalid IP address: {}", trimmed))
+    })?;
+    fetch_scamalytics_info_for_ip_addr(ip_addr).await
+}
+
+pub async fn fetch_scamalytics_info_for_host(host_id: &str) -> Result<ScamalyticsInfo, AppError> {
+    let ip = resolve_public_ip_for_host(host_id).await?;
+    fetch_scamalytics_info_for_ip_addr(ip).await
 }
 
 // ============================================================

@@ -474,8 +474,13 @@ async fn host_list_tmux_sessions_by_ssh(ssh: SshSpec) -> Result<Vec<host::Remote
 }
 
 #[tauri::command]
-async fn host_ip_info(target: String) -> Result<host::IpInfo, AppError> {
-    host::fetch_ip_info(&target).await
+async fn host_scamalytics_info(host_id: String) -> Result<host::ScamalyticsInfo, AppError> {
+    host::fetch_scamalytics_info_for_host(&host_id).await
+}
+
+#[tauri::command]
+async fn host_scamalytics_info_for_ip(ip: String) -> Result<host::ScamalyticsInfo, AppError> {
+    host::fetch_scamalytics_info_for_ip(&ip).await
 }
 
 // ============================================================
@@ -692,29 +697,147 @@ async fn vast_attach_ssh_key(
 
 #[tauri::command]
 async fn vast_fetch_system_info(instance_id: i64) -> Result<host::SystemInfo, AppError> {
-    let (_, client, _) = resolve_vast_instance(instance_id).await?;
-    let sys_cmd = r#"bash -lc 'echo ===CPU===;awk -F: "/model name/{print $2; exit}" /proc/cpuinfo|xargs;nproc;echo ===MEM===;awk "/MemTotal|MemFree|MemAvailable|Buffers|^Cached:/{a[$1]=$2}END{t=a[\"MemTotal:\"];f=a[\"MemFree:\"];b=a[\"Buffers:\"];c=a[\"Cached:\"];print t, t-f-b-c, a[\"MemAvailable:\"]}" /proc/meminfo;echo ===DISK===;df -B1 / /workspace 2>/dev/null|awk "NR>1{print $6,$2,$3,$4}";echo ===OS===;(grep PRETTY_NAME /etc/os-release 2>/dev/null|cut -d= -f2||uname -s);hostname'"#;
-    let gpu_cmd = r#"bash -lc 'echo ===GPU===;export LD_LIBRARY_PATH=/usr/lib64-nvidia:/usr/local/nvidia/lib64:$LD_LIBRARY_PATH;nvidia-smi --query-gpu=index,name,memory.total,memory.used,utilization.gpu,temperature.gpu,driver_version,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed,compute_mode,pcie.link.gen.max,pcie.link.width.max --format=csv,noheader,nounits 2>/dev/null||echo no-gpu'"#;
+    let cfg = load_config().await?;
+    let client = VastClient::from_cfg(&cfg)?;
+    let inst = client.get_instance(instance_id).await?;
 
-    let sys_output = client
-        .execute_and_fetch_result(instance_id, sys_cmd)
-        .await?;
-    let mut info = host::parse_system_info_output(&sys_output)?;
+    // Extract fields from the instance data (many are in the `extra` HashMap)
+    let cpu_model = inst.extra.get("cpu_name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    match client.execute_and_fetch_result(instance_id, gpu_cmd).await {
-        Ok(gpu_output) => {
-            if let Ok(gpu_info) = host::parse_system_info_output(&gpu_output) {
-                if !gpu_info.gpu_list.is_empty() {
-                    info.gpu_list = gpu_info.gpu_list;
-                }
-            }
+    let cpu_cores = inst.extra.get("cpu_cores_effective")
+        .and_then(|v| v.as_i64())
+        .or_else(|| inst.extra.get("cpu_cores").and_then(|v| v.as_i64()))
+        .map(|n| n as i32);
+
+    // Memory: cpu_ram is in MB, mem_limit is in GB
+    let memory_total_gb = inst.extra.get("mem_limit")
+        .and_then(|v| v.as_f64())
+        .filter(|&v| v > 0.0)
+        .or_else(|| {
+            inst.extra.get("cpu_ram")
+                .and_then(|v| v.as_f64())
+                .filter(|&v| v > 0.0)
+                .map(|mb| mb / 1024.0)
+        });
+
+    let mem_usage = inst.extra.get("mem_usage").and_then(|v| v.as_f64());
+    let memory_used_gb = match (memory_total_gb, mem_usage) {
+        (Some(total), Some(usage)) if usage <= 1.0 => Some(total * usage),
+        (_, Some(usage)) if usage > 1.0 => Some(usage),
+        _ => None,
+    };
+
+    let memory_available_gb = match (memory_total_gb, memory_used_gb) {
+        (Some(total), Some(used)) => Some((total - used).max(0.0)),
+        _ => None,
+    };
+
+    // Disk
+    let disk_total_gb = inst.disk_space;
+    let disk_util = inst.extra.get("disk_util")
+        .and_then(|v| v.as_f64())
+        .or_else(|| inst.extra.get("disk_usage").and_then(|v| v.as_f64()));
+
+    let (disk_used_gb, disk_available_gb) = match (disk_total_gb, disk_util) {
+        (Some(total), Some(util)) if util >= 0.0 && util <= 1.0 => {
+            let used = total * util;
+            (used, (total - used).max(0.0))
         }
-        Err(e) => {
-            eprintln!("Vast GPU info fetch failed: {}", e.message);
+        (Some(total), Some(usage)) if usage > 1.0 => {
+            let used = usage.min(total);
+            (used, (total - used).max(0.0))
         }
-    }
+        (Some(total), _) => (0.0, total),
+        _ => (0.0, 0.0),
+    };
 
-    Ok(info)
+    let disk_name = inst.extra.get("disk_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/")
+        .to_string();
+
+    let disks = if disk_total_gb.is_some() {
+        vec![host::DiskInfo {
+            mount_point: disk_name,
+            total_gb: disk_total_gb.unwrap_or(0.0),
+            used_gb: disk_used_gb,
+            available_gb: disk_available_gb,
+        }]
+    } else {
+        vec![]
+    };
+
+    // OS
+    let os = inst.extra.get("os_version")
+        .and_then(|v| v.as_f64())
+        .map(|v| format!("Ubuntu {}", v))
+        .or_else(|| {
+            inst.extra.get("os_version")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        });
+
+    // GPU
+    let gpu_name = inst.gpu_name.clone().unwrap_or_else(|| "GPU".to_string());
+    let num_gpus = inst.num_gpus.unwrap_or(1).max(1) as usize;
+
+    // gpu_ram is per-GPU in MB, gpu_totalram is total for all GPUs
+    let per_gpu_ram_mb = inst.extra.get("gpu_ram")
+        .and_then(|v| v.as_f64())
+        .or_else(|| {
+            inst.extra.get("gpu_totalram")
+                .and_then(|v| v.as_f64())
+                .map(|total| total / num_gpus as f64)
+        })
+        .unwrap_or(0.0);
+
+    let gpu_util = inst.gpu_util.map(|u| u.round() as i32);
+    let gpu_temp = inst.extra.get("gpu_temp").and_then(|v| v.as_i64()).map(|t| t as i32);
+    let driver_version = inst.extra.get("driver_version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let pcie_gen = inst.extra.get("pci_gen").and_then(|v| v.as_i64()).map(|g| g as i32);
+    let pcie_width = inst.extra.get("gpu_lanes").and_then(|v| v.as_i64()).map(|w| w as i32);
+
+    // Look up GPU capability info
+    let capability = gpu::lookup_gpu_capability(&gpu_name);
+
+    let gpu_list: Vec<host::GpuInfo> = (0..num_gpus)
+        .map(|idx| host::GpuInfo {
+            index: idx as i32,
+            name: gpu_name.clone(),
+            memory_total_mb: per_gpu_ram_mb.round() as i64,
+            memory_used_mb: None,
+            utilization: gpu_util,
+            temperature: gpu_temp,
+            driver_version: driver_version.clone(),
+            power_draw_w: None,
+            power_limit_w: None,
+            clock_graphics_mhz: None,
+            clock_memory_mhz: None,
+            fan_speed: None,
+            compute_mode: None,
+            pcie_gen,
+            pcie_width,
+            capability: capability.clone(),
+        })
+        .collect();
+
+    Ok(host::SystemInfo {
+        cpu_model,
+        cpu_cores,
+        memory_total_gb,
+        memory_used_gb,
+        memory_available_gb,
+        disks,
+        disk_total_gb: None,
+        disk_available_gb: None,
+        gpu_list,
+        os,
+        hostname: None,
+    })
 }
 
 #[tauri::command]
@@ -906,7 +1029,8 @@ fn main() {
             host_refresh,
             host_list_tmux_sessions,
             host_list_tmux_sessions_by_ssh,
-            host_ip_info,
+            host_scamalytics_info,
+            host_scamalytics_info_for_ip,
             // Sessions
             session_list,
             session_get,

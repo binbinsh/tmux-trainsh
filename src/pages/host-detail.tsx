@@ -21,7 +21,16 @@ import {
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { AppIcon } from "../components/AppIcon";
-import type { GpuInfo, Host, HostStatus, Storage, SystemInfo, VastInstance } from "../lib/types";
+import type {
+  GpuInfo,
+  Host,
+  HostStatus,
+  ScamalyticsIpSource,
+  ScamalyticsMetric,
+  Storage,
+  SystemInfo,
+  VastInstance,
+} from "../lib/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
@@ -119,6 +128,84 @@ function IconStop() {
       <rect x="6" y="6" width="12" height="12" rx="1.5" />
     </svg>
   );
+}
+
+const SCAMALYTICS_SCORE_TOTAL = 100;
+
+function pickFirst(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function metricToString(value?: ScamalyticsMetric | null) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return Number.isInteger(value) ? `${value}` : `${value}`;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const numeric = Number(trimmed);
+  if (!Number.isFinite(numeric)) return null;
+  return Number.isInteger(numeric) ? `${numeric}` : `${numeric}`;
+}
+
+function formatScore(score?: ScamalyticsMetric | null, total = SCAMALYTICS_SCORE_TOTAL) {
+  const scoreStr = metricToString(score);
+  if (!scoreStr) return null;
+  return `${scoreStr} / ${total}`;
+}
+
+function formatCountry(country?: string | null, code?: string | null) {
+  const name = pickFirst(country);
+  const short = pickFirst(code);
+  if (name && short && !name.includes(short)) {
+    return `${name} (${short})`;
+  }
+  return name || short;
+}
+
+function formatCity(city?: string | null, state?: string | null) {
+  const name = pickFirst(city);
+  const region = pickFirst(state);
+  if (name && region) {
+    if (name.includes(region)) return name;
+    return `${name}, ${region}`;
+  }
+  return name;
+}
+
+function formatAsn(asn?: string | null, name?: string | null) {
+  const number = pickFirst(asn);
+  const label = pickFirst(name);
+  if (number && label) {
+    return `${number} (${label})`;
+  }
+  return number || label;
+}
+
+function pickAsn(sources: Array<ScamalyticsIpSource | null | undefined>) {
+  for (const source of sources) {
+    if (!source) continue;
+    const value = formatAsn(source.asn, source.as_name);
+    if (value) return value;
+  }
+  return null;
+}
+
+function collectTrueFlags(entries: Array<{ label: string; value: boolean | null | undefined }>) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (entry.value === true && !seen.has(entry.label)) {
+      out.push(entry.label);
+      seen.add(entry.label);
+    }
+  }
+  return out.length ? out.join(", ") : null;
 }
 
 function IconCopy() {
@@ -548,6 +635,11 @@ type HostDetailPageProps = {
   mode: HostDetailMode;
 };
 
+type ScamalyticsTarget = {
+  kind: "host" | "ip";
+  value: string;
+};
+
 export function SavedHostDetailPage() {
   const { id } = useParams({ from: "/hosts/$id" });
   return <HostDetailPage hostId={id} mode="saved" />;
@@ -600,7 +692,6 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
   const cfgQuery = useQuery({
     queryKey: ["config"],
     queryFn: getConfig,
-    enabled: isVast,
   });
   const vastQuery = useVastInstances();
   const vastInstanceDetailQuery = useQuery({
@@ -789,27 +880,88 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
   });
 
   const host = isVast ? vastHost : hostQuery.data;
-  const ipInfoTarget = useMemo(() => {
+  const scamalyticsTarget = useMemo<ScamalyticsTarget | null>(() => {
     if (host?.status !== "online") return null;
     if (isVast) {
+      if (!hasValidVastId) return null;
       const publicIp = vastInstanceDetail?.public_ipaddr?.trim();
-      return publicIp || null;
+      return publicIp ? { kind: "ip", value: publicIp } : null;
     }
-    const hostValue = host?.ssh?.host?.trim();
-    return hostValue || null;
-  }, [host?.ssh?.host, host?.status, isVast, vastInstanceDetail?.public_ipaddr]);
-  const ipInfoQuery = useQuery({
-    queryKey: ["ipInfo", ipInfoTarget],
+    const trimmedHostId = hostId.trim();
+    return trimmedHostId ? { kind: "host", value: trimmedHostId } : null;
+  }, [hasValidVastId, host?.status, hostId, isVast, vastInstanceDetail?.public_ipaddr]);
+  const scamalyticsConfig = cfgQuery.data?.scamalytics;
+  const scamalyticsKey = scamalyticsConfig?.api_key?.trim() ?? "";
+  const scamalyticsUser = scamalyticsConfig?.user?.trim() ?? "";
+  const hasScamalyticsKey = scamalyticsKey.length > 0;
+  const scamalyticsEnabled = hasScamalyticsKey && scamalyticsUser.length > 0;
+  const scamalyticsQuery = useQuery({
+    queryKey: ["scamalytics", scamalyticsTarget?.kind, scamalyticsTarget?.value],
     queryFn: async () => {
-      if (!ipInfoTarget) {
-        throw new Error("Missing IP info target");
+      if (!scamalyticsTarget) {
+        throw new Error("Missing Scamalytics target");
       }
-      return await hostApi.ipInfo(ipInfoTarget);
+      if (scamalyticsTarget.kind === "ip") {
+        return await hostApi.scamalyticsInfoForIp(scamalyticsTarget.value);
+      }
+      return await hostApi.scamalyticsInfoForHost(scamalyticsTarget.value);
     },
-    enabled: Boolean(ipInfoTarget),
+    enabled: Boolean(scamalyticsTarget && scamalyticsEnabled),
     staleTime: 10 * 60 * 1000,
   });
-  const ipInfo = ipInfoTarget ? ipInfoQuery.data : null;
+  const scamalyticsInfo = scamalyticsTarget ? scamalyticsQuery.data : null;
+  const scam = scamalyticsInfo?.scamalytics ?? null;
+  const external = scamalyticsInfo?.external_datasources ?? null;
+  const dbip = external?.dbip ?? null;
+  const maxmind = external?.maxmind_geolite2 ?? null;
+  const ip2proxy = external?.ip2proxy ?? null;
+  const ip2proxyLite = external?.ip2proxy_lite ?? null;
+  const firehol = external?.firehol ?? null;
+  const x4bnet = external?.x4bnet ?? null;
+  const google = external?.google ?? null;
+  const scamalyticsStatus = scam?.status ?? null;
+  const scamalyticsStatusError =
+    scamalyticsInfo && (!scam || (scamalyticsStatus && scamalyticsStatus !== "ok"))
+      ? `Scamalytics status: ${scamalyticsStatus ?? "missing"}`
+      : null;
+  const scamalyticsAvailable = Boolean(scam && scamalyticsStatus === "ok");
+  const scamalyticsIp = pickFirst(scam?.ip);
+  const scamalyticsRisk = scam?.scamalytics_risk ?? null;
+  const scamalyticsIsp = scam?.scamalytics_isp ?? null;
+  const scamalyticsOrg = scam?.scamalytics_org ?? null;
+  const scamalyticsIspRisk = scam?.scamalytics_isp_risk ?? null;
+  const scamalyticsScore = formatScore(scam?.scamalytics_score);
+  const scamalyticsIspScore = formatScore(scam?.scamalytics_isp_score);
+  const scamalyticsCountry = formatCountry(
+    pickFirst(dbip?.ip_country_name, maxmind?.ip_country_name, ip2proxyLite?.ip_country_name),
+    pickFirst(dbip?.ip_country_code, maxmind?.ip_country_code, ip2proxyLite?.ip_country_code)
+  );
+  const scamalyticsCity = formatCity(
+    pickFirst(dbip?.ip_city, maxmind?.ip_city, ip2proxyLite?.ip_city),
+    pickFirst(dbip?.ip_state_name, maxmind?.ip_state_name, dbip?.ip_district_name, ip2proxyLite?.ip_district_name)
+  );
+  const scamalyticsAsn = pickAsn([maxmind, ip2proxyLite]);
+  const scamalyticsProxyType = pickFirst(ip2proxy?.proxy_type, ip2proxyLite?.proxy_type);
+  const scamalyticsBlacklist = scam?.is_blacklisted_external ? "Yes" : null;
+  const scamalyticsUrl = scam?.scamalytics_url ?? null;
+  const scamalyticsFlags = collectTrueFlags([
+    { label: "Datacenter", value: scam?.scamalytics_proxy?.is_datacenter },
+    { label: "VPN", value: scam?.scamalytics_proxy?.is_vpn },
+    { label: "iCloud Private Relay", value: scam?.scamalytics_proxy?.is_apple_icloud_private_relay },
+    { label: "AWS", value: scam?.scamalytics_proxy?.is_amazon_aws },
+    { label: "Google", value: scam?.scamalytics_proxy?.is_google },
+    { label: "Proxy", value: firehol?.is_proxy },
+    { label: "Datacenter", value: x4bnet?.is_datacenter },
+    { label: "VPN", value: x4bnet?.is_vpn },
+    { label: "Tor", value: x4bnet?.is_tor },
+    { label: "Spambot", value: x4bnet?.is_blacklisted_spambot },
+    { label: "Opera Mini Bot", value: x4bnet?.is_bot_operamini },
+    { label: "Semrush Bot", value: x4bnet?.is_bot_semrush },
+    { label: "Google", value: google?.is_google_general },
+    { label: "Googlebot", value: google?.is_googlebot },
+    { label: "Special Crawler", value: google?.is_special_crawler },
+    { label: "User Triggered Fetcher", value: google?.is_user_triggered_fetcher },
+  ]);
 
   useEffect(() => {
     if (!isVast || !vastStatusTarget) return;
@@ -1546,99 +1698,129 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                 </CardBody>
               </Card>
 
-              {/* IP Info Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between w-full">
-                    <span className="font-semibold">IP Info</span>
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      onPress={() => ipInfoQuery.refetch()}
-                      isLoading={ipInfoQuery.isFetching}
-                      isDisabled={!ipInfoTarget}
-                    >
-                      Refresh
-                    </Button>
-                  </div>
-                </CardHeader>
-                <Divider />
-                <CardBody className="gap-4">
-                  {host?.status !== "online" ? (
-                    <p className="text-foreground/60">Host is offline. IP info is available when online.</p>
-                  ) : !ipInfoTarget ? (
-                    <p className="text-foreground/60">No public host address available for IP lookup.</p>
-                  ) : ipInfoQuery.isLoading ? (
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {[0, 1, 2, 3, 4, 5].map((idx) => (
-                        <div key={idx} className="space-y-2">
-                          <Skeleton className="h-3 w-20 rounded" />
-                          <Skeleton className="h-4 w-32 rounded" />
-                        </div>
-                      ))}
+              {/* Scamalytics Card */}
+              {hasScamalyticsKey && (
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between w-full">
+                      <span className="font-semibold">Scamalytics</span>
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        onPress={() => scamalyticsQuery.refetch()}
+                        isLoading={scamalyticsQuery.isFetching}
+                        isDisabled={!scamalyticsTarget || !scamalyticsEnabled}
+                      >
+                        Refresh
+                      </Button>
                     </div>
-                  ) : ipInfoQuery.error ? (
-                    <div className="p-3 rounded-lg bg-danger/10 text-danger">
-                      {getErrorMessage(ipInfoQuery.error)}
-                    </div>
-                  ) : ipInfo ? (
-                    <>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <div>
-                          <p className="text-sm text-foreground/60">IP</p>
-                          <p className="font-mono text-sm">{ipInfo.ip ?? "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-foreground/60">Hostname</p>
-                          <p className="text-sm break-all">{ipInfo.hostname ?? "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-foreground/60">Location</p>
-                          <p className="font-mono text-sm">{ipInfo.loc ?? "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-foreground/60">City</p>
-                          <p className="text-sm">{ipInfo.city ?? "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-foreground/60">Region</p>
-                          <p className="text-sm">{ipInfo.region ?? "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-foreground/60">Country</p>
-                          <p className="text-sm">{ipInfo.country ?? "-"}</p>
-                        </div>
-                        <div className="col-span-2 md:col-span-3">
-                          <p className="text-sm text-foreground/60">Organization</p>
-                          <p className="text-sm break-all">{ipInfo.org ?? "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-foreground/60">Timezone</p>
-                          <p className="text-sm">{ipInfo.timezone ?? "-"}</p>
-                        </div>
+                  </CardHeader>
+                  <Divider />
+                  <CardBody className="gap-4">
+                    {host?.status !== "online" ? (
+                      <p className="text-foreground/60">Host is offline. Scamalytics data is available when online.</p>
+                    ) : !scamalyticsTarget ? (
+                      <p className="text-foreground/60">No target available for Scamalytics lookup.</p>
+                    ) : !scamalyticsEnabled ? (
+                      <p className="text-foreground/60">Scamalytics user is missing. Configure it in Settings.</p>
+                    ) : scamalyticsQuery.isLoading ? (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((idx) => (
+                          <div key={idx} className="space-y-2">
+                            <Skeleton className="h-3 w-20 rounded" />
+                            <Skeleton className="h-4 w-32 rounded" />
+                          </div>
+                        ))}
                       </div>
-                      <p className="text-xs text-foreground/50">
-                        Source: ipinfo.io
-                        {ipInfo.readme && (
-                          <>
-                            {" - "}
-                            <a
-                              href={ipInfo.readme}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline"
-                            >
-                              Readme
-                            </a>
-                          </>
-                        )}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-foreground/60">No IP info available.</p>
-                  )}
-                </CardBody>
-              </Card>
+                    ) : scamalyticsQuery.error ? (
+                      <div className="p-3 rounded-lg bg-danger/10 text-danger">
+                        {getErrorMessage(scamalyticsQuery.error)}
+                      </div>
+                    ) : scamalyticsStatusError ? (
+                      <div className="p-3 rounded-lg bg-danger/10 text-danger">
+                        {scamalyticsStatusError}
+                      </div>
+                    ) : scamalyticsAvailable ? (
+                      <>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-sm text-foreground/60">Public IP</p>
+                            <p className="font-mono text-sm">{scamalyticsIp ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">Risk</p>
+                            <p className="text-sm">{scamalyticsRisk ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">Score</p>
+                            <p className="font-mono text-sm">{scamalyticsScore ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">ISP</p>
+                            <p className="text-sm">{scamalyticsIsp ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">Organization</p>
+                            <p className="text-sm">{scamalyticsOrg ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">ISP Score</p>
+                            <p className="font-mono text-sm">{scamalyticsIspScore ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">ISP Risk</p>
+                            <p className="text-sm">{scamalyticsIspRisk ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">Country</p>
+                            <p className="text-sm">{scamalyticsCountry ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">City</p>
+                            <p className="text-sm">{scamalyticsCity ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">ASN</p>
+                            <p className="text-sm break-all">{scamalyticsAsn ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">Proxy Type</p>
+                            <p className="text-sm">{scamalyticsProxyType ?? "-"}</p>
+                          </div>
+                          <div className="md:col-span-3">
+                            <p className="text-sm text-foreground/60">Flags</p>
+                            <p className="text-sm">{scamalyticsFlags ?? "-"}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground/60">Blacklisted</p>
+                            <p className="text-sm">{scamalyticsBlacklist ?? "-"}</p>
+                          </div>
+                          <div className="md:col-span-3">
+                            <p className="text-sm text-foreground/60">Report URL</p>
+                            {scamalyticsUrl ? (
+                              <a
+                                href={scamalyticsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-primary hover:underline break-all"
+                              >
+                                {scamalyticsUrl}
+                              </a>
+                            ) : (
+                              <p className="text-sm">-</p>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-foreground/50">
+                          Source: Scamalytics
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-foreground/60">No Scamalytics data available.</p>
+                    )}
+                  </CardBody>
+                </Card>
+              )}
 
               {/* System Info Card */}
               <Card>
