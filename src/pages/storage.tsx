@@ -1,12 +1,7 @@
 import {
   Card,
   CardBody,
-  Chip,
   Divider,
-  Dropdown,
-  DropdownItem,
-  DropdownMenu,
-  DropdownTrigger,
   Input,
   Modal,
   ModalBody,
@@ -15,7 +10,6 @@ import {
   ModalHeader,
   Select,
   SelectItem,
-  Spinner,
   Switch,
   Tab,
   Tabs,
@@ -24,7 +18,6 @@ import {
 import { Button } from "../components/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect, type ReactNode } from "react";
 import {
   storageApi,
@@ -40,7 +33,7 @@ import { formatPriceWithRates } from "../lib/currency";
 import { AppIcon } from "../components/AppIcon";
 import { PageLayout, PageSection } from "../components/shared/PageLayout";
 import { StatsCard } from "../components/shared/StatsCard";
-import { UnifiedCard, EmptyState, type CardAction, type CardBadge, type CardButton } from "../components/shared/UnifiedCard";
+import { DataTable, CellWithIcon, StatusChip, TagList, ActionButton, type ColumnDef, type RowAction, type Tag } from "../components/shared/DataTable";
 
 // ============================================================
 // Icons
@@ -146,185 +139,157 @@ function getBackendDescription(backend: StorageBackend, hosts?: Host[]): string 
 }
 
 // ============================================================
-// Storage Card Component
+// Storages Table Component
 // ============================================================
 
-function StorageCard({
-  storage,
+function StoragesTable({
+  storages,
   hosts,
-  onDelete,
-  onEdit,
-  usage,
+  isLoading,
+  usageMap,
   usageLoading,
+  onOpenBrowse,
+  onEdit,
+  onDelete,
 }: {
-  storage: Storage;
+  storages: Storage[];
   hosts: Host[];
-  onDelete: () => void;
-  onEdit: () => void;
-  usage?: StorageUsage | null;
-  usageLoading?: boolean;
+  isLoading: boolean;
+  usageMap: Map<string, StorageUsage>;
+  usageLoading: boolean;
+  onOpenBrowse: (storage: Storage) => void;
+  onEdit: (storage: Storage) => void;
+  onDelete: (storage: Storage) => void;
 }) {
-  const navigate = useNavigate();
   const pricingQuery = usePricingSettings();
   const displayCurrency = pricingQuery.data?.display_currency ?? "USD";
   const exchangeRates = pricingQuery.data?.exchange_rates;
   const formatUsd = (value: number, decimals = 2) =>
     formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
-  // Calculate R2 monthly cost (per bucket, no free tier deduction)
-  const isR2 = storage.backend.type === "cloudflare_r2";
-  const isSmbOrSsh = storage.backend.type === "smb" || storage.backend.type === "ssh_remote";
-  const r2MonthlyCost = usage && isR2 ? calculateR2BucketCost(usage.used_gb) : null;
+  const columns: ColumnDef<Storage>[] = [
+    {
+      key: "name",
+      header: "Name",
+      grow: true,
+      minWidth: "180px",
+      nowrap: false, // Allow name/subtitle to wrap if needed
+      sortable: true,
+      render: (storage) => {
+        const icon = getBackendIconNode(storage.backend, storage.icon);
+        return (
+          <CellWithIcon
+            icon={icon}
+            title={storage.name}
+            subtitle={getBackendDescription(storage.backend, hosts)}
+          />
+        );
+      },
+    },
+    {
+      key: "type",
+      header: "Type",
+      sortable: true,
+      render: (storage) => (
+        <StatusChip label={getBackendTypeName(storage.backend)} />
+      ),
+    },
+    {
+      key: "usage",
+      header: "Usage",
+      render: (storage) => {
+        const usage = usageMap.get(storage.id);
+        const isR2 = storage.backend.type === "cloudflare_r2";
+        const isSmbOrSsh = storage.backend.type === "smb" || storage.backend.type === "ssh_remote";
 
-  const openBrowse = () => {
-    navigate({ to: "/storage/$id", params: { id: storage.id } });
-  };
-
-  async function handleTest() {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const result = await storageApi.test(storage.id);
-      let message = result.message;
-      if (!result.success && message.includes("{")) {
-        try {
-          const jsonMatch = message.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            message = parsed.error || parsed.message || message;
-          }
-        } catch {
-          // Keep original message
+        if (usageLoading && (isR2 || isSmbOrSsh)) {
+          return <span className="text-foreground/40">...</span>;
         }
-      }
-      setTestResult({ success: result.success, message });
-    } catch (e) {
-      const errStr = String(e);
-      let message = errStr;
-      if (errStr.includes("message")) {
-        try {
-          const parsed = JSON.parse(errStr);
-          message = parsed.message || errStr;
-        } catch {
-          // Keep original
+        if (!usage) {
+          return <span className="text-foreground/40">-</span>;
         }
-      }
-      setTestResult({ success: false, message });
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  // Build icon
-  const icon = getBackendIconNode(storage.backend, storage.icon);
-
-  // Build type badge
-  const typeBadge: CardBadge = {
-    label: getBackendTypeName(storage.backend),
-  };
-
-  // Build tags
-  const tags: CardBadge[] = [];
-
-  if (usageLoading && (isR2 || isSmbOrSsh)) {
-    tags.push({ label: "Loading..." });
-  } else if (usage) {
-    if (isR2) {
-      tags.push({ label: `${usage.used_gb.toFixed(2)} GB` });
-      if (r2MonthlyCost != null) {
-        tags.push({ label: `${formatUsd(r2MonthlyCost, 2)}/mo`, color: "warning" });
-      }
-    } else if (isSmbOrSsh && usage.total_gb != null) {
-      tags.push({ label: `${usage.used_gb.toFixed(1)} / ${usage.total_gb.toFixed(1)} GB` });
-    }
-  }
-
-  if (storage.readonly) {
-    tags.push({ label: "Read-only", color: "warning" });
-  }
-
-  // Build actions
-  const actions: CardAction[] = [
-    { key: "test", label: "Test Connection", onPress: handleTest, isDisabled: testing },
-    { key: "edit", label: "Edit", onPress: onEdit },
-    { key: "delete", label: "Delete", color: "danger", onPress: () => setShowDeleteConfirm(true) },
+        if (isR2) {
+          return <span>{usage.used_gb.toFixed(2)} GB</span>;
+        }
+        if (isSmbOrSsh && usage.total_gb != null) {
+          return <span>{usage.used_gb.toFixed(1)} / {usage.total_gb.toFixed(1)} GB</span>;
+        }
+        return <span className="text-foreground/40">-</span>;
+      },
+    },
+    {
+      key: "cost",
+      header: "Cost",
+      render: (storage) => {
+        if (storage.backend.type !== "cloudflare_r2") {
+          return <span className="text-foreground/40">-</span>;
+        }
+        const usage = usageMap.get(storage.id);
+        if (!usage) {
+          return <span className="text-foreground/40">-</span>;
+        }
+        const r2MonthlyCost = calculateR2BucketCost(usage.used_gb);
+        return <span className="text-warning font-medium">{formatUsd(r2MonthlyCost)}/mo</span>;
+      },
+    },
+    {
+      key: "flags",
+      header: "",
+      render: (storage) => {
+        if (storage.readonly) {
+          return <StatusChip label="Read-only" color="warning" />;
+        }
+        return null;
+      },
+    },
+    {
+      key: "lastAccessed",
+      header: "Last Accessed",
+      sortable: true,
+      render: (storage) => {
+        if (!storage.last_accessed_at) {
+          return <span className="text-foreground/40">Never</span>;
+        }
+        return (
+          <span className="text-foreground/60 text-xs">
+            {new Date(storage.last_accessed_at).toLocaleString()}
+          </span>
+        );
+      },
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (storage) => (
+        <div className="flex justify-end">
+          <ActionButton
+            label="Browse"
+            color="primary"
+            variant="flat"
+            onPress={() => onOpenBrowse(storage)}
+          />
+        </div>
+      ),
+    },
   ];
 
-  // Test result display
-  const testResultContent = testResult && (
-    <div className={`text-xs ${testResult.success ? "text-success" : "text-danger"}`}>
-      <div className="flex items-center gap-2">
-        {testResult.success ? <IconCheck /> : <IconX />}
-        <span>{testResult.success ? "Connected" : "Connection failed"}</span>
-      </div>
-      {!testResult.success && (
-        <pre className="mt-1 p-2 bg-danger/10 rounded text-[10px] whitespace-pre-wrap break-all max-h-24 overflow-auto">
-          {testResult.message}
-        </pre>
-      )}
-    </div>
-  );
+  const actions: RowAction<Storage>[] = [
+    { key: "test", label: "Test Connection", onPress: () => {} },
+    { key: "edit", label: "Edit", onPress: onEdit },
+    { key: "delete", label: "Delete", color: "danger", onPress: onDelete },
+  ];
 
   return (
-    <>
-      <UnifiedCard
-        icon={icon}
-        title={storage.name}
-        type={typeBadge}
-        actions={actions}
-        onPress={openBrowse}
-        actionGuardAttr="data-storage-card-action"
-        subtitle={getBackendDescription(storage.backend, hosts)}
-        tags={tags.length > 0 ? tags : undefined}
-        footer={storage.last_accessed_at
-          ? `Last accessed: ${new Date(storage.last_accessed_at).toLocaleString()}`
-          : "Never accessed"}
-      >
-        {testResultContent}
-      </UnifiedCard>
-
-      {/* Delete Confirmation Modal */}
-      <Modal isOpen={showDeleteConfirm} onOpenChange={setShowDeleteConfirm} isDismissable={true} size="sm">
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader>Delete Storage</ModalHeader>
-              <ModalBody>
-                <p>
-                  Are you sure you want to delete <strong>{storage.name}</strong>?
-                </p>
-                <p className="text-sm text-foreground/60">
-                  This action cannot be undone.
-                </p>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="flat" onPress={onClose}>
-                  Cancel
-                </Button>
-                <Button
-                  color="danger"
-                  isLoading={deleting}
-                  onPress={() => {
-                    setDeleting(true);
-                    onDelete();
-                    setTimeout(() => {
-                      setDeleting(false);
-                      onClose();
-                    }, 100);
-                  }}
-                >
-                  Delete
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-    </>
+    <DataTable
+      data={storages}
+      columns={columns}
+      rowKey={(storage) => storage.id}
+      actions={actions}
+      onRowClick={onOpenBrowse}
+      isLoading={isLoading}
+      emptyContent="No storage locations configured. Add a storage location to get started."
+      compact
+    />
   );
 }
 
@@ -1085,6 +1050,7 @@ function EditStorageModal({
 // ============================================================
 
 export function StoragePage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const storagesQuery = useStorages();
   const hostsQuery = useHosts();
@@ -1233,46 +1199,20 @@ export function StoragePage() {
         />
       </div>
 
-      {/* Storage Grid */}
+      {/* Storage Table */}
       <PageSection>
-        {storagesQuery.isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Spinner size="lg" />
-          </div>
-        ) : storages.length === 0 ? (
-          <EmptyState
-            title="No storage locations configured"
-            description="Add a storage location to get started"
-            action={{
-              label: "Add your first storage",
-              onPress: addModal.onOpen,
-            }}
-          />
-        ) : (
-          <div className="doppio-card-grid">
-            <AnimatePresence>
-              {storages.map((storage, index) => (
-                <motion.div
-                  key={storage.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ delay: index * 0.05 }}
-                  className="h-full"
-                >
-                  <StorageCard
-                    storage={storage}
-                    hosts={hosts}
-                    onDelete={() => deleteMutation.mutate(storage.id)}
-                    onEdit={() => handleEdit(storage)}
-                    usage={storageUsages.get(storage.id)}
-                    usageLoading={usageLoading && (storage.backend.type === "cloudflare_r2" || storage.backend.type === "smb" || storage.backend.type === "ssh_remote")}
-                  />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
+        <StoragesTable
+          storages={storages}
+          hosts={hosts}
+          isLoading={storagesQuery.isLoading}
+          usageMap={storageUsages}
+          usageLoading={usageLoading}
+          onOpenBrowse={(storage) => {
+            navigate({ to: "/storage/$id", params: { id: storage.id } });
+          }}
+          onEdit={handleEdit}
+          onDelete={(storage) => deleteMutation.mutate(storage.id)}
+        />
       </PageSection>
 
       {/* Add Storage Modal */}

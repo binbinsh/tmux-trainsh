@@ -1,21 +1,11 @@
 import {
-  Card,
-  CardBody,
-  CardHeader,
   Chip,
-  Divider,
-  Dropdown,
-  DropdownItem,
-  DropdownMenu,
-  DropdownTrigger,
   Input,
   Modal,
   ModalBody,
   ModalContent,
   ModalFooter,
   ModalHeader,
-  Progress,
-  Spinner,
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
@@ -44,7 +34,7 @@ import type {
 import { vastInstanceToHostCandidate } from "../lib/vast-host";
 import { PageLayout, PageSection } from "../components/shared/PageLayout";
 import { StatsCard } from "../components/shared/StatsCard";
-import { UnifiedCard, EmptyState, type CardAction, type CardBadge, type CardButton } from "../components/shared/UnifiedCard";
+import { DataTable, CellWithIcon, StatusChip, ActionButton, type ColumnDef, type RowAction } from "../components/shared/DataTable";
 import { getStatusBadgeColor } from "../components/shared/StatusBadge";
 
 // Icons
@@ -130,90 +120,197 @@ function getStatusLabel(status: InteractiveStatus): string {
   }
 }
 
-function RecipeCard({ recipe, onRun, onEdit, onDuplicate, onDelete }: {
-  recipe: RecipeSummary;
-  onRun: () => void;
-  onEdit: () => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
+// ============================================================
+// Recipes Table Component
+// ============================================================
+
+function RecipesTable({
+  recipes,
+  isLoading,
+  onRun,
+  onEdit,
+  onDuplicate,
+  onDelete,
+}: {
+  recipes: RecipeSummary[];
+  isLoading: boolean;
+  onRun: (recipe: RecipeSummary) => void;
+  onEdit: (recipe: RecipeSummary) => void;
+  onDuplicate: (recipe: RecipeSummary) => void;
+  onDelete: (recipe: RecipeSummary) => void;
 }) {
-  // Build actions
-  const actions: CardAction[] = [
+  const columns: ColumnDef<RecipeSummary>[] = [
+    {
+      key: "name",
+      header: "Name",
+      grow: true,
+      minWidth: "180px",
+      nowrap: false,
+      sortable: true,
+      render: (recipe) => (
+        <CellWithIcon
+          icon={<span className="text-lg">📜</span>}
+          title={recipe.name}
+          subtitle={recipe.description || undefined}
+        />
+      ),
+    },
+    {
+      key: "version",
+      header: "Version",
+      render: (recipe) => <span className="text-foreground/60">v{recipe.version}</span>,
+    },
+    {
+      key: "steps",
+      header: "Steps",
+      render: (recipe) => <span>{recipe.step_count}</span>,
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (recipe) => (
+        <div className="flex justify-end">
+          <ActionButton
+            label="Run"
+            icon={<IconPlay />}
+            color="primary"
+            variant="flat"
+            onPress={() => onRun(recipe)}
+          />
+        </div>
+      ),
+    },
+  ];
+
+  const actions: RowAction<RecipeSummary>[] = [
     { key: "edit", label: "Edit", onPress: onEdit },
     { key: "duplicate", label: "Duplicate", onPress: onDuplicate },
     { key: "delete", label: "Delete", color: "danger", onPress: onDelete },
   ];
 
-  // Build buttons
-  const buttons: CardButton[] = [
+  return (
+    <DataTable
+      data={recipes}
+      columns={columns}
+      rowKey={(recipe) => recipe.path}
+      actions={actions}
+      onRowClick={onEdit}
+      isLoading={isLoading}
+      emptyContent="No recipes yet. Create your first recipe to automate training workflows."
+      compact
+    />
+  );
+}
+
+// ============================================================
+// Executions Table Component
+// ============================================================
+
+function ExecutionsTable({
+  executions,
+  isLoading,
+  onClick,
+  showProgress = true,
+}: {
+  executions: InteractiveExecution[];
+  isLoading?: boolean;
+  onClick: (execution: InteractiveExecution) => void;
+  showProgress?: boolean;
+}) {
+  const columns: ColumnDef<InteractiveExecution>[] = [
     {
-      label: "Run",
-      color: "primary",
-      variant: "flat",
-      startContent: <IconPlay />,
-      onPress: onRun,
+      key: "name",
+      header: "Recipe",
+      grow: true,
+      minWidth: "150px",
+      nowrap: false,
+      render: (exec) => (
+        <CellWithIcon
+          icon={<span className="text-lg">⚡</span>}
+          title={exec.recipe_name}
+        />
+      ),
     },
     {
-      label: "Edit",
-      variant: "flat",
-      onPress: onEdit,
+      key: "status",
+      header: "Status",
+      render: (exec) => {
+        const badge = getStatusBadgeColor(exec.status);
+        return <StatusChip label={badge.label} color={badge.color} />;
+      },
+    },
+    {
+      key: "progress",
+      header: "Progress",
+      minWidth: "100px",
+      render: (exec) => {
+        const stepsCompleted = exec.steps.filter((s) => s.status === "success").length;
+        const stepsFailed = exec.steps.filter((s) => s.status === "failed").length;
+        const stepsTotal = exec.steps.length;
+        const progressPct = stepsTotal > 0
+          ? Math.round(((stepsCompleted + stepsFailed) / stepsTotal) * 100)
+          : 0;
+        return (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1.5 bg-content3 rounded-full overflow-hidden min-w-[60px]">
+              <div
+                className={`h-full rounded-full ${exec.status === "failed" ? "bg-danger" : "bg-primary"}`}
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <span className="text-xs text-foreground/60">{progressPct}%</span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "steps",
+      header: "Steps",
+      render: (exec) => {
+        const stepsCompleted = exec.steps.filter((s) => s.status === "success").length;
+        const stepsFailed = exec.steps.filter((s) => s.status === "failed").length;
+        const stepsTotal = exec.steps.length;
+        if (stepsFailed > 0) {
+          return <span className="text-danger">{stepsCompleted}/{stepsTotal} ({stepsFailed} failed)</span>;
+        }
+        return <span>{stepsCompleted}/{stepsTotal}</span>;
+      },
+    },
+    {
+      key: "createdAt",
+      header: "Started",
+      sortable: true,
+      render: (exec) => (
+        <span className="text-foreground/60 text-xs">
+          {new Date(exec.created_at).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (exec) => (
+        <div className="flex justify-end">
+          <ActionButton
+            label="Open"
+            variant="flat"
+            onPress={() => onClick(exec)}
+          />
+        </div>
+      ),
     },
   ];
 
   return (
-    <UnifiedCard
-      icon={<span className="text-2xl">📜</span>}
-      title={recipe.name}
-      actions={actions}
-      onPress={onEdit}
-      actionGuardAttr="data-recipe-card-action"
-      subtitle={`v${recipe.version} • ${recipe.step_count} steps`}
-      buttons={buttons}
-    >
-      {recipe.description && (
-        <p className="text-sm text-foreground/70 line-clamp-2" title={recipe.description}>
-          {recipe.description}
-        </p>
-      )}
-    </UnifiedCard>
-  );
-}
-
-function ExecutionCard({ execution, onClick }: {
-  execution: InteractiveExecution;
-  onClick: () => void;
-}) {
-  const stepsCompleted = execution.steps.filter((s) => s.status === "success").length;
-  const stepsFailed = execution.steps.filter((s) => s.status === "failed").length;
-  const stepsTotal = execution.steps.length;
-  const progress = stepsTotal > 0
-    ? ((stepsCompleted + stepsFailed) / stepsTotal) * 100
-    : 0;
-
-  // Build status badge
-  const statusBadge = getStatusBadgeColor(execution.status);
-
-  // Build progress info display
-  const progressText = stepsFailed > 0
-    ? `${stepsCompleted}/${stepsTotal} steps (${stepsFailed} failed)`
-    : `${stepsCompleted}/${stepsTotal} steps`;
-
-  return (
-    <UnifiedCard
-      icon={<span className="text-xl">⚡</span>}
-      title={execution.recipe_name}
-      status={{ label: statusBadge.label, color: statusBadge.color }}
-      onPress={onClick}
-      subtitle={progressText}
-      footer={new Date(execution.created_at).toLocaleString()}
-    >
-      <Progress
-        size="sm"
-        value={progress}
-        color={execution.status === "failed" ? "danger" : "primary"}
-        className="mb-1"
-      />
-    </UnifiedCard>
+    <DataTable
+      data={executions}
+      columns={columns}
+      rowKey={(exec) => exec.id}
+      onRowClick={onClick}
+      isLoading={isLoading}
+      emptyContent="No executions yet"
+      compact
+    />
   );
 }
 
@@ -514,62 +611,32 @@ export function RecipesPage() {
             </span>
           }
         >
-          <div className="doppio-card-grid-2">
-            {activeExecutions.map(exec => (
-              <ExecutionCard
-                key={exec.id}
-                execution={exec}
-                onClick={() => handleExecutionClick(exec)}
-              />
-            ))}
-          </div>
+          <ExecutionsTable
+            executions={activeExecutions}
+            onClick={handleExecutionClick}
+          />
         </PageSection>
       )}
 
       {/* Recipes */}
       <PageSection title="My Recipes">
-        {recipesQuery.isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Spinner size="lg" />
-          </div>
-        ) : recipes.length === 0 ? (
-          <EmptyState
-            icon={<IconDocument />}
-            title="No recipes yet"
-            description="Create your first recipe to automate training workflows"
-            action={{
-              label: "Create Recipe",
-              onPress: onOpen,
-            }}
-          />
-        ) : (
-          <div className="doppio-card-grid">
-            {recipes.map(recipe => (
-              <RecipeCard
-                key={recipe.path}
-                recipe={recipe}
-                onRun={() => handleRunClick(recipe.path)}
-                onEdit={() => handleEdit(recipe.path)}
-                onDuplicate={() => handleDuplicate(recipe.path, recipe.name)}
-                onDelete={() => handleDeleteClick(recipe.path)}
-              />
-            ))}
-          </div>
-        )}
+        <RecipesTable
+          recipes={recipes}
+          isLoading={recipesQuery.isLoading}
+          onRun={(recipe) => handleRunClick(recipe.path)}
+          onEdit={(recipe) => handleEdit(recipe.path)}
+          onDuplicate={(recipe) => handleDuplicate(recipe.path, recipe.name)}
+          onDelete={(recipe) => handleDeleteClick(recipe.path)}
+        />
       </PageSection>
 
       {/* Recent Executions */}
       {recentExecutions.length > 0 && (
         <PageSection title="Recent Runs">
-          <div className="doppio-card-grid">
-            {recentExecutions.map(exec => (
-              <ExecutionCard
-                key={exec.id}
-                execution={exec}
-                onClick={() => handleExecutionClick(exec)}
-              />
-            ))}
-          </div>
+          <ExecutionsTable
+            executions={recentExecutions}
+            onClick={handleExecutionClick}
+          />
         </PageSection>
       )}
       
