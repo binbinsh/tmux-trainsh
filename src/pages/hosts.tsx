@@ -37,10 +37,11 @@ import {
   sshPublicKey,
 } from "../lib/tauri-api";
 import type { Host, HostConfig, HostType, VastInstance, ColabPricingResult, ColabGpuHourlyPrice, Currency, ExchangeRates } from "../lib/types";
-import { StatusBadge } from "../components/shared/StatusBadge";
+import { StatusBadge, getStatusBadgeColor } from "../components/shared/StatusBadge";
 import { StatsCard } from "../components/shared/StatsCard";
 import { PageLayout, PageSection } from "../components/shared/PageLayout";
 import { AppIcon } from "../components/AppIcon";
+import { UnifiedCard, type CardAction, type CardBadge, type CardButton } from "../components/shared/UnifiedCard";
 import { formatPriceWithRates } from "../lib/currency";
 import { open } from "@tauri-apps/plugin-shell";
 
@@ -771,12 +772,12 @@ function HostCard({
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
   const navigate = useNavigate();
   const [copiedSsh, setCopiedSsh] = useState(false);
-  
+
   const handleConfirmDelete = () => {
     onDelete();
     onDeleteClose();
   };
-  
+
   const hostIcon = host.type === "vast" ? "vast" : host.type === "colab" ? "colab" : "host";
   const openDetails = () => {
     navigate({ to: "/hosts/$id", params: { id: host.id } });
@@ -791,143 +792,86 @@ function HostCard({
   const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : null;
   const canConnect = Boolean(host.ssh);
 
+  // Build status badge
+  const statusBadge = getStatusBadgeColor(host.status);
+
+  // Build tags
+  const tags: CardBadge[] = [];
+  for (const gpu of gpuCounts) {
+    tags.push({ label: `${gpu.count}x ${getGpuShortName(gpu.name)}` });
+  }
+  if (host.type === "colab") {
+    if (colabPricingLoading) {
+      tags.push({ label: "Loading..." });
+    } else if (!hasColabGpuInfo) {
+      tags.push({ label: "GPU unknown" });
+    } else if (colabHourlyUsd != null) {
+      tags.push({ label: `${formatUsd(colabHourlyUsd)}/hr`, color: "warning" });
+    } else if (hasColabPricing) {
+      tags.push({ label: "No matching GPU price" });
+    } else {
+      tags.push({ label: "Pricing unavailable" });
+    }
+  }
+
+  // Build actions
+  const actions: CardAction[] = [
+    { key: "test", label: "Test Connection", onPress: () => {} },
+    { key: "edit", label: "Edit", onPress: () => {} },
+    { key: "delete", label: "Delete", color: "danger", onPress: onDeleteOpen },
+  ];
+
+  // Build buttons
+  const buttons: CardButton[] = [
+    {
+      label: "Connect",
+      color: "primary",
+      variant: "flat",
+      startContent: <IconTerminal />,
+      onPress: onConnect,
+      isDisabled: !canConnect,
+    },
+  ];
+
+  // Subtitle with copy button
+  const subtitle = sshAddress ? (
+    <div className="flex items-center gap-2">
+      <span className="truncate">{sshAddress}</span>
+      <Button
+        isIconOnly
+        size="sm"
+        variant="light"
+        className="shrink-0"
+        onPress={async () => {
+          await copyText(sshAddress);
+          setCopiedSsh(true);
+          setTimeout(() => setCopiedSsh(false), 1200);
+        }}
+      >
+        {copiedSsh ? <IconCheck /> : <IconCopy />}
+      </Button>
+    </div>
+  ) : (
+    <span className="text-foreground/40">SSH not configured</span>
+  );
+
   return (
     <>
-      <Card
-        as="div"
-        isPressable
-        disableAnimation
-        disableRipple
-        onPress={(event) => {
-          if (event.target.closest("[data-host-card-action]")) {
-            return;
-          }
-          openDetails();
-        }}
-        className="doppio-card-interactive h-full data-[pressed=true]:scale-100"
-      >
-        <CardBody className="p-4 flex flex-col gap-3">
-          {/* Header: Icon, Name, Status, Actions */}
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-start gap-2 min-w-0 flex-1">
-              <AppIcon name={hostIcon} className="w-6 h-6 shrink-0 mt-0.5" alt={`${host.type} icon`} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-semibold break-words">{host.name}</h3>
-                  <StatusBadge status={host.status} size="sm" />
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-1 shrink-0" data-host-card-action>
-              <Dropdown>
-                <DropdownTrigger>
-                  <Button isIconOnly size="sm" variant="light">
-                    <IconEllipsis />
-                  </Button>
-                </DropdownTrigger>
-                <DropdownMenu>
-                  <DropdownItem key="test">Test Connection</DropdownItem>
-                  <DropdownItem key="edit">Edit</DropdownItem>
-                  <DropdownItem
-                    key="delete"
-                    className="text-danger"
-                    color="danger"
-                    onPress={onDeleteOpen}
-                  >
-                    Delete
-                  </DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
-            </div>
-          </div>
+      <UnifiedCard
+        icon={<AppIcon name={hostIcon} className="w-6 h-6" alt={`${host.type} icon`} />}
+        title={host.name}
+        status={{ label: statusBadge.label, color: statusBadge.color }}
+        actions={actions}
+        onPress={openDetails}
+        actionGuardAttr="data-host-card-action"
+        subtitle={subtitle}
+        tags={tags.length > 0 ? tags : undefined}
+        buttons={buttons}
+        footer={host.last_seen_at
+          ? `Last seen: ${new Date(host.last_seen_at).toLocaleDateString()}`
+          : "Never seen"}
+      />
 
-          {/* SSH address */}
-          {sshAddress && (
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-mono text-foreground/50 whitespace-nowrap overflow-hidden text-ellipsis select-text">
-                {sshAddress}
-              </p>
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                onPress={async () => {
-                  await copyText(sshAddress);
-                  setCopiedSsh(true);
-                  setTimeout(() => setCopiedSsh(false), 1200);
-                }}
-              >
-                {copiedSsh ? <IconCheck /> : <IconCopy />}
-              </Button>
-            </div>
-          )}
-
-          {/* GPU + pricing pills */}
-          {(gpuCounts.length > 0 || host.type === "colab") && (
-            <div className="flex flex-wrap gap-2">
-              {gpuCounts.map((gpu) => (
-                <Chip key={gpu.name} size="sm" variant="flat" color="default">
-                  {gpu.count}x {getGpuShortName(gpu.name)}
-                </Chip>
-              ))}
-              {host.type === "colab" && (
-                <>
-                  {colabPricingLoading ? (
-                    <Chip size="sm" variant="flat" color="default">
-                      <span className="flex items-center gap-1">
-                        <Spinner size="sm" className="w-3 h-3" /> Loading...
-                      </span>
-                    </Chip>
-                  ) : !hasColabGpuInfo ? (
-                    <Chip size="sm" variant="flat" color="default">
-                      GPU unknown
-                    </Chip>
-                  ) : colabHourlyUsd != null ? (
-                    <Chip size="sm" variant="flat" color="warning">
-                      {formatUsd(colabHourlyUsd) + "/hr"}
-                    </Chip>
-                  ) : hasColabPricing ? (
-                    <Chip size="sm" variant="flat" color="default">
-                      No matching GPU price
-                    </Chip>
-                  ) : (
-                    <Chip size="sm" variant="flat" color="default">
-                      Pricing unavailable
-                    </Chip>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Quick connect */}
-          <div className="flex items-center gap-2" data-host-card-action>
-            <Button
-              size="sm"
-              variant="flat"
-              startContent={<IconTerminal />}
-              onPress={onConnect}
-              isDisabled={!canConnect}
-            >
-              Connect
-            </Button>
-            {!canConnect && (
-              <span className="text-xs text-foreground/40">SSH not configured</span>
-            )}
-          </div>
-
-          {/* Spacer to push last seen to bottom */}
-          <div className="flex-1" />
-
-          {/* Last seen */}
-          <p className="text-xs text-foreground/40">
-            {host.last_seen_at
-              ? `Last seen: ${new Date(host.last_seen_at).toLocaleDateString()}`
-              : "Never seen"}
-          </p>
-        </CardBody>
-      </Card>
-    
       {/* Delete Confirmation Modal */}
       <Modal isOpen={isDeleteOpen} onClose={onDeleteClose}>
         <ModalContent>
@@ -1027,124 +971,78 @@ function VastInstanceCard({
       : null;
   const canConnect = Boolean(sshAddress);
 
+  // Build status badge
+  const statusBadge = getStatusBadgeColor(badgeStatus);
+
+  // Build tags
+  const tags: CardBadge[] = [];
+  if (gpuLabel) {
+    tags.push({ label: gpuLabel });
+  }
+  if (totalPerHour != null) {
+    tags.push({ label: `${formatUsd(totalPerHour, 3)}/hr`, color: "warning" });
+  }
+  if (uploadPerTb != null) {
+    tags.push({ label: `↑ ${formatUsd(uploadPerTb, 3)}/TB` });
+  }
+  if (downloadPerTb != null) {
+    tags.push({ label: `↓ ${formatUsd(downloadPerTb, 3)}/TB` });
+  }
+
+  // Build actions
+  const actions: CardAction[] = [
+    { key: "start", label: "Start", onPress: onStart, isDisabled: isStarting || !canStart },
+    { key: "stop", label: "Stop", onPress: onStop, isDisabled: isStopping || !canStop },
+    { key: "label", label: "Set Label", onPress: onLabel },
+    { key: "destroy", label: "Destroy", color: "danger", onPress: onDestroy },
+  ];
+
+  // Build buttons
+  const buttons: CardButton[] = [
+    {
+      label: "Connect",
+      color: "primary",
+      variant: "flat",
+      startContent: <IconTerminal />,
+      onPress: onConnect,
+      isDisabled: !canConnect,
+    },
+  ];
+
+  // Subtitle with copy button
+  const subtitle = sshAddress ? (
+    <div className="flex items-center gap-2">
+      <span className="truncate">{sshAddress}</span>
+      <Button
+        isIconOnly
+        size="sm"
+        variant="light"
+        className="shrink-0"
+        onPress={async () => {
+          await copyText(sshAddress);
+          setCopiedSsh(true);
+          setTimeout(() => setCopiedSsh(false), 1200);
+        }}
+      >
+        {copiedSsh ? <IconCheck /> : <IconCopy />}
+      </Button>
+    </div>
+  ) : (
+    <span className="text-foreground/40">SSH not ready</span>
+  );
+
   return (
-    <Card
-      isPressable
-      disableAnimation
-      disableRipple
-      onPress={(event) => {
-        if (event.target.closest("[data-vast-card-action]")) {
-          return;
-        }
-        onOpenDetails();
-      }}
-      className="doppio-card-interactive h-full w-full data-[pressed=true]:scale-100"
-    >
-      <CardBody className="p-4 flex flex-col gap-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-start gap-2 min-w-0 flex-1">
-            <AppIcon name="vast" className="w-6 h-6 shrink-0 mt-0.5" alt="Vast.ai icon" />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-semibold break-words">{name}</h3>
-                <StatusBadge status={badgeStatus} size="sm" />
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-1 shrink-0" data-vast-card-action>
-            <Dropdown>
-              <DropdownTrigger>
-                <Button isIconOnly size="sm" variant="light">
-                  <IconEllipsis />
-                </Button>
-              </DropdownTrigger>
-                <DropdownMenu>
-                <DropdownItem key="start" onPress={onStart} isDisabled={isStarting || !canStart}>
-                  Start
-                </DropdownItem>
-                <DropdownItem key="stop" onPress={onStop} isDisabled={isStopping || !canStop}>
-                  Stop
-                </DropdownItem>
-                <DropdownItem key="label" onPress={onLabel}>
-                  Set Label
-                </DropdownItem>
-                <DropdownItem
-                  key="destroy"
-                  className="text-danger"
-                  color="danger"
-                  onPress={onDestroy}
-                >
-                  Destroy
-                </DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
-          </div>
-        </div>
-
-        {sshAddress && (
-          <div className="flex items-center gap-2">
-            <p className="text-xs font-mono text-foreground/50 whitespace-nowrap overflow-hidden text-ellipsis select-text">
-              {sshAddress}
-            </p>
-            <Button
-              isIconOnly
-              size="sm"
-              variant="light"
-              onPress={async () => {
-                await copyText(sshAddress);
-                setCopiedSsh(true);
-                setTimeout(() => setCopiedSsh(false), 1200);
-              }}
-            >
-              {copiedSsh ? <IconCheck /> : <IconCopy />}
-            </Button>
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          {gpuLabel && (
-            <Chip size="sm" variant="flat" color="default">
-              {gpuLabel}
-            </Chip>
-          )}
-          {totalPerHour != null && (
-            <Chip size="sm" variant="flat" color="warning">
-              {formatUsd(totalPerHour, 3)}/hr
-            </Chip>
-          )}
-          {uploadPerTb != null && (
-            <Chip size="sm" variant="flat" color="default">
-              ↑ {formatUsd(uploadPerTb, 3)}/TB
-            </Chip>
-          )}
-          {downloadPerTb != null && (
-            <Chip size="sm" variant="flat" color="default">
-              ↓ {formatUsd(downloadPerTb, 3)}/TB
-            </Chip>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2" data-vast-card-action>
-          <Button
-            size="sm"
-            variant="flat"
-            startContent={<IconTerminal />}
-            onPress={onConnect}
-            isDisabled={!canConnect}
-          >
-            Connect
-          </Button>
-          {!canConnect && (
-            <span className="text-xs text-foreground/40">SSH not ready</span>
-          )}
-        </div>
-
-        <div className="flex-1" />
-
-        <p className="text-xs text-foreground/40">
-          {lastSeenAt ? `Last seen: ${new Date(lastSeenAt).toLocaleDateString()}` : "Last seen: -"}
-        </p>
-      </CardBody>
-    </Card>
+    <UnifiedCard
+      icon={<AppIcon name="vast" className="w-6 h-6" alt="Vast.ai icon" />}
+      title={name}
+      status={{ label: statusBadge.label, color: statusBadge.color }}
+      actions={actions}
+      onPress={onOpenDetails}
+      actionGuardAttr="data-vast-card-action"
+      subtitle={subtitle}
+      tags={tags.length > 0 ? tags : undefined}
+      buttons={buttons}
+      footer={lastSeenAt ? `Last seen: ${new Date(lastSeenAt).toLocaleDateString()}` : "Last seen: -"}
+    />
   );
 }

@@ -37,10 +37,10 @@
     --term-border: rgba(228, 230, 235, 0.8);
     --term-shadow-strong: 0 8px 32px rgba(0, 0, 0, 0.12);
 
-    /* Card shadows */
-    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.04);
-    --doppio-shadow-md: 0 2px 6px 0 rgb(0 0 0 / 0.06);
-    --doppio-shadow-lg: 0 4px 12px 0 rgb(0 0 0 / 0.08);
+    /* Card shadows - refined for depth perception */
+    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.03), 0 1px 3px 0 rgb(0 0 0 / 0.02);
+    --doppio-shadow-md: 0 2px 4px 0 rgb(0 0 0 / 0.04), 0 4px 8px 0 rgb(0 0 0 / 0.03);
+    --doppio-shadow-lg: 0 4px 8px 0 rgb(0 0 0 / 0.05), 0 8px 16px 0 rgb(0 0 0 / 0.04);
   }
 
   /* Dark Mode Tokens */
@@ -72,9 +72,9 @@
     --term-border: rgba(63, 63, 70, 0.8);
     --term-shadow-strong: 0 8px 32px rgba(0, 0, 0, 0.4);
 
-    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.2);
-    --doppio-shadow-md: 0 2px 6px 0 rgb(0 0 0 / 0.3);
-    --doppio-shadow-lg: 0 4px 12px 0 rgb(0 0 0 / 0.4);
+    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.15), 0 1px 3px 0 rgb(0 0 0 / 0.1);
+    --doppio-shadow-md: 0 2px 4px 0 rgb(0 0 0 / 0.2), 0 4px 8px 0 rgb(0 0 0 / 0.15);
+    --doppio-shadow-lg: 0 4px 8px 0 rgb(0 0 0 / 0.25), 0 8px 16px 0 rgb(0 0 0 / 0.2);
   }
 
   /* Keep xterm selection text aligned with the terminal font. */
@@ -113,7 +113,7 @@
 
   /* Stats grid */
   .doppio-stats-grid {
-    @apply grid grid-cols-1 md:grid-cols-4 gap-4 mb-6;
+    @apply grid grid-cols-2 md:grid-cols-4 gap-4 mb-6;
   }
 
   /* Section header */
@@ -130,19 +130,30 @@
     @apply grid grid-cols-1 md:grid-cols-2 gap-4;
   }
 
-  /* Consistent card styling */
+  /* Consistent card styling - refined */
   .doppio-card {
     @apply bg-content1 border border-divider rounded-xl;
     box-shadow: var(--doppio-shadow-sm);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
   }
 
   .doppio-card:hover {
-    @apply border-primary/40;
+    @apply border-primary/30;
     box-shadow: var(--doppio-shadow-md);
   }
 
   .doppio-card-interactive {
-    @apply doppio-card cursor-pointer transition-all duration-200;
+    @apply doppio-card cursor-pointer;
+  }
+
+  .doppio-card-interactive:hover {
+    @apply border-primary/40;
+    box-shadow: var(--doppio-shadow-md);
+  }
+
+  .doppio-card-interactive:active {
+    @apply border-primary/50;
+    box-shadow: var(--doppio-shadow-sm);
   }
 
   /* Stat card */
@@ -174,5 +185,20 @@
 
   .doppio-sidebar-item-active {
     @apply bg-primary/10 text-primary;
+  }
+
+  /* Line clamp utility (for descriptions) */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 }

@@ -16,7 +16,8 @@ import { TerminalHistoryPanel } from "../components/terminal/TerminalHistoryPane
 import { TmuxSessionSelectModal } from "../components/host/TmuxSessionSelectModal";
 import { copyText } from "../lib/clipboard";
 import { AppIcon, type AppIconName } from "../components/AppIcon";
-import { StatusBadge } from "../components/shared/StatusBadge";
+import { StatusBadge, getStatusBadgeColor } from "../components/shared/StatusBadge";
+import { ListItemCard } from "../components/shared/UnifiedCard";
 import type { Host, HostStatus, VastInstance } from "../lib/types";
 
 interface TerminalPaneProps {
@@ -1219,6 +1220,7 @@ export function TerminalPage() {
                         <div className="space-y-3">
                           {filteredHosts.map((host, index) => {
                             const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : null;
+                            const statusConfig = getStatusBadgeColor(host.status);
                             return (
                               <motion.div
                                 key={host.id}
@@ -1226,43 +1228,24 @@ export function TerminalPage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: index * 0.03 }}
                               >
-                                <div className="flex items-center justify-between gap-3 rounded-lg border border-divider bg-content2 p-3 hover:border-primary/40 transition-colors">
-                                  <div className="flex items-start gap-3 min-w-0">
+                                <ListItemCard
+                                  icon={
                                     <AppIcon
                                       name={getHostIconName(host)}
-                                      className="w-8 h-8 shrink-0"
+                                      className="w-8 h-8"
                                       alt={`${host.type} icon`}
                                     />
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <p className="font-medium text-sm">{host.name}</p>
-                                        <StatusBadge status={host.status} size="sm" />
-                                        <Chip size="sm" variant="flat">
-                                          {host.type}
-                                        </Chip>
-                                      </div>
-                                      {sshAddress ? (
-                                        <p className="text-xs font-mono text-foreground/50 truncate">{sshAddress}</p>
-                                      ) : (
-                                        <p className="text-xs text-foreground/50">SSH not configured</p>
-                                      )}
-                                      <p className="text-xs text-foreground/40">
-                                        {host.last_seen_at
-                                          ? `Last seen: ${new Date(host.last_seen_at).toLocaleDateString()}`
-                                          : "Never seen"}
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <Button
-                                    size="sm"
-                                    color="primary"
-                                    variant="flat"
-                                    onPress={() => void handleQuickConnectHost(host)}
-                                    isDisabled={!host.ssh}
-                                  >
-                                    Connect
-                                  </Button>
-                                </div>
+                                  }
+                                  title={host.name}
+                                  status={{ label: statusConfig.label, color: statusConfig.color }}
+                                  type={{ label: host.type }}
+                                  subtitle={sshAddress ?? undefined}
+                                  meta={host.last_seen_at
+                                    ? `Last seen: ${new Date(host.last_seen_at).toLocaleDateString()}`
+                                    : "Never seen"}
+                                  onConnect={() => void handleQuickConnectHost(host)}
+                                  connectDisabled={!host.ssh}
+                                />
                               </motion.div>
                             );
                           })}
@@ -1311,6 +1294,7 @@ export function TerminalPage() {
                             const gpuLabel = inst.gpu_name
                               ? `${inst.num_gpus ?? 1}x ${inst.gpu_name}`
                               : "GPU info pending";
+                            const statusConfig = getStatusBadgeColor(status);
                             return (
                               <motion.div
                                 key={inst.id}
@@ -1318,28 +1302,15 @@ export function TerminalPage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: index * 0.03 }}
                               >
-                                <div className="flex items-center justify-between gap-3 rounded-lg border border-divider bg-content2 p-3 hover:border-primary/40 transition-colors">
-                                  <div className="flex items-start gap-3 min-w-0">
-                                    <AppIcon name="vast" className="w-8 h-8 shrink-0" alt="Vast.ai icon" />
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <p className="font-medium text-sm">{getVastLabel(inst)}</p>
-                                        <StatusBadge status={status} size="sm" />
-                                      </div>
-                                      <p className="text-xs text-foreground/50 truncate">{gpuLabel}</p>
-                                      <p className="text-xs text-foreground/40">Instance #{inst.id}</p>
-                                    </div>
-                                  </div>
-                                  <Button
-                                    size="sm"
-                                    color="primary"
-                                    variant="flat"
-                                    onPress={() => void handleQuickConnectVast(inst)}
-                                    isDisabled={!canConnect}
-                                  >
-                                    Connect
-                                  </Button>
-                                </div>
+                                <ListItemCard
+                                  icon={<AppIcon name="vast" className="w-8 h-8" alt="Vast.ai icon" />}
+                                  title={getVastLabel(inst)}
+                                  status={{ label: statusConfig.label, color: statusConfig.color }}
+                                  subtitle={gpuLabel}
+                                  meta={`Instance #${inst.id}`}
+                                  onConnect={() => void handleQuickConnectVast(inst)}
+                                  connectDisabled={!canConnect}
+                                />
                               </motion.div>
                             );
                           })}

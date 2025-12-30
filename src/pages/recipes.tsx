@@ -44,6 +44,8 @@ import type {
 import { vastInstanceToHostCandidate } from "../lib/vast-host";
 import { PageLayout, PageSection } from "../components/shared/PageLayout";
 import { StatsCard } from "../components/shared/StatsCard";
+import { UnifiedCard, EmptyState, type CardAction, type CardBadge, type CardButton } from "../components/shared/UnifiedCard";
+import { getStatusBadgeColor } from "../components/shared/StatusBadge";
 
 // Icons
 function IconPlus() {
@@ -135,62 +137,45 @@ function RecipeCard({ recipe, onRun, onEdit, onDuplicate, onDelete }: {
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
+  // Build actions
+  const actions: CardAction[] = [
+    { key: "edit", label: "Edit", onPress: onEdit },
+    { key: "duplicate", label: "Duplicate", onPress: onDuplicate },
+    { key: "delete", label: "Delete", color: "danger", onPress: onDelete },
+  ];
+
+  // Build buttons
+  const buttons: CardButton[] = [
+    {
+      label: "Run",
+      color: "primary",
+      variant: "flat",
+      startContent: <IconPlay />,
+      onPress: onRun,
+    },
+    {
+      label: "Edit",
+      variant: "flat",
+      onPress: onEdit,
+    },
+  ];
+
   return (
-    <Card className="doppio-card-interactive h-full">
-      <CardBody className="flex flex-col gap-3 p-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">📜</span>
-            <div>
-              <h3 className="font-semibold">{recipe.name}</h3>
-              <p className="text-xs text-foreground/60">v{recipe.version} • {recipe.step_count} steps</p>
-            </div>
-          </div>
-          <Dropdown>
-            <DropdownTrigger>
-              <Button isIconOnly size="sm" variant="light">
-                <IconDots />
-              </Button>
-            </DropdownTrigger>
-            <DropdownMenu aria-label="Recipe actions">
-              <DropdownItem key="edit" onPress={onEdit}>Edit</DropdownItem>
-              <DropdownItem key="duplicate" onPress={onDuplicate}>Duplicate</DropdownItem>
-              <DropdownItem key="delete" className="text-danger" color="danger" onPress={onDelete}>
-                Delete
-              </DropdownItem>
-            </DropdownMenu>
-          </Dropdown>
-        </div>
-
-        {recipe.description && (
-          <p className="text-sm text-foreground/70 truncate" title={recipe.description}>
-            {recipe.description}
-          </p>
-        )}
-
-        {/* Spacer to push buttons to bottom */}
-        <div className="flex-1" />
-
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            color="primary"
-            variant="flat"
-            startContent={<IconPlay />}
-            onPress={onRun}
-          >
-            Run
-          </Button>
-          <Button
-            size="sm"
-            variant="flat"
-            onPress={onEdit}
-          >
-            Edit
-          </Button>
-        </div>
-      </CardBody>
-    </Card>
+    <UnifiedCard
+      icon={<span className="text-2xl">📜</span>}
+      title={recipe.name}
+      actions={actions}
+      onPress={onEdit}
+      actionGuardAttr="data-recipe-card-action"
+      subtitle={`v${recipe.version} • ${recipe.step_count} steps`}
+      buttons={buttons}
+    >
+      {recipe.description && (
+        <p className="text-sm text-foreground/70 line-clamp-2" title={recipe.description}>
+          {recipe.description}
+        </p>
+      )}
+    </UnifiedCard>
   );
 }
 
@@ -205,36 +190,30 @@ function ExecutionCard({ execution, onClick }: {
     ? ((stepsCompleted + stepsFailed) / stepsTotal) * 100
     : 0;
 
+  // Build status badge
+  const statusBadge = getStatusBadgeColor(execution.status);
+
+  // Build progress info display
+  const progressText = stepsFailed > 0
+    ? `${stepsCompleted}/${stepsTotal} steps (${stepsFailed} failed)`
+    : `${stepsCompleted}/${stepsTotal} steps`;
+
   return (
-    <Card
-      isPressable
+    <UnifiedCard
+      icon={<span className="text-xl">⚡</span>}
+      title={execution.recipe_name}
+      status={{ label: statusBadge.label, color: statusBadge.color }}
       onPress={onClick}
-      className="doppio-card-interactive"
+      subtitle={progressText}
+      footer={new Date(execution.created_at).toLocaleString()}
     >
-      <CardBody className="p-4">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <h4 className="font-medium truncate">{execution.recipe_name}</h4>
-          <Chip size="sm" color={getStatusColor(execution.status)} variant="flat">
-            {getStatusLabel(execution.status)}
-          </Chip>
-        </div>
-        
-        <Progress
-          size="sm"
-          value={progress}
-          color={execution.status === "failed" ? "danger" : "primary"}
-          className="mb-2"
-        />
-        
-        <div className="flex items-center justify-between text-xs text-foreground/60">
-          <span>
-            {stepsCompleted}/{stepsTotal} steps
-            {stepsFailed > 0 && ` (${stepsFailed} failed)`}
-          </span>
-          <span>{new Date(execution.created_at).toLocaleString()}</span>
-        </div>
-      </CardBody>
-    </Card>
+      <Progress
+        size="sm"
+        value={progress}
+        color={execution.status === "failed" ? "danger" : "primary"}
+        className="mb-1"
+      />
+    </UnifiedCard>
   );
 }
 
@@ -554,20 +533,15 @@ export function RecipesPage() {
             <Spinner size="lg" />
           </div>
         ) : recipes.length === 0 ? (
-          <Card className="doppio-card border-dashed">
-            <CardBody className="text-center py-12">
-              <div className="flex justify-center mb-4 text-foreground/40">
-                <IconDocument />
-              </div>
-              <h3 className="font-semibold mb-2">No recipes yet</h3>
-              <p className="text-sm text-foreground/60 mb-4">
-                Create your first recipe to automate training workflows
-              </p>
-              <Button color="primary" onPress={onOpen}>
-                Create Recipe
-              </Button>
-            </CardBody>
-          </Card>
+          <EmptyState
+            icon={<IconDocument />}
+            title="No recipes yet"
+            description="Create your first recipe to automate training workflows"
+            action={{
+              label: "Create Recipe",
+              onPress: onOpen,
+            }}
+          />
         ) : (
           <div className="doppio-card-grid">
             {recipes.map(recipe => (

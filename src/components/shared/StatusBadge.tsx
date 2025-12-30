@@ -38,3 +38,11 @@ export function StatusBadge({ status, size = "sm", variant = "flat" }: StatusBad
     </Chip>
   );
 }
+
+/**
+ * Get the badge configuration for a given status.
+ * Useful when you need to build a CardBadge object.
+ */
+export function getStatusBadgeColor(status: StatusType): { color: "success" | "warning" | "danger" | "default" | "primary" | "secondary"; label: string } {
+  return statusConfig[status] ?? { color: "default", label: String(status) };
+}

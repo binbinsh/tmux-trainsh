@@ -38,6 +38,9 @@ import { calculateR2BucketCost } from "../components/r2-pricing";
 import { GoogleDriveWizard } from "../components/GoogleDriveWizard";
 import { formatPriceWithRates } from "../lib/currency";
 import { AppIcon } from "../components/AppIcon";
+import { PageLayout, PageSection } from "../components/shared/PageLayout";
+import { StatsCard } from "../components/shared/StatsCard";
+import { UnifiedCard, EmptyState, type CardAction, type CardBadge, type CardButton } from "../components/shared/UnifiedCard";
 
 // ============================================================
 // Icons
@@ -171,7 +174,7 @@ function StorageCard({
   const [testing, setTesting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  
+
   // Calculate R2 monthly cost (per bucket, no free tier deduction)
   const isR2 = storage.backend.type === "cloudflare_r2";
   const isSmbOrSsh = storage.backend.type === "smb" || storage.backend.type === "ssh_remote";
@@ -186,11 +189,9 @@ function StorageCard({
     setTestResult(null);
     try {
       const result = await storageApi.test(storage.id);
-      // Try to parse and format the error message
       let message = result.message;
       if (!result.success && message.includes("{")) {
         try {
-          // Extract JSON from the error message
           const jsonMatch = message.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
@@ -203,7 +204,6 @@ function StorageCard({
       setTestResult({ success: result.success, message });
     } catch (e) {
       const errStr = String(e);
-      // Try to extract meaningful error
       let message = errStr;
       if (errStr.includes("message")) {
         try {
@@ -219,126 +219,73 @@ function StorageCard({
     }
   }
 
+  // Build icon
+  const icon = getBackendIconNode(storage.backend, storage.icon);
+
+  // Build type badge
+  const typeBadge: CardBadge = {
+    label: getBackendTypeName(storage.backend),
+  };
+
+  // Build tags
+  const tags: CardBadge[] = [];
+
+  if (usageLoading && (isR2 || isSmbOrSsh)) {
+    tags.push({ label: "Loading..." });
+  } else if (usage) {
+    if (isR2) {
+      tags.push({ label: `${usage.used_gb.toFixed(2)} GB` });
+      if (r2MonthlyCost != null) {
+        tags.push({ label: `${formatUsd(r2MonthlyCost, 2)}/mo`, color: "warning" });
+      }
+    } else if (isSmbOrSsh && usage.total_gb != null) {
+      tags.push({ label: `${usage.used_gb.toFixed(1)} / ${usage.total_gb.toFixed(1)} GB` });
+    }
+  }
+
+  if (storage.readonly) {
+    tags.push({ label: "Read-only", color: "warning" });
+  }
+
+  // Build actions
+  const actions: CardAction[] = [
+    { key: "test", label: "Test Connection", onPress: handleTest, isDisabled: testing },
+    { key: "edit", label: "Edit", onPress: onEdit },
+    { key: "delete", label: "Delete", color: "danger", onPress: () => setShowDeleteConfirm(true) },
+  ];
+
+  // Test result display
+  const testResultContent = testResult && (
+    <div className={`text-xs ${testResult.success ? "text-success" : "text-danger"}`}>
+      <div className="flex items-center gap-2">
+        {testResult.success ? <IconCheck /> : <IconX />}
+        <span>{testResult.success ? "Connected" : "Connection failed"}</span>
+      </div>
+      {!testResult.success && (
+        <pre className="mt-1 p-2 bg-danger/10 rounded text-[10px] whitespace-pre-wrap break-all max-h-24 overflow-auto">
+          {testResult.message}
+        </pre>
+      )}
+    </div>
+  );
+
   return (
-    <Card
-      as="div"
-      isPressable
-      disableAnimation
-      disableRipple
-      onPress={(event) => {
-        if (event.target.closest("[data-storage-card-action]")) {
-          return;
-        }
-        openBrowse();
-      }}
-      className="h-full border border-divider hover:border-primary/50 transition-colors data-[pressed=true]:scale-100"
-    >
-      <CardBody className="flex flex-col gap-3">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            {getBackendIconNode(storage.backend, storage.icon)}
-            <div>
-              <h3 className="font-semibold">{storage.name}</h3>
-              <p className="text-xs text-foreground/60">{getBackendTypeName(storage.backend)}</p>
-            </div>
-          </div>
-          <div data-storage-card-action>
-            <Dropdown>
-              <DropdownTrigger>
-                <Button isIconOnly size="sm" variant="light">
-                  <IconEllipsis />
-                </Button>
-              </DropdownTrigger>
-              <DropdownMenu>
-                <DropdownItem key="test" onPress={handleTest} isDisabled={testing}>
-                  Test Connection
-                </DropdownItem>
-                <DropdownItem key="edit" onPress={onEdit}>
-                  Edit
-                </DropdownItem>
-                <DropdownItem
-                  key="delete"
-                  className="text-danger"
-                  color="danger"
-                  onPress={() => setShowDeleteConfirm(true)}
-                >
-                  Delete
-                </DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
-          </div>
-        </div>
-
-        <p className="text-sm text-foreground/70 truncate" title={getBackendDescription(storage.backend, hosts)}>
-          {getBackendDescription(storage.backend, hosts)}
-        </p>
-
-        {/* Storage Usage & Cost */}
-        {(isR2 || isSmbOrSsh) && (
-          <div className="flex items-center gap-2 flex-wrap">
-            {usageLoading ? (
-              <Chip size="sm" variant="flat" color="default">
-                <span className="flex items-center gap-1">
-                  <Spinner size="sm" className="w-3 h-3" /> Loading...
-                </span>
-              </Chip>
-            ) : usage ? (
-              <>
-                {/* For R2: show used size and cost */}
-                {isR2 && (
-                  <>
-                    <Chip size="sm" variant="flat" color="default">
-                      {usage.used_gb.toFixed(2)} GB
-                    </Chip>
-                    <Chip size="sm" variant="flat" color="warning">
-                      {formatUsd(r2MonthlyCost ?? 0, 2)}/mo
-                    </Chip>
-                  </>
-                )}
-                {/* For SMB/SSH: show used/total */}
-                {isSmbOrSsh && usage.total_gb != null && (
-                  <Chip size="sm" variant="flat" color="default">
-                    {usage.used_gb.toFixed(1)} / {usage.total_gb.toFixed(1)} GB
-                  </Chip>
-                )}
-              </>
-            ) : null}
-          </div>
-        )}
-
-        {storage.readonly && (
-          <Chip size="sm" variant="flat" color="warning">
-            Read-only
-          </Chip>
-        )}
-
-        {testResult && (
-          <div
-            className={`text-xs ${
-              testResult.success ? "text-success" : "text-danger"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              {testResult.success ? <IconCheck /> : <IconX />}
-              <span>{testResult.success ? "Connected" : "Connection failed"}</span>
-            </div>
-            {!testResult.success && (
-              <pre className="mt-1 p-2 bg-danger/10 rounded text-[10px] whitespace-pre-wrap break-all max-h-24 overflow-auto">
-                {testResult.message}
-              </pre>
-            )}
-          </div>
-        )}
-
-        {/* Spacer to push timestamp to bottom */}
-        <div className="flex-1" />
-
-        <p className="text-xs text-foreground/40">
-          {storage.last_accessed_at
-            ? `Last accessed: ${new Date(storage.last_accessed_at).toLocaleString()}`
-            : "Never accessed"}
-        </p>
-      </CardBody>
+    <>
+      <UnifiedCard
+        icon={icon}
+        title={storage.name}
+        type={typeBadge}
+        actions={actions}
+        onPress={openBrowse}
+        actionGuardAttr="data-storage-card-action"
+        subtitle={getBackendDescription(storage.backend, hosts)}
+        tags={tags.length > 0 ? tags : undefined}
+        footer={storage.last_accessed_at
+          ? `Last accessed: ${new Date(storage.last_accessed_at).toLocaleString()}`
+          : "Never accessed"}
+      >
+        {testResultContent}
+      </UnifiedCard>
 
       {/* Delete Confirmation Modal */}
       <Modal isOpen={showDeleteConfirm} onOpenChange={setShowDeleteConfirm} isDismissable={true} size="sm">
@@ -364,7 +311,6 @@ function StorageCard({
                   onPress={() => {
                     setDeleting(true);
                     onDelete();
-                    // Close modal after a short delay to allow mutation to start
                     setTimeout(() => {
                       setDeleting(false);
                       onClose();
@@ -378,7 +324,7 @@ function StorageCard({
           )}
         </ModalContent>
       </Modal>
-    </Card>
+    </>
   );
 }
 
@@ -1248,84 +1194,62 @@ export function StoragePage() {
   ).length;
 
   return (
-    <div className="h-full p-6 overflow-auto">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold">Storage</h1>
-            <p className="text-sm text-foreground/60">
-              Manage local, remote, and cloud storage locations
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="flat"
-              startContent={<IconRefresh />}
-              onPress={handleRefresh}
-              isLoading={storagesQuery.isFetching || usageLoading}
-            >
-              Refresh
-            </Button>
-            <Button color="primary" startContent={<IconPlus />} onPress={addModal.onOpen}>
-              Add Storage
-            </Button>
-          </div>
-        </div>
+    <PageLayout
+      title="Storage"
+      subtitle="Manage local, remote, and cloud storage locations"
+      actions={
+        <>
+          <Button
+            variant="flat"
+            startContent={<IconRefresh />}
+            onPress={handleRefresh}
+            isLoading={storagesQuery.isFetching || usageLoading}
+          >
+            Refresh
+          </Button>
+          <Button color="primary" startContent={<IconPlus />} onPress={addModal.onOpen}>
+            Add Storage
+          </Button>
+        </>
+      }
+    >
+      {/* Stats */}
+      <div className="doppio-stats-grid">
+        <StatsCard title="Total Storages" value={storages.length} />
+        <StatsCard
+          title="Local"
+          value={localCount}
+          icon={<span className="text-lg">💻</span>}
+        />
+        <StatsCard
+          title="Remote"
+          value={remoteCount}
+          icon={<AppIcon name="ssh" className="w-5 h-5" alt="SSH" />}
+        />
+        <StatsCard
+          title="Cloud"
+          value={cloudCount}
+          icon={<AppIcon name="cloudflare" className="w-5 h-5" alt="Cloud" />}
+        />
+      </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Total Storages</p>
-              <p className="text-2xl font-bold">{storages.length}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60 flex items-center gap-2">
-                <span>💻</span>
-                Local
-              </p>
-              <p className="text-2xl font-bold">{localCount}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60 flex items-center gap-2">
-                <AppIcon name="ssh" className="w-4 h-4" alt="SSH" />
-                Remote
-              </p>
-              <p className="text-2xl font-bold">{remoteCount}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60 flex items-center gap-2">
-                <AppIcon name="cloudflare" className="w-4 h-4" alt="Cloud" />
-                Cloud
-              </p>
-              <p className="text-2xl font-bold">{cloudCount}</p>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* Storage Grid */}
+      {/* Storage Grid */}
+      <PageSection>
         {storagesQuery.isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Spinner size="lg" />
           </div>
         ) : storages.length === 0 ? (
-          <Card>
-            <CardBody className="text-center py-12">
-              <p className="text-foreground/60 mb-4">No storage locations configured</p>
-              <Button color="primary" onPress={addModal.onOpen}>
-                Add your first storage
-              </Button>
-            </CardBody>
-          </Card>
+          <EmptyState
+            title="No storage locations configured"
+            description="Add a storage location to get started"
+            action={{
+              label: "Add your first storage",
+              onPress: addModal.onOpen,
+            }}
+          />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="doppio-card-grid">
             <AnimatePresence>
               {storages.map((storage, index) => (
                 <motion.div
@@ -1334,6 +1258,7 @@ export function StoragePage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ delay: index * 0.05 }}
+                  className="h-full"
                 >
                   <StorageCard
                     storage={storage}
@@ -1348,7 +1273,7 @@ export function StoragePage() {
             </AnimatePresence>
           </div>
         )}
-      </div>
+      </PageSection>
 
       {/* Add Storage Modal */}
       <AddStorageModal
@@ -1363,7 +1288,7 @@ export function StoragePage() {
         onSuccess={addModal.onClose}
         setShowGDriveWizard={setShowGDriveWizard}
       />
-      
+
       {/* Google Drive OAuth Wizard */}
       <GoogleDriveWizard
         isOpen={showGDriveWizard}
@@ -1392,6 +1317,6 @@ export function StoragePage() {
           }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }
