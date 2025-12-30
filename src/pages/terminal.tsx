@@ -1,4 +1,4 @@
-import { Card, CardBody, Chip, Input, Kbd, Spinner, Tooltip } from "@nextui-org/react";
+import { Card, CardBody, Chip, Input, Spinner, Tooltip } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
@@ -85,6 +85,25 @@ function getVastStatus(inst: VastInstance): HostStatus {
 function getVastLabel(inst: VastInstance): string {
   return inst.label?.trim() || `vast #${inst.id}`;
 }
+
+// Unified row type for combined DataTable
+type UnifiedHost = {
+  kind: "host";
+  id: string;
+  name: string;
+  subtitle: string | undefined;
+  status: HostStatus;
+  iconName: AppIconName;
+  host: Host;
+} | {
+  kind: "vast";
+  id: string;
+  name: string;
+  subtitle: string;
+  status: HostStatus;
+  iconName: AppIconName;
+  instance: VastInstance;
+};
 
 
 function IconCopy() {
@@ -615,12 +634,38 @@ export function TerminalPage() {
       return getVastLabel(a).localeCompare(getVastLabel(b));
     });
   }, [quickFilter, vastInstances]);
-  const hostCountLabel = hostsQuery.isLoading
+  // Unified list combining hosts and vast instances
+  const unifiedHosts: UnifiedHost[] = useMemo(() => {
+    const hostRows: UnifiedHost[] = filteredHosts.map((host) => ({
+      kind: "host" as const,
+      id: `host-${host.id}`,
+      name: host.name,
+      subtitle: host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : undefined,
+      status: host.status,
+      iconName: getHostIconName(host),
+      host,
+    }));
+    const vastRows: UnifiedHost[] = filteredVastInstances.map((inst) => ({
+      kind: "vast" as const,
+      id: `vast-${inst.id}`,
+      name: getVastLabel(inst),
+      subtitle: inst.gpu_name ? `${inst.num_gpus ?? 1}x ${inst.gpu_name}` : "GPU info pending",
+      status: getVastStatus(inst),
+      iconName: "vast" as AppIconName,
+      instance: inst,
+    }));
+    // Merge and sort by status, then by name
+    return [...hostRows, ...vastRows].sort((a, b) => {
+      const statusDelta = HOST_STATUS_ORDER[a.status] - HOST_STATUS_ORDER[b.status];
+      if (statusDelta !== 0) return statusDelta;
+      return a.name.localeCompare(b.name);
+    });
+  }, [filteredHosts, filteredVastInstances]);
+
+  const isLoadingHosts = hostsQuery.isLoading || vastQuery.isLoading;
+  const hostCountLabel = isLoadingHosts
     ? "Loading..."
-    : `${filteredHosts.length} host${filteredHosts.length === 1 ? "" : "s"}${hasQuickFilter ? " matched" : ""}`;
-  const vastCountLabel = vastQuery.isLoading
-    ? "Loading..."
-    : `${filteredVastInstances.length} instance${filteredVastInstances.length === 1 ? "" : "s"}${hasQuickFilter ? " matched" : ""}`;
+    : `${unifiedHosts.length} host${unifiedHosts.length === 1 ? "" : "s"}${hasQuickFilter ? " matched" : ""}`;
 
   // Search state
   const [showSearch, setShowSearch] = useState(false);
@@ -877,100 +922,63 @@ export function TerminalPage() {
     [connectToVastInstance]
   );
 
-  // DataTable column definitions for hosts
-  const hostColumns: ColumnDef<Host>[] = useMemo(() => [
+  // Handle unified connect
+  const handleUnifiedConnect = useCallback(
+    (row: UnifiedHost) => {
+      if (row.kind === "host") {
+        void handleQuickConnectHost(row.host);
+      } else {
+        void handleQuickConnectVast(row.instance);
+      }
+    },
+    [handleQuickConnectHost, handleQuickConnectVast]
+  );
+
+  // DataTable column definitions for unified hosts
+  const unifiedColumns: ColumnDef<UnifiedHost>[] = useMemo(() => [
     {
       key: "name",
       header: "Name",
       grow: true,
       minWidth: "140px",
       nowrap: false,
-      render: (host) => {
-        const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : undefined;
-        return (
-          <CellWithIcon
-            icon={<AppIcon name={getHostIconName(host)} className="w-5 h-5" alt={host.type} />}
-            title={host.name}
-            subtitle={sshAddress}
-          />
-        );
-      },
-    },
-    {
-      key: "status",
-      header: "Status",
-      render: (host) => {
-        const badge = getStatusBadgeColor(host.status);
-        return <StatusChip label={badge.label} color={badge.color} />;
-      },
-    },
-    {
-      key: "actions",
-      header: "",
-      render: (host) => (
-        <div className="flex justify-end">
-          <ActionButton
-            label="Connect"
-            color="primary"
-            variant="flat"
-            onPress={() => void handleQuickConnectHost(host)}
-            isDisabled={!host.ssh}
-          />
-        </div>
+      render: (row) => (
+        <CellWithIcon
+          icon={<AppIcon name={row.iconName} className="w-5 h-5" alt={row.kind === "host" ? row.host.type : "Vast.ai"} />}
+          title={row.name}
+          subtitle={row.subtitle}
+        />
       ),
     },
-  ], [handleQuickConnectHost]);
-
-  // DataTable column definitions for Vast instances
-  const vastColumns: ColumnDef<VastInstance>[] = useMemo(() => [
-    {
-      key: "name",
-      header: "Instance",
-      grow: true,
-      minWidth: "140px",
-      nowrap: false,
-      render: (inst) => {
-        const gpuLabel = inst.gpu_name
-          ? `${inst.num_gpus ?? 1}x ${inst.gpu_name}`
-          : "GPU info pending";
-        return (
-          <CellWithIcon
-            icon={<AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />}
-            title={getVastLabel(inst)}
-            subtitle={gpuLabel}
-          />
-        );
-      },
-    },
     {
       key: "status",
       header: "Status",
-      render: (inst) => {
-        const status = getVastStatus(inst);
-        const badge = getStatusBadgeColor(status);
+      render: (row) => {
+        const badge = getStatusBadgeColor(row.status);
         return <StatusChip label={badge.label} color={badge.color} />;
       },
     },
     {
       key: "actions",
       header: "",
-      render: (inst) => {
-        const status = getVastStatus(inst);
-        const canConnect = status === "online" || status === "connecting";
+      render: (row) => {
+        const canConnect = row.kind === "host"
+          ? !!row.host.ssh
+          : row.status === "online" || row.status === "connecting";
         return (
           <div className="flex justify-end">
             <ActionButton
               label="Connect"
               color="primary"
               variant="flat"
-              onPress={() => void handleQuickConnectVast(inst)}
+              onPress={() => handleUnifiedConnect(row)}
               isDisabled={!canConnect}
             />
           </div>
         );
       },
     },
-  ], [handleQuickConnectVast]);
+  ], [handleUnifiedConnect]);
 
   // If navigated here with a connect request, start connecting immediately and show the waiting UI here.
   useEffect(() => {
@@ -983,7 +991,7 @@ export function TerminalPage() {
     if (!key || connectHandledRef.current === key) return;
 
     connectHandledRef.current = key;
-    navigate({ to: "/terminal", search: {}, replace: true });
+    navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined }, replace: true });
 
     (async () => {
       try {
@@ -1170,10 +1178,6 @@ export function TerminalPage() {
                     <CloseIcon />
                   </Button>
                 </div>
-                <div className="hidden sm:flex items-center gap-1 text-xs text-foreground/40 ml-2">
-                  <Kbd keys={["command"]}>F</Kbd>
-                  <span>to toggle</span>
-                </div>
               </div>
             </motion.div>
           )}
@@ -1241,96 +1245,44 @@ export function TerminalPage() {
         ) : sessions.length === 0 || workspaceVisible ? (
           <div className="doppio-page">
             <div className="doppio-page-content">
-              {/* Header */}
+              {/* Header with filter and local terminal button */}
               <div className="doppio-page-header">
-                <div>
-                  <h1 className="doppio-page-title">Terminal</h1>
-                  <p className="doppio-page-subtitle">Open local shells or connect to remote hosts</p>
+                <div className="flex items-center gap-4 flex-1">
+                  <div>
+                    <h1 className="doppio-page-title">Terminal</h1>
+                    <p className="text-xs text-foreground/50">{hostCountLabel}</p>
+                  </div>
+                  <Input
+                    labelPlacement="inside"
+                    placeholder="Filter..."
+                    value={quickFilter}
+                    onValueChange={setQuickFilter}
+                    startContent={<SearchIcon className="text-foreground/50" />}
+                    classNames={{
+                      base: "max-w-xs",
+                      inputWrapper: "h-9 bg-content2 border border-divider",
+                      input: "text-sm text-foreground/80",
+                    }}
+                  />
                 </div>
-                <div className="flex gap-2">
-                  <Button color="primary" onPress={() => void openLocalTerminal()}>
-                    Local Terminal
-                  </Button>
-                  <Button as={Link} to="/hosts" variant="flat">
-                    Manage Hosts
-                  </Button>
-                </div>
+                <Button color="primary" onPress={() => void openLocalTerminal()}>
+                  Local Terminal
+                </Button>
               </div>
 
-              {/* Filter */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
-                <Input
-                  labelPlacement="inside"
-                  placeholder="Filter hosts and instances..."
-                  value={quickFilter}
-                  onValueChange={setQuickFilter}
-                  startContent={<SearchIcon className="text-foreground/50" />}
-                  classNames={{
-                    base: "max-w-md",
-                    inputWrapper: "bg-content2 border border-divider rounded-full",
-                    input: "text-sm text-foreground/80",
-                  }}
+              {/* Unified Hosts DataTable */}
+              {(hostsQuery.error || vastQuery.error) ? (
+                <p className="text-sm text-danger">Failed to load hosts. Check your connection or API keys in Settings.</p>
+              ) : (
+                <DataTable
+                  data={unifiedHosts}
+                  columns={unifiedColumns}
+                  rowKey={(row) => row.id}
+                  isLoading={isLoadingHosts}
+                  emptyContent={hasQuickFilter ? "No matching hosts." : "No hosts or instances. Add a host or start a Vast.ai instance."}
+                  compact
                 />
-                <div className="flex items-center gap-2 text-xs text-foreground/50">
-                  <Kbd keys={["command"]}>T</Kbd>
-                  <span>new local</span>
-                  <Kbd keys={["command"]}>F</Kbd>
-                  <span>search terminal</span>
-                </div>
-              </div>
-
-              {/* Host Cards Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 className="text-sm font-semibold">Saved Hosts</h3>
-                      <p className="text-xs text-foreground/50">{hostCountLabel}</p>
-                    </div>
-                    <Button as={Link} to="/hosts" size="sm" variant="flat">
-                      View All
-                    </Button>
-                  </div>
-                  {hostsQuery.error ? (
-                    <p className="text-sm text-danger">Failed to load hosts.</p>
-                  ) : (
-                    <DataTable
-                      data={filteredHosts}
-                      columns={hostColumns}
-                      rowKey={(host) => host.id}
-                      isLoading={hostsQuery.isLoading}
-                      emptyContent={hasQuickFilter ? "No matching hosts." : "No hosts yet. Add one to get started."}
-                      compact
-                    />
-                  )}
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 className="text-sm font-semibold">Vast.ai Instances</h3>
-                      <p className="text-xs text-foreground/50">{vastCountLabel}</p>
-                    </div>
-                    <Button as={Link} to="/hosts" size="sm" variant="flat">
-                      Manage
-                    </Button>
-                  </div>
-                  {vastQuery.error ? (
-                    <div className="text-sm text-foreground/60">
-                      Failed to load. Check your Vast.ai API key in Settings.
-                    </div>
-                  ) : (
-                    <DataTable
-                      data={filteredVastInstances}
-                      columns={vastColumns}
-                      rowKey={(inst) => String(inst.id)}
-                      isLoading={vastQuery.isLoading}
-                      emptyContent={hasQuickFilter ? "No matching instances." : "No active instances."}
-                      compact
-                    />
-                  )}
-                </div>
-              </div>
+              )}
             </div>
           </div>
         ) : (
