@@ -6,12 +6,6 @@ import {
   Input,
   Spinner,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
   Textarea
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
@@ -20,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { copyText } from "../lib/clipboard";
 import { getConfig, sshPublicKey, termOpenSshTmux } from "../lib/tauri-api";
 import type { SshSpec, TrainshConfig } from "../lib/types";
+import { DataTable, ActionButton, type ColumnDef } from "../components/shared/DataTable";
 
 type ColabSession = {
   id: string;
@@ -88,6 +83,84 @@ export function ColabPage() {
   }, [sessions]);
 
   const sshKeyPath = useMemo(() => cfgQuery.data?.vast.ssh_key_path ?? null, [cfgQuery.data]);
+
+  // Handler for opening terminal
+  const handleOpenTerminal = async (s: ColabSession) => {
+    if (!sshKeyPath) return;
+    setOpeningId(s.id);
+    try {
+      const proxy = `${s.cloudflared_path} access ssh --hostname ${s.hostname}`;
+      const ssh: SshSpec = {
+        host: s.hostname,
+        port: 22,
+        user: s.user,
+        keyPath: sshKeyPath,
+        extraArgs: ["-o", `ProxyCommand=${proxy}`]
+      };
+      await termOpenSshTmux({
+        ssh,
+        tmuxSession: s.tmux_session,
+        title: `Colab · ${s.title}`,
+        cols: 120,
+        rows: 32
+      });
+    } finally {
+      setOpeningId(null);
+    }
+  };
+
+  // DataTable columns for sessions
+  const sessionColumns: ColumnDef<ColabSession>[] = useMemo(() => [
+    {
+      key: "title",
+      header: "Title",
+      render: (s) => <span className="text-sm">{s.title}</span>,
+    },
+    {
+      key: "hostname",
+      header: "Hostname",
+      render: (s) => <span className="font-mono text-xs">{s.hostname}</span>,
+    },
+    {
+      key: "tmux",
+      header: "tmux",
+      render: (s) => <span className="font-mono text-xs">{s.tmux_session}</span>,
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (s) => (
+        <div className="flex flex-wrap gap-2">
+          <ActionButton
+            label="Open in Terminal"
+            color="primary"
+            variant="flat"
+            isDisabled={!sshKeyPath}
+            isLoading={openingId === s.id}
+            onPress={() => void handleOpenTerminal(s)}
+          />
+          <ActionButton
+            label="Copy ssh config"
+            variant="flat"
+            onPress={async () => {
+              const snippet = [
+                `Host ${s.hostname}`,
+                `  User ${s.user}`,
+                `  ProxyCommand ${s.cloudflared_path} access ssh --hostname %h`
+              ].join("\n");
+              await copyText(snippet);
+            }}
+          />
+          <ActionButton
+            label="Remove"
+            color="danger"
+            variant="flat"
+            onPress={() => setSessions((prev) => prev.filter((x) => x.id !== s.id))}
+          />
+        </div>
+      ),
+    },
+  ], [sshKeyPath, openingId]);
 
   const manualColabCell = useMemo(() => {
     const pub = manualPubKey.trim() || "PASTE_YOUR_SSH_PUBLIC_KEY_HERE";
@@ -189,81 +262,13 @@ tail -n 30 /content/cloudflared.log || true
               {sessError ? <div className="text-sm text-danger">{sessError}</div> : null}
             </div>
 
-            <Table removeWrapper aria-label="Colab sessions table">
-              <TableHeader>
-                <TableColumn>Title</TableColumn>
-                <TableColumn>Hostname</TableColumn>
-                <TableColumn>tmux</TableColumn>
-                <TableColumn>Actions</TableColumn>
-              </TableHeader>
-              <TableBody emptyContent="No sessions">
-                {sessions.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="text-sm">{s.title}</TableCell>
-                    <TableCell className="font-mono text-xs">{s.hostname}</TableCell>
-                    <TableCell className="font-mono text-xs">{s.tmux_session}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          isDisabled={!sshKeyPath}
-                          isLoading={openingId === s.id}
-                          onPress={async () => {
-                            if (!sshKeyPath) return;
-                            setOpeningId(s.id);
-                            try {
-                              const proxy = `${s.cloudflared_path} access ssh --hostname ${s.hostname}`;
-                              const ssh: SshSpec = {
-                                host: s.hostname,
-                                port: 22,
-                                user: s.user,
-                                keyPath: sshKeyPath,
-                                extraArgs: ["-o", `ProxyCommand=${proxy}`]
-                              };
-                              await termOpenSshTmux({
-                                ssh,
-                                tmuxSession: s.tmux_session,
-                                title: `Colab · ${s.title}`,
-                                cols: 120,
-                                rows: 32
-                              });
-                            } finally {
-                              setOpeningId(null);
-                            }
-                          }}
-                        >
-                          Open in Terminal
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          onPress={async () => {
-                            const snippet = [
-                              `Host ${s.hostname}`,
-                              `  User ${s.user}`,
-                              `  ProxyCommand ${s.cloudflared_path} access ssh --hostname %h`
-                            ].join("\n");
-                            await copyText(snippet);
-                          }}
-                        >
-                          Copy ssh config
-                        </Button>
-                        <Button
-                          size="sm"
-                          color="danger"
-                          variant="flat"
-                          onPress={() => setSessions((prev) => prev.filter((x) => x.id !== s.id))}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              data={sessions}
+              columns={sessionColumns}
+              rowKey={(s) => s.id}
+              emptyContent="No sessions"
+              compact
+            />
 
             <div className="text-xs text-foreground/60">
               Setup manual 在本页下方（包含 sshd + cloudflared + 本地 ProxyCommand）。

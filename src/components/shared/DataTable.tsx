@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Spinner } from "@nextui-org/react";
 import { Button } from "../ui";
 
@@ -37,7 +37,7 @@ function IconSortDesc() {
 
 export type ColumnDef<T> = {
   key: string;
-  header: string;
+  header: ReactNode;
   width?: string;
   minWidth?: string;
   /** If true, content will not wrap (default: true for most columns) */

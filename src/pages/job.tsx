@@ -6,12 +6,6 @@ import {
   Input,
   Spinner,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
   Textarea
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
@@ -29,6 +23,7 @@ import {
 } from "../lib/tauri-api";
 import type { RunVastJobInput } from "../lib/tauri-api";
 import type { GpuRow, RemoteJobMeta, VastInstance } from "../lib/types";
+import { DataTable, type ColumnDef } from "../components/shared/DataTable";
 
 export function JobPage() {
   const cfgQuery = useQuery({
@@ -194,6 +189,44 @@ export function JobPage() {
 
   const logsText = useMemo(() => (logsQuery.data ?? []).join("\n"), [logsQuery.data]);
   const gpuRows = useMemo<GpuRow[]>(() => gpuQuery.data ?? [], [gpuQuery.data]);
+
+  // GPU table columns for DataTable
+  const gpuColumns: ColumnDef<GpuRow>[] = useMemo(() => [
+    {
+      key: "index",
+      header: "Index",
+      render: (r) => <span className="font-mono text-xs">{r.index}</span>,
+    },
+    {
+      key: "name",
+      header: "Name",
+      render: (r) => <span className="text-sm">{r.name}</span>,
+    },
+    {
+      key: "util",
+      header: "Util",
+      render: (r) => <span className="text-sm">{r.util_gpu}%</span>,
+    },
+    {
+      key: "mem",
+      header: "Mem",
+      render: (r) => (
+        <span className="text-sm">
+          {r.mem_used}/{r.mem_total} MiB ({r.util_mem}%)
+        </span>
+      ),
+    },
+    {
+      key: "temp",
+      header: "Temp",
+      render: (r) => <span className="text-sm">{r.temp}°C</span>,
+    },
+    {
+      key: "power",
+      header: "Power",
+      render: (r) => <span className="text-sm">{r.power} W</span>,
+    },
+  ], []);
 
   return (
     <div className="p-6">
@@ -378,30 +411,13 @@ export function JobPage() {
 
                   <div className="grid gap-3">
                     <div className="text-sm font-semibold">GPU</div>
-                    <Table removeWrapper aria-label="GPU table">
-                      <TableHeader>
-                        <TableColumn>Index</TableColumn>
-                        <TableColumn>Name</TableColumn>
-                        <TableColumn>Util</TableColumn>
-                        <TableColumn>Mem</TableColumn>
-                        <TableColumn>Temp</TableColumn>
-                        <TableColumn>Power</TableColumn>
-                      </TableHeader>
-                      <TableBody emptyContent="No GPU data">
-                        {gpuRows.map((r) => (
-                          <TableRow key={`${r.index}-${r.name}`}>
-                            <TableCell className="font-mono text-xs">{r.index}</TableCell>
-                            <TableCell className="text-sm">{r.name}</TableCell>
-                            <TableCell className="text-sm">{r.util_gpu}%</TableCell>
-                            <TableCell className="text-sm">
-                              {r.mem_used}/{r.mem_total} MiB ({r.util_mem}%)
-                            </TableCell>
-                            <TableCell className="text-sm">{r.temp}°C</TableCell>
-                            <TableCell className="text-sm">{r.power} W</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <DataTable
+                      data={gpuRows}
+                      columns={gpuColumns}
+                      rowKey={(r) => `${r.index}-${r.name}`}
+                      emptyContent="No GPU data"
+                      compact
+                    />
                   </div>
 
                   <Divider />

@@ -18,12 +18,6 @@ import {
   Select,
   SelectItem,
   Spinner,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
@@ -40,6 +34,7 @@ import {
   useStorages,
 } from "../lib/tauri-api";
 import type { FileEntry, Storage, TransferOperation } from "../lib/types";
+import { DataTable, type ColumnDef } from "../components/shared/DataTable";
 
 // ============================================================
 // Icons
@@ -457,6 +452,61 @@ export function FileBrowserPage() {
     return items;
   }, [currentPath]);
 
+  // File table columns for DataTable
+  const fileColumns: ColumnDef<FileEntry>[] = useMemo(() => [
+    {
+      key: "select",
+      header: (
+        <Checkbox
+          isSelected={allSelected}
+          isIndeterminate={selectedPaths.size > 0 && !allSelected}
+          onValueChange={toggleSelectAll}
+        />
+      ),
+      width: "40px",
+      render: (entry) => (
+        <Checkbox
+          isSelected={selectedPaths.has(entry.path)}
+          onValueChange={() => toggleSelection(entry.path)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ),
+    },
+    {
+      key: "name",
+      header: "Name",
+      grow: true,
+      render: (entry) => (
+        <div className="flex items-center gap-2">
+          {entry.is_dir ? <IconFolder /> : <IconFile />}
+          <span className={entry.is_dir ? "font-medium" : ""}>
+            {entry.name}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "size",
+      header: "Size",
+      width: "120px",
+      render: (entry) => (
+        <span className="text-sm text-foreground/60">
+          {entry.is_dir ? "-" : formatBytes(entry.size)}
+        </span>
+      ),
+    },
+    {
+      key: "modified",
+      header: "Modified",
+      width: "180px",
+      render: (entry) => (
+        <span className="text-sm text-foreground/60">
+          {formatDate(entry.modified_at)}
+        </span>
+      ),
+    },
+  ], [allSelected, selectedPaths, toggleSelectAll, toggleSelection]);
+
   if (storageQuery.isLoading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -612,57 +662,14 @@ export function FileBrowserPage() {
             </CardBody>
           </Card>
         ) : (
-          <Table
-            removeWrapper
-            aria-label="File list"
-            selectionMode="none"
-            classNames={{
-              tr: "cursor-pointer hover:bg-content2",
-            }}
-          >
-            <TableHeader>
-              <TableColumn width={40}>
-                <Checkbox
-                  isSelected={allSelected}
-                  isIndeterminate={selectedPaths.size > 0 && !allSelected}
-                  onValueChange={toggleSelectAll}
-                />
-              </TableColumn>
-              <TableColumn>Name</TableColumn>
-              <TableColumn width={120}>Size</TableColumn>
-              <TableColumn width={180}>Modified</TableColumn>
-            </TableHeader>
-            <TableBody>
-              {files.map((entry) => (
-                <TableRow key={entry.path}>
-                  <TableCell>
-                    <Checkbox
-                      isSelected={selectedPaths.has(entry.path)}
-                      onValueChange={() => toggleSelection(entry.path)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div
-                      className="flex items-center gap-2"
-                      onClick={() => handleRowClick(entry)}
-                    >
-                      {entry.is_dir ? <IconFolder /> : <IconFile />}
-                      <span className={entry.is_dir ? "font-medium" : ""}>
-                        {entry.name}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-foreground/60">
-                    {entry.is_dir ? "-" : formatBytes(entry.size)}
-                  </TableCell>
-                  <TableCell className="text-sm text-foreground/60">
-                    {formatDate(entry.modified_at)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataTable
+            data={files}
+            columns={fileColumns}
+            rowKey={(entry) => entry.path}
+            onRowClick={handleRowClick}
+            emptyContent="This folder is empty"
+            compact
+          />
         )}
       </div>
 

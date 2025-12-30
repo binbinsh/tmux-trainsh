@@ -1,4 +1,4 @@
-import { Card, CardBody, CardHeader, Chip, Divider, Input, Kbd, Skeleton, Spinner, Tooltip } from "@nextui-org/react";
+import { Card, CardBody, Chip, Input, Kbd, Spinner, Tooltip } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
@@ -16,8 +16,8 @@ import { TerminalHistoryPanel } from "../components/terminal/TerminalHistoryPane
 import { TmuxSessionSelectModal } from "../components/host/TmuxSessionSelectModal";
 import { copyText } from "../lib/clipboard";
 import { AppIcon, type AppIconName } from "../components/AppIcon";
-import { StatusBadge, getStatusBadgeColor } from "../components/shared/StatusBadge";
-import { ListItemCard } from "../components/shared/UnifiedCard";
+import { getStatusBadgeColor } from "../components/shared/StatusBadge";
+import { DataTable, CellWithIcon, StatusChip, ActionButton, type ColumnDef } from "../components/shared/DataTable";
 import type { Host, HostStatus, VastInstance } from "../lib/types";
 
 interface TerminalPaneProps {
@@ -877,6 +877,101 @@ export function TerminalPage() {
     [connectToVastInstance]
   );
 
+  // DataTable column definitions for hosts
+  const hostColumns: ColumnDef<Host>[] = useMemo(() => [
+    {
+      key: "name",
+      header: "Name",
+      grow: true,
+      minWidth: "140px",
+      nowrap: false,
+      render: (host) => {
+        const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : undefined;
+        return (
+          <CellWithIcon
+            icon={<AppIcon name={getHostIconName(host)} className="w-5 h-5" alt={host.type} />}
+            title={host.name}
+            subtitle={sshAddress}
+          />
+        );
+      },
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (host) => {
+        const badge = getStatusBadgeColor(host.status);
+        return <StatusChip label={badge.label} color={badge.color} />;
+      },
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (host) => (
+        <div className="flex justify-end">
+          <ActionButton
+            label="Connect"
+            color="primary"
+            variant="flat"
+            onPress={() => void handleQuickConnectHost(host)}
+            isDisabled={!host.ssh}
+          />
+        </div>
+      ),
+    },
+  ], [handleQuickConnectHost]);
+
+  // DataTable column definitions for Vast instances
+  const vastColumns: ColumnDef<VastInstance>[] = useMemo(() => [
+    {
+      key: "name",
+      header: "Instance",
+      grow: true,
+      minWidth: "140px",
+      nowrap: false,
+      render: (inst) => {
+        const gpuLabel = inst.gpu_name
+          ? `${inst.num_gpus ?? 1}x ${inst.gpu_name}`
+          : "GPU info pending";
+        return (
+          <CellWithIcon
+            icon={<AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />}
+            title={getVastLabel(inst)}
+            subtitle={gpuLabel}
+          />
+        );
+      },
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (inst) => {
+        const status = getVastStatus(inst);
+        const badge = getStatusBadgeColor(status);
+        return <StatusChip label={badge.label} color={badge.color} />;
+      },
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (inst) => {
+        const status = getVastStatus(inst);
+        const canConnect = status === "online" || status === "connecting";
+        return (
+          <div className="flex justify-end">
+            <ActionButton
+              label="Connect"
+              color="primary"
+              variant="flat"
+              onPress={() => void handleQuickConnectVast(inst)}
+              isDisabled={!canConnect}
+            />
+          </div>
+        );
+      },
+    },
+  ], [handleQuickConnectVast]);
+
   // If navigated here with a connect request, start connecting immediately and show the waiting UI here.
   useEffect(() => {
     const connectHostId = typeof search.connectHostId === "string" ? search.connectHostId : null;
@@ -1186,8 +1281,8 @@ export function TerminalPage() {
 
               {/* Host Cards Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="doppio-card">
-                  <div className="flex items-center justify-between p-4 border-b border-divider">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
                     <div>
                       <h3 className="text-sm font-semibold">Saved Hosts</h3>
                       <p className="text-xs text-foreground/50">{hostCountLabel}</p>
@@ -1196,66 +1291,22 @@ export function TerminalPage() {
                       View All
                     </Button>
                   </div>
-                  <div className="p-4 space-y-3">
-                      {hostsQuery.isLoading ? (
-                        <div className="space-y-3">
-                          {Array.from({ length: 3 }).map((_, idx) => (
-                            <div key={idx} className="flex items-center gap-3 rounded-lg border border-divider bg-content2 p-3">
-                              <Skeleton className="h-9 w-9 rounded-md" />
-                              <div className="flex-1 space-y-2">
-                                <Skeleton className="h-3 w-36 rounded-md" />
-                                <Skeleton className="h-2 w-44 rounded-md" />
-                              </div>
-                              <Skeleton className="h-8 w-20 rounded-md" />
-                            </div>
-                          ))}
-                        </div>
-                      ) : hostsQuery.error ? (
-                        <p className="text-sm text-danger">Failed to load hosts.</p>
-                      ) : filteredHosts.length === 0 ? (
-                        <div className="text-sm text-foreground/60">
-                          {hasQuickFilter ? "No matching hosts." : "No hosts yet. Add one to get started."}
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {filteredHosts.map((host, index) => {
-                            const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : null;
-                            const statusConfig = getStatusBadgeColor(host.status);
-                            return (
-                              <motion.div
-                                key={host.id}
-                                initial={{ opacity: 0, y: 8 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: index * 0.03 }}
-                              >
-                                <ListItemCard
-                                  icon={
-                                    <AppIcon
-                                      name={getHostIconName(host)}
-                                      className="w-8 h-8"
-                                      alt={`${host.type} icon`}
-                                    />
-                                  }
-                                  title={host.name}
-                                  status={{ label: statusConfig.label, color: statusConfig.color }}
-                                  type={{ label: host.type }}
-                                  subtitle={sshAddress ?? undefined}
-                                  meta={host.last_seen_at
-                                    ? `Last seen: ${new Date(host.last_seen_at).toLocaleDateString()}`
-                                    : "Never seen"}
-                                  onConnect={() => void handleQuickConnectHost(host)}
-                                  connectDisabled={!host.ssh}
-                                />
-                              </motion.div>
-                            );
-                          })}
-                        </div>
-                      )}
-                  </div>
+                  {hostsQuery.error ? (
+                    <p className="text-sm text-danger">Failed to load hosts.</p>
+                  ) : (
+                    <DataTable
+                      data={filteredHosts}
+                      columns={hostColumns}
+                      rowKey={(host) => host.id}
+                      isLoading={hostsQuery.isLoading}
+                      emptyContent={hasQuickFilter ? "No matching hosts." : "No hosts yet. Add one to get started."}
+                      compact
+                    />
+                  )}
                 </div>
 
-                <div className="doppio-card">
-                  <div className="flex items-center justify-between p-4 border-b border-divider">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
                     <div>
                       <h3 className="text-sm font-semibold">Vast.ai Instances</h3>
                       <p className="text-xs text-foreground/50">{vastCountLabel}</p>
@@ -1264,59 +1315,20 @@ export function TerminalPage() {
                       Manage
                     </Button>
                   </div>
-                  <div className="p-4 space-y-3">
-                      {vastQuery.isLoading ? (
-                        <div className="space-y-3">
-                          {Array.from({ length: 2 }).map((_, idx) => (
-                            <div key={idx} className="flex items-center gap-3 rounded-lg border border-divider bg-content2 p-3">
-                              <Skeleton className="h-9 w-9 rounded-md" />
-                              <div className="flex-1 space-y-2">
-                                <Skeleton className="h-3 w-40 rounded-md" />
-                                <Skeleton className="h-2 w-36 rounded-md" />
-                              </div>
-                              <Skeleton className="h-8 w-20 rounded-md" />
-                            </div>
-                          ))}
-                        </div>
-                      ) : vastQuery.error ? (
-                        <div className="text-sm text-foreground/60">
-                          Failed to load. Check your Vast.ai API key in Settings.
-                        </div>
-                      ) : filteredVastInstances.length === 0 ? (
-                        <div className="text-sm text-foreground/60">
-                          {hasQuickFilter ? "No matching instances." : "No active instances."}
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {filteredVastInstances.map((inst, index) => {
-                            const status = getVastStatus(inst);
-                            const canConnect = status === "online" || status === "connecting";
-                            const gpuLabel = inst.gpu_name
-                              ? `${inst.num_gpus ?? 1}x ${inst.gpu_name}`
-                              : "GPU info pending";
-                            const statusConfig = getStatusBadgeColor(status);
-                            return (
-                              <motion.div
-                                key={inst.id}
-                                initial={{ opacity: 0, y: 8 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: index * 0.03 }}
-                              >
-                                <ListItemCard
-                                  icon={<AppIcon name="vast" className="w-8 h-8" alt="Vast.ai icon" />}
-                                  title={getVastLabel(inst)}
-                                  status={{ label: statusConfig.label, color: statusConfig.color }}
-                                  subtitle={gpuLabel}
-                                  meta={`Instance #${inst.id}`}
-                                  onConnect={() => void handleQuickConnectVast(inst)}
-                                  connectDisabled={!canConnect}
-                                />
-                              </motion.div>
-                            );
-                          })}
-                        </div>
-                      )}
-                  </div>
+                  {vastQuery.error ? (
+                    <div className="text-sm text-foreground/60">
+                      Failed to load. Check your Vast.ai API key in Settings.
+                    </div>
+                  ) : (
+                    <DataTable
+                      data={filteredVastInstances}
+                      columns={vastColumns}
+                      rowKey={(inst) => String(inst.id)}
+                      isLoading={vastQuery.isLoading}
+                      emptyContent={hasQuickFilter ? "No matching instances." : "No active instances."}
+                      compact
+                    />
+                  )}
                 </div>
               </div>
             </div>

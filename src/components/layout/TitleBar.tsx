@@ -62,10 +62,10 @@ function TerminalTab({
       onClick={onClick}
       className={`
         group relative flex items-center gap-2 pl-3 pr-3 h-7 w-52 flex-shrink-0 rounded-full cursor-pointer
-        border transition-all duration-150
+        transition-all duration-150
         ${isActive
-          ? "bg-[rgb(var(--doppio-titlebar-tab-active))] text-foreground border-divider shadow-sm"
-          : "bg-[rgb(var(--doppio-titlebar-tab-inactive))] text-foreground/70 border-divider/70 hover:bg-[rgb(var(--doppio-titlebar-tab-hover))] hover:text-foreground"
+          ? "bg-[rgb(var(--doppio-titlebar-tab-active))] text-foreground shadow-sm"
+          : "bg-transparent text-foreground/40 hover:bg-[rgb(var(--doppio-titlebar-tab-hover))] hover:text-foreground/70"
         }
       `}
     >
