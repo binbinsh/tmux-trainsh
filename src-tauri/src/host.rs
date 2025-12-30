@@ -121,47 +121,9 @@ pub struct IpInfo {
 // IP Info
 // ============================================================
 
-fn normalize_ipinfo_target(target: &str) -> Result<String, AppError> {
-    let trimmed = target.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::invalid_input("IP info target is required"));
-    }
-    if trimmed.len() > 255 {
-        return Err(AppError::invalid_input("IP info target is too long"));
-    }
-    if trimmed.contains("://") {
-        return Err(AppError::invalid_input(
-            "IP info target must not include a scheme",
-        ));
-    }
-    if trimmed.chars().any(|c| c.is_whitespace()) {
-        return Err(AppError::invalid_input(
-            "IP info target must not contain whitespace",
-        ));
-    }
-    let disallowed = ['/', '\\', '?', '#', '@'];
-    if trimmed.chars().any(|c| disallowed.contains(&c)) {
-        return Err(AppError::invalid_input(
-            "IP info target contains invalid characters",
-        ));
-    }
-    if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_'))
-    {
-        return Err(AppError::invalid_input(
-            "IP info target contains unsupported characters",
-        ));
-    }
-    Ok(trimmed.to_string())
-}
-
-pub async fn fetch_ip_info(target: &str) -> Result<IpInfo, AppError> {
-    // If target is empty, get info for the caller's IP
-    let url = if target.trim().is_empty() {
-        "https://ipinfo.io/json".to_string()
-    } else {
-        let target = normalize_ipinfo_target(target)?;
-        format!("https://ipinfo.io/{}/json", target)
-    };
+pub async fn fetch_ip_info(_target: &str) -> Result<IpInfo, AppError> {
+    // Simply fetch the caller's public IP info
+    let url = "https://ipinfo.io";
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(6))
         .build()

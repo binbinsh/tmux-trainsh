@@ -105,7 +105,7 @@ pub async fn execute_step(
         }
 
         // New unified transfer operation
-        Operation::Transfer(op) => operations::transfer::execute(op, variables).await,
+        Operation::Transfer(op) => operations::transfer::execute(op, variables, progress).await,
 
         // Git clone operation
         Operation::GitClone(op) => {

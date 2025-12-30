@@ -9,7 +9,10 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::ssh as ssh_ops;
 use crate::error::AppError;
@@ -17,10 +20,14 @@ use crate::host;
 use crate::recipe::types::{TransferEndpoint, TransferOp};
 use crate::storage::{get_storage, Storage, StorageBackend};
 
+/// Progress callback type alias
+pub type ProgressCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Execute a transfer operation
 pub async fn execute(
     op: &TransferOp,
     variables: &HashMap<String, String>,
+    progress: Option<ProgressCallback>,
 ) -> Result<Option<String>, AppError> {
     // Resolve the target host if needed
     let target_host = variables.get("target").cloned();
@@ -40,16 +47,12 @@ pub async fn execute(
             let remote_path = interpolate(remote_path, variables);
 
             if is_local_target(&host_id) {
-                // Local target - just do a local copy
-                let status = tokio::process::Command::new("rsync")
-                    .args(["-av", "--progress", &local_path, &remote_path])
-                    .status()
-                    .await
-                    .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-
-                if !status.success() {
-                    return Err(AppError::command("Local copy failed"));
-                }
+                // Local target - just do a local copy with streaming
+                run_rsync_with_progress(
+                    &["-av", "--progress", &local_path, &remote_path],
+                    progress.clone(),
+                )
+                .await?;
                 Ok(Some(format!("Copied {} to {}", local_path, remote_path)))
             } else {
                 upload_to_host(
@@ -58,6 +61,7 @@ pub async fn execute(
                     &remote_path,
                     &op.exclude_patterns,
                     op.delete,
+                    progress.clone(),
                 )
                 .await?;
                 Ok(Some(format!(
@@ -80,19 +84,15 @@ pub async fn execute(
             let local_path = interpolate(local_path, variables);
 
             if is_local_target(&host_id) {
-                // Local target - just do a local copy
-                let status = tokio::process::Command::new("rsync")
-                    .args(["-av", "--progress", &remote_path, &local_path])
-                    .status()
-                    .await
-                    .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-
-                if !status.success() {
-                    return Err(AppError::command("Local copy failed"));
-                }
+                // Local target - just do a local copy with streaming
+                run_rsync_with_progress(
+                    &["-av", "--progress", &remote_path, &local_path],
+                    progress.clone(),
+                )
+                .await?;
                 Ok(Some(format!("Copied {} to {}", remote_path, local_path)))
             } else {
-                download_from_host(&host_id, &remote_path, &local_path, &op.exclude_patterns)
+                download_from_host(&host_id, &remote_path, &local_path, &op.exclude_patterns, progress.clone())
                     .await?;
                 Ok(Some(format!(
                     "Downloaded {}:{} to {}",
@@ -122,16 +122,12 @@ pub async fn execute(
             let dst_is_local = is_local_target(&dst_host_id);
 
             if src_is_local && dst_is_local {
-                // Both local - just do a local copy
-                let status = tokio::process::Command::new("rsync")
-                    .args(["-av", "--progress", &src_path, &dst_path])
-                    .status()
-                    .await
-                    .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-
-                if !status.success() {
-                    return Err(AppError::command("Local copy failed"));
-                }
+                // Both local - just do a local copy with streaming
+                run_rsync_with_progress(
+                    &["-av", "--progress", &src_path, &dst_path],
+                    progress.clone(),
+                )
+                .await?;
                 Ok(Some(format!("Copied {} to {}", src_path, dst_path)))
             } else if src_is_local {
                 // Source is local, dest is remote - upload
@@ -141,6 +137,7 @@ pub async fn execute(
                     &dst_path,
                     &op.exclude_patterns,
                     op.delete,
+                    progress.clone(),
                 )
                 .await?;
                 Ok(Some(format!(
@@ -149,7 +146,7 @@ pub async fn execute(
                 )))
             } else if dst_is_local {
                 // Source is remote, dest is local - download
-                download_from_host(&src_host_id, &src_path, &dst_path, &op.exclude_patterns)
+                download_from_host(&src_host_id, &src_path, &dst_path, &op.exclude_patterns, progress.clone())
                     .await?;
                 Ok(Some(format!(
                     "Downloaded {}:{} to {}",
@@ -171,6 +168,7 @@ pub async fn execute(
                     &dst_path,
                     &op.exclude_patterns,
                     op.delete,
+                    progress.clone(),
                 )
                 .await?;
                 Ok(Some(format!(
@@ -362,6 +360,164 @@ fn interpolate(s: &str, variables: &HashMap<String, String>) -> String {
     result
 }
 
+/// Run rsync with live progress output streaming
+async fn run_rsync_with_progress(
+    args: &[&str],
+    progress: Option<ProgressCallback>,
+) -> Result<(), AppError> {
+    use std::process::Stdio;
+
+    let mut cmd = tokio::process::Command::new("rsync");
+    cmd.args(args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::command(format!("Failed to spawn rsync: {}", e)))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Stream stdout
+    let progress_clone = progress.clone();
+    let stdout_handle = tokio::spawn(async move {
+        if let Some(stdout) = stdout {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(ref cb) = progress_clone {
+                    cb(&line);
+                }
+            }
+        }
+    });
+
+    // Stream stderr
+    let stderr_output = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let stderr_output_clone = stderr_output.clone();
+    let progress_clone = progress.clone();
+    let stderr_handle = tokio::spawn(async move {
+        if let Some(stderr) = stderr {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                stderr_output_clone.lock().await.push(line.clone());
+                if let Some(ref cb) = progress_clone {
+                    cb(&format!("stderr: {}", line));
+                }
+            }
+        }
+    });
+
+    // Wait for the process to complete
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to wait for rsync: {}", e)))?;
+
+    // Wait for output streams to finish
+    let _ = stdout_handle.await;
+    let _ = stderr_handle.await;
+
+    if !status.success() {
+        let stderr_lines = stderr_output.lock().await;
+        let stderr_str = stderr_lines.join("\n");
+        return Err(AppError::command(format!(
+            "rsync failed (code={:?}): {}",
+            status.code(),
+            if stderr_str.is_empty() {
+                "(no output)".to_string()
+            } else {
+                stderr_str
+            }
+        )));
+    }
+
+    Ok(())
+}
+
+/// Run rsync with SSH wrapper and live progress output streaming
+async fn run_rsync_ssh_with_progress(
+    ssh_wrapper: &PathBuf,
+    args: Vec<String>,
+    progress: Option<ProgressCallback>,
+) -> Result<(), AppError> {
+    use std::process::Stdio;
+
+    let mut cmd = tokio::process::Command::new("rsync");
+    cmd.args(&args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::command(format!("Failed to spawn rsync: {}", e)))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Stream stdout
+    let progress_clone = progress.clone();
+    let stdout_handle = tokio::spawn(async move {
+        if let Some(stdout) = stdout {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(ref cb) = progress_clone {
+                    cb(&line);
+                }
+            }
+        }
+    });
+
+    // Stream stderr
+    let stderr_output = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let stderr_output_clone = stderr_output.clone();
+    let progress_clone = progress.clone();
+    let stderr_handle = tokio::spawn(async move {
+        if let Some(stderr) = stderr {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                stderr_output_clone.lock().await.push(line.clone());
+                if let Some(ref cb) = progress_clone {
+                    cb(&format!("stderr: {}", line));
+                }
+            }
+        }
+    });
+
+    // Wait for the process to complete
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to wait for rsync: {}", e)))?;
+
+    // Clean up SSH wrapper
+    let _ = std::fs::remove_file(ssh_wrapper);
+
+    // Wait for output streams to finish
+    let _ = stdout_handle.await;
+    let _ = stderr_handle.await;
+
+    if !status.success() {
+        let stderr_lines = stderr_output.lock().await;
+        let stderr_str = stderr_lines.join("\n");
+        return Err(AppError::command(format!(
+            "rsync failed (code={:?}): {}",
+            status.code(),
+            if stderr_str.is_empty() {
+                "(no output)".to_string()
+            } else {
+                stderr_str
+            }
+        )));
+    }
+
+    Ok(())
+}
+
 /// Upload from local to host using rsync CLI
 async fn upload_to_host(
     host_id: &str,
@@ -369,6 +525,7 @@ async fn upload_to_host(
     remote_path: &str,
     excludes: &[String],
     delete: bool,
+    progress: Option<ProgressCallback>,
 ) -> Result<(), AppError> {
     let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
 
@@ -379,32 +536,24 @@ async fn upload_to_host(
     let mkdir_cmd = format!(r#"mkdir -p "{}""#, remote_path.replace('"', "\\\""));
     ssh_ops::execute_command(host_id, &mkdir_cmd, None, &HashMap::new()).await?;
 
-    let mut rsync = tokio::process::Command::new("rsync");
-    rsync.args(["-avz", "--progress"]);
-    rsync.args(["-e", ssh_wrapper.to_string_lossy().as_ref()]);
+    // Build args as owned Strings
+    let mut args: Vec<String> = vec![
+        "-avz".to_string(),
+        "--progress".to_string(),
+        "-e".to_string(),
+        ssh_wrapper.to_string_lossy().to_string(),
+    ];
     for exclude in excludes {
-        rsync.args(["--exclude", exclude]);
+        args.push("--exclude".to_string());
+        args.push(exclude.clone());
     }
     if delete {
-        rsync.arg("--delete");
+        args.push("--delete".to_string());
     }
-    rsync.arg(local_path);
-    rsync.arg(&remote);
+    args.push(local_path.to_string());
+    args.push(remote);
 
-    let output = rsync.output().await;
-    let _ = std::fs::remove_file(&ssh_wrapper);
-    let output = output.map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(AppError::command(format!(
-            "Upload to host failed (code={:?}): {}",
-            output.status.code(),
-            format_command_output(&stdout, &stderr)
-        )));
-    }
-
-    Ok(())
+    run_rsync_ssh_with_progress(&ssh_wrapper, args, progress).await
 }
 
 /// Download from host to local using rsync CLI
@@ -413,6 +562,7 @@ async fn download_from_host(
     remote_path: &str,
     local_path: &str,
     excludes: &[String],
+    progress: Option<ProgressCallback>,
 ) -> Result<(), AppError> {
     let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
 
@@ -426,29 +576,21 @@ async fn download_from_host(
     let ssh_wrapper = build_rsync_ssh_wrapper(&ssh)?;
     let remote = format!("{}@{}:{}", ssh.user, ssh.host, remote_path);
 
-    let mut rsync = tokio::process::Command::new("rsync");
-    rsync.args(["-avz", "--progress"]);
-    rsync.args(["-e", ssh_wrapper.to_string_lossy().as_ref()]);
+    // Build args as owned Strings
+    let mut args: Vec<String> = vec![
+        "-avz".to_string(),
+        "--progress".to_string(),
+        "-e".to_string(),
+        ssh_wrapper.to_string_lossy().to_string(),
+    ];
     for exclude in excludes {
-        rsync.args(["--exclude", exclude]);
+        args.push("--exclude".to_string());
+        args.push(exclude.clone());
     }
-    rsync.arg(&remote);
-    rsync.arg(local_path);
+    args.push(remote);
+    args.push(local_path.to_string());
 
-    let output = rsync.output().await;
-    let _ = std::fs::remove_file(&ssh_wrapper);
-    let output = output.map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(AppError::command(format!(
-            "Download from host failed (code={:?}): {}",
-            output.status.code(),
-            format_command_output(&stdout, &stderr)
-        )));
-    }
-
-    Ok(())
+    run_rsync_ssh_with_progress(&ssh_wrapper, args, progress).await
 }
 
 /// Copy files within the same host
@@ -470,15 +612,20 @@ async fn transfer_between_hosts_rsync(
     dst_path: &str,
     excludes: &[String],
     delete: bool,
+    progress: Option<ProgressCallback>,
 ) -> Result<(), AppError> {
     let temp_dir = std::env::temp_dir().join(format!("transfer-{}", uuid::Uuid::new_v4()));
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
 
+    let progress_clone = progress.clone();
     let result = async {
         let temp_root = temp_dir.to_string_lossy().to_string();
-        download_from_host(src_host_id, src_path, &temp_root, excludes).await?;
+        if let Some(ref cb) = progress_clone {
+            cb(&format!("Downloading from {}:{}", src_host_id, src_path));
+        }
+        download_from_host(src_host_id, src_path, &temp_root, excludes, progress_clone.clone()).await?;
 
         // Preserve rsync trailing-slash semantics when re-uploading.
         let mut copy_contents =
@@ -508,7 +655,10 @@ async fn transfer_between_hosts_rsync(
             payload_str.to_string()
         };
 
-        upload_to_host(dst_host_id, &upload_source, dst_path, excludes, delete).await?;
+        if let Some(ref cb) = progress_clone {
+            cb(&format!("Uploading to {}:{}", dst_host_id, dst_path));
+        }
+        upload_to_host(dst_host_id, &upload_source, dst_path, excludes, delete, progress_clone).await?;
         Ok(())
     }
     .await;
@@ -669,7 +819,7 @@ async fn transfer_host_to_storage(
         .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
 
     // Download from host to temp
-    download_from_host(host_id, remote_path, temp_dir.to_str().unwrap(), &[]).await?;
+    download_from_host(host_id, remote_path, temp_dir.to_str().unwrap(), &[], None).await?;
 
     // Upload from temp to storage
     upload_to_storage(temp_dir.to_str().unwrap(), storage_id, storage_path, &[]).await?;
@@ -696,7 +846,7 @@ async fn transfer_storage_to_host(
     download_from_storage(storage_id, storage_path, temp_dir.to_str().unwrap()).await?;
 
     // Upload from temp to host
-    upload_to_host(host_id, temp_dir.to_str().unwrap(), remote_path, &[], false).await?;
+    upload_to_host(host_id, temp_dir.to_str().unwrap(), remote_path, &[], false, None).await?;
 
     // Cleanup
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;

@@ -36,6 +36,10 @@ type TerminalContextType = {
   historyPanelVisible: boolean;
   setHistoryPanelVisible: (visible: boolean) => void;
   toggleHistoryPanel: () => void;
+  /** Whether the workspace panel is visible (for connecting to hosts) */
+  workspaceVisible: boolean;
+  setWorkspaceVisible: (visible: boolean) => void;
+  showWorkspace: () => void;
 };
 
 const TerminalContext = createContext<TerminalContextType | null>(null);
@@ -58,6 +62,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [recipePanelVisible, setRecipePanelVisible] = useState(false);
   const [historyPanelVisible, setHistoryPanelVisible] = useState(false);
+  const [workspaceVisible, setWorkspaceVisible] = useState(false);
   const [userToggledPanel, setUserToggledPanel] = useState(false);
   const lastSessionCount = useRef(0);
 
@@ -81,6 +86,19 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   const toggleHistoryPanel = useCallback(() => {
     setHistoryPanelVisible((prev) => !prev);
+  }, []);
+
+  // Show workspace panel (hides terminal, shows host connection UI)
+  const showWorkspace = useCallback(() => {
+    setWorkspaceVisible(true);
+  }, []);
+
+  // Wrapper for setActiveId that hides workspace when a session is selected
+  const handleSetActiveId = useCallback((id: string | null) => {
+    if (id !== null) {
+      setWorkspaceVisible(false);
+    }
+    setActiveId(id);
   }, []);
 
   // Refresh sessions from backend
@@ -243,7 +261,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       value={{
         sessions,
         activeId,
-        setActiveId,
+        setActiveId: handleSetActiveId,
         openLocalTerminal,
         closeSession,
         refreshSessions,
@@ -258,6 +276,9 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         historyPanelVisible,
         setHistoryPanelVisible,
         toggleHistoryPanel,
+        workspaceVisible,
+        setWorkspaceVisible,
+        showWorkspace,
       }}
     >
       {children}

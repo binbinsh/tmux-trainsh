@@ -508,17 +508,19 @@ export function TerminalPage() {
     connectVastInstanceId?: string;
     connectLabel?: string;
   };
-  const { 
-    sessions, 
-    activeId, 
+  const {
+    sessions,
+    activeId,
     setActiveId,
-    openLocalTerminal, 
+    openLocalTerminal,
     closeSession,
-    refreshSessions, 
+    refreshSessions,
     isLoading,
     recipePanelVisible,
     toggleRecipePanel,
     historyPanelVisible,
+    workspaceVisible,
+    setWorkspaceVisible,
   } = useTerminal();
   const hostsQuery = useHosts();
   const vastQuery = useVastInstances();
@@ -668,6 +670,7 @@ export function TerminalPage() {
       setConnectState({ status: "connecting", label: label ?? "Connecting…", detail: "Fetching host info…" });
       setTmuxSelect(null);
       setActiveId(null);
+      setWorkspaceVisible(false);
 
       const host = await hostApi.get(hostId);
       if (!host.ssh) {
@@ -724,6 +727,7 @@ export function TerminalPage() {
       setConnectState({ status: "connecting", label: label ?? `Vast #${instanceId}`, detail: "Loading Vast instance…" });
       setTmuxSelect(null);
       setActiveId(null);
+      setWorkspaceVisible(false);
 
       const cfg = await getConfig();
       if (!cfg.vast.ssh_key_path) {
@@ -1138,7 +1142,7 @@ export function TerminalPage() {
               </div>
             </CardBody>
           </Card>
-        ) : sessions.length === 0 ? (
+        ) : sessions.length === 0 || workspaceVisible ? (
           <div className="doppio-page">
             <div className="doppio-page-content">
               {/* Header */}

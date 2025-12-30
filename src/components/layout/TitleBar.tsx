@@ -146,12 +146,12 @@ export function TitleBar() {
             </AnimatePresence>
             
             {/* New terminal button */}
-            <Tooltip content="New Terminal (⌘T)" delay={500}>
+            <Tooltip content="New Connection" delay={500}>
               <Button
                 isIconOnly
                 size="sm"
                 variant="light"
-                onPress={() => void terminal.openLocalTerminal()}
+                onPress={() => terminal.showWorkspace()}
                 className="min-w-7 w-7 h-7 text-foreground/50 hover:text-foreground hover:bg-default-200/70 transition-colors"
               >
                 <IconPlus />
