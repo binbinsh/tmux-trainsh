@@ -104,10 +104,22 @@ pub struct ColabGpuPricing {
 // Default Colab GPU pricing (compute units per hour)
 pub fn default_colab_gpu_pricing() -> Vec<ColabGpuPricing> {
     vec![
-        ColabGpuPricing { gpu_name: "T4".to_string(), units_per_hour: 1.96 },
-        ColabGpuPricing { gpu_name: "L4".to_string(), units_per_hour: 3.72 },
-        ColabGpuPricing { gpu_name: "A100".to_string(), units_per_hour: 12.29 },
-        ColabGpuPricing { gpu_name: "V100".to_string(), units_per_hour: 5.36 },
+        ColabGpuPricing {
+            gpu_name: "T4".to_string(),
+            units_per_hour: 1.96,
+        },
+        ColabGpuPricing {
+            gpu_name: "L4".to_string(),
+            units_per_hour: 3.72,
+        },
+        ColabGpuPricing {
+            gpu_name: "A100".to_string(),
+            units_per_hour: 12.29,
+        },
+        ColabGpuPricing {
+            gpu_name: "V100".to_string(),
+            units_per_hour: 5.36,
+        },
     ]
 }
 
@@ -323,7 +335,10 @@ impl PricingStore {
     // Colab Pricing Methods
     // ========================
 
-    pub async fn update_colab_subscription(&self, subscription: ColabSubscription) -> Result<PricingSettings, AppError> {
+    pub async fn update_colab_subscription(
+        &self,
+        subscription: ColabSubscription,
+    ) -> Result<PricingSettings, AppError> {
         {
             let mut settings = self.settings.write().await;
             settings.colab.subscription = subscription;
@@ -332,7 +347,10 @@ impl PricingStore {
         Ok(self.get_settings().await)
     }
 
-    pub async fn update_colab_gpu_pricing(&self, gpu_pricing: Vec<ColabGpuPricing>) -> Result<PricingSettings, AppError> {
+    pub async fn update_colab_gpu_pricing(
+        &self,
+        gpu_pricing: Vec<ColabGpuPricing>,
+    ) -> Result<PricingSettings, AppError> {
         {
             let mut settings = self.settings.write().await;
             settings.colab.gpu_pricing = gpu_pricing;
@@ -343,7 +361,7 @@ impl PricingStore {
 
     pub async fn calculate_colab_pricing(&self) -> ColabPricingResult {
         let settings = self.settings.read().await;
-        
+
         // Get exchange rate for the subscription currency
         let exchange_rate = settings
             .exchange_rates
@@ -364,7 +382,7 @@ impl PricingStore {
             .map(|gpu| {
                 let price_usd_per_hour = gpu.units_per_hour * price_per_unit_usd;
                 let price_original = price_usd_per_hour * exchange_rate;
-                
+
                 ColabGpuHourlyPrice {
                     gpu_name: gpu.gpu_name.clone(),
                     units_per_hour: gpu.units_per_hour,
@@ -388,7 +406,10 @@ impl PricingStore {
     // Host Pricing Methods
     // ========================
 
-    pub async fn update_vast_rates(&self, rates: VastPricingRates) -> Result<PricingSettings, AppError> {
+    pub async fn update_vast_rates(
+        &self,
+        rates: VastPricingRates,
+    ) -> Result<PricingSettings, AppError> {
         {
             let mut settings = self.settings.write().await;
             settings.vast_rates = rates;
@@ -397,7 +418,11 @@ impl PricingStore {
         Ok(self.get_settings().await)
     }
 
-    pub async fn set_host_pricing(&self, host_id: String, pricing: HostPricing) -> Result<PricingSettings, AppError> {
+    pub async fn set_host_pricing(
+        &self,
+        host_id: String,
+        pricing: HostPricing,
+    ) -> Result<PricingSettings, AppError> {
         {
             let mut settings = self.settings.write().await;
             settings.host_pricing.insert(host_id, pricing);
@@ -420,13 +445,17 @@ impl PricingStore {
         settings.host_pricing.get(host_id).cloned()
     }
 
-    pub async fn calculate_host_cost(&self, host_id: &str, host_name: Option<String>) -> Option<HostCostBreakdown> {
+    pub async fn calculate_host_cost(
+        &self,
+        host_id: &str,
+        host_name: Option<String>,
+    ) -> Option<HostCostBreakdown> {
         let settings = self.settings.read().await;
         let pricing = settings.host_pricing.get(host_id)?;
 
         let gpu_per_hour = pricing.gpu_hourly_usd.unwrap_or(0.0);
         let storage_gb = pricing.storage_used_gb.unwrap_or(0.0);
-        
+
         // Calculate storage cost per hour
         let storage_rate = pricing.vast_rates.as_ref().unwrap_or(&settings.vast_rates);
         let storage_per_month = storage_gb * storage_rate.storage_per_gb_month;
@@ -456,7 +485,7 @@ impl PricingStore {
         for (host_id, pricing) in &settings.host_pricing {
             let gpu_per_hour = pricing.gpu_hourly_usd.unwrap_or(0.0);
             let storage_gb = pricing.storage_used_gb.unwrap_or(0.0);
-            
+
             let storage_rate = pricing.vast_rates.as_ref().unwrap_or(&settings.vast_rates);
             let storage_per_month = storage_gb * storage_rate.storage_per_gb_month;
             let storage_per_hour = storage_per_month / (30.0 * 24.0);
@@ -485,7 +514,10 @@ impl PricingStore {
     // Exchange Rate Methods
     // ========================
 
-    pub async fn update_exchange_rates(&self, rates: ExchangeRates) -> Result<PricingSettings, AppError> {
+    pub async fn update_exchange_rates(
+        &self,
+        rates: ExchangeRates,
+    ) -> Result<PricingSettings, AppError> {
         {
             let mut settings = self.settings.write().await;
             settings.exchange_rates = rates;
@@ -494,7 +526,10 @@ impl PricingStore {
         Ok(self.get_settings().await)
     }
 
-    pub async fn update_display_currency(&self, display_currency: Currency) -> Result<PricingSettings, AppError> {
+    pub async fn update_display_currency(
+        &self,
+        display_currency: Currency,
+    ) -> Result<PricingSettings, AppError> {
         {
             let mut settings = self.settings.write().await;
             settings.display_currency = display_currency;
@@ -520,7 +555,7 @@ impl PricingStore {
 /// Fetch exchange rates from free API
 pub async fn fetch_exchange_rates() -> Result<ExchangeRates, AppError> {
     let url = "https://api.frankfurter.app/latest?from=USD&to=JPY,HKD,CNY,EUR,GBP,KRW,TWD";
-    
+
     let response = reqwest::get(url)
         .await
         .map_err(|e| AppError::network(format!("Failed to fetch exchange rates: {}", e)))?;
@@ -639,7 +674,7 @@ pub async fn pricing_host_set(
 ) -> Result<PricingSettings, AppError> {
     let store = app.state::<Arc<PricingStore>>();
     let settings = store.get_settings().await;
-    
+
     let pricing = HostPricing {
         host_id: host_id.clone(),
         gpu_hourly_usd,
@@ -648,7 +683,7 @@ pub async fn pricing_host_set(
         updated_at: chrono::Utc::now().to_rfc3339(),
         source,
     };
-    
+
     store.set_host_pricing(host_id, pricing).await
 }
 
@@ -699,15 +734,17 @@ pub async fn pricing_sync_vast_instance(
     let cfg = crate::config::load_config().await?;
     let client = crate::vast::VastClient::from_cfg(&cfg)?;
     let instances = client.list_instances().await?;
-    
+
     let instance = instances
         .into_iter()
         .find(|i| i.id == vast_instance_id)
-        .ok_or_else(|| AppError::not_found(format!("Vast instance {} not found", vast_instance_id)))?;
+        .ok_or_else(|| {
+            AppError::not_found(format!("Vast instance {} not found", vast_instance_id))
+        })?;
 
     let store = app.state::<Arc<PricingStore>>();
     let settings = store.get_settings().await;
-    
+
     let pricing = HostPricing {
         host_id: host_id.clone(),
         gpu_hourly_usd: instance.dph_total,
@@ -716,7 +753,7 @@ pub async fn pricing_sync_vast_instance(
         updated_at: chrono::Utc::now().to_rfc3339(),
         source: PricingSource::VastApi,
     };
-    
+
     store.set_host_pricing(host_id, pricing.clone()).await?;
     Ok(pricing)
 }

@@ -329,7 +329,9 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
       const newLocked = !execution.intervention_locked;
       await interactiveRecipeApi.setLock(execution.id, newLocked);
       // Also update local terminal session state
-      setInterventionLocked(execution.terminal_id, newLocked);
+      if (execution.terminal_id) {
+        setInterventionLocked(execution.terminal_id, newLocked);
+      }
     } finally {
       setActionLoading(null);
     }

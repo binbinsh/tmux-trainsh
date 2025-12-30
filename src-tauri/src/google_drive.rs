@@ -74,7 +74,7 @@ const REDIRECT_URI: &str = "urn:ietf:wg:oauth:2.0:oob";
 pub fn generate_auth_url(config: &OAuthConfig) -> OAuthUrlResponse {
     // Build OAuth URL with required scopes for Google Drive
     let scopes = "https://www.googleapis.com/auth/drive";
-    
+
     let auth_url = format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
         GOOGLE_AUTH_URL,
@@ -90,12 +90,9 @@ pub fn generate_auth_url(config: &OAuthConfig) -> OAuthUrlResponse {
 }
 
 /// Exchange authorization code for tokens
-pub async fn exchange_code(
-    config: &OAuthConfig,
-    auth_code: &str,
-) -> Result<RcloneToken, AppError> {
+pub async fn exchange_code(config: &OAuthConfig, auth_code: &str) -> Result<RcloneToken, AppError> {
     let client = reqwest::Client::new();
-    
+
     let params = [
         ("client_id", config.client_id.as_str()),
         ("client_secret", config.client_secret.as_str()),
@@ -129,7 +126,7 @@ pub async fn exchange_code(
         .get("expires_in")
         .and_then(|v| v.as_i64())
         .unwrap_or(3600);
-    
+
     let expiry = chrono::Utc::now() + chrono::Duration::seconds(expires_in);
 
     let token = RcloneToken {
@@ -161,7 +158,7 @@ pub async fn exchange_code(
 /// Verify that a token is valid by making a test API call
 pub async fn verify_token(token: &RcloneToken) -> Result<bool, AppError> {
     let client = reqwest::Client::new();
-    
+
     let response = client
         .get("https://www.googleapis.com/drive/v3/about?fields=user")
         .header("Authorization", format!("Bearer {}", token.access_token))
@@ -208,27 +205,27 @@ pub async fn refresh_token(
 ) -> Result<String, AppError> {
     let token: RcloneToken = serde_json::from_str(token_json)
         .map_err(|e| AppError::invalid_input(format!("Invalid token format: {}", e)))?;
-    
+
     if token.refresh_token.is_empty() {
         return Err(AppError::command("No refresh token available"));
     }
-    
+
     let client = reqwest::Client::new();
-    
+
     let params = [
         ("client_id", client_id),
         ("client_secret", client_secret),
         ("refresh_token", &token.refresh_token),
         ("grant_type", "refresh_token"),
     ];
-    
+
     let response = client
         .post(GOOGLE_TOKEN_URL)
         .form(&params)
         .send()
         .await
         .map_err(|e| AppError::command(format!("Failed to refresh token: {}", e)))?;
-    
+
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
         return Err(AppError::command(format!(
@@ -236,20 +233,20 @@ pub async fn refresh_token(
             error_text
         )));
     }
-    
+
     let token_response: serde_json::Value = response
         .json()
         .await
         .map_err(|e| AppError::command(format!("Failed to parse refresh response: {}", e)))?;
-    
+
     // Parse new expiry time
     let expires_in = token_response
         .get("expires_in")
         .and_then(|v| v.as_i64())
         .unwrap_or(3600);
-    
+
     let expiry = chrono::Utc::now() + chrono::Duration::seconds(expires_in);
-    
+
     // Build new token (refresh_token might not be returned, use old one)
     let new_token = RcloneToken {
         access_token: token_response
@@ -269,11 +266,11 @@ pub async fn refresh_token(
             .unwrap_or(token.refresh_token), // Keep old refresh token if not returned
         expiry: expiry.to_rfc3339(),
     };
-    
+
     if new_token.access_token.is_empty() {
         return Err(AppError::command("No access token in refresh response"));
     }
-    
+
     Ok(format_token_for_rclone(&new_token))
 }
 
@@ -304,29 +301,45 @@ pub fn test_gdrive_connection(
         .map_err(|e| AppError::command(format!("Failed to create test remote: {}", e)))?;
 
     // Set parameters one by one
-    let _ = librclone::rpc("config/update", &serde_json::json!({
-        "name": remote_name,
-        "parameters": { "client_id": client_id },
-        "opt": { "nonInteractive": true }
-    }).to_string());
-    
-    let _ = librclone::rpc("config/update", &serde_json::json!({
-        "name": remote_name,
-        "parameters": { "client_secret": client_secret },
-        "opt": { "nonInteractive": true }
-    }).to_string());
-    
-    let _ = librclone::rpc("config/update", &serde_json::json!({
-        "name": remote_name,
-        "parameters": { "token": token_json },
-        "opt": { "nonInteractive": true }
-    }).to_string());
-    
-    let _ = librclone::rpc("config/update", &serde_json::json!({
-        "name": remote_name,
-        "parameters": { "scope": "drive" },
-        "opt": { "nonInteractive": true }
-    }).to_string());
+    let _ = librclone::rpc(
+        "config/update",
+        &serde_json::json!({
+            "name": remote_name,
+            "parameters": { "client_id": client_id },
+            "opt": { "nonInteractive": true }
+        })
+        .to_string(),
+    );
+
+    let _ = librclone::rpc(
+        "config/update",
+        &serde_json::json!({
+            "name": remote_name,
+            "parameters": { "client_secret": client_secret },
+            "opt": { "nonInteractive": true }
+        })
+        .to_string(),
+    );
+
+    let _ = librclone::rpc(
+        "config/update",
+        &serde_json::json!({
+            "name": remote_name,
+            "parameters": { "token": token_json },
+            "opt": { "nonInteractive": true }
+        })
+        .to_string(),
+    );
+
+    let _ = librclone::rpc(
+        "config/update",
+        &serde_json::json!({
+            "name": remote_name,
+            "parameters": { "scope": "drive" },
+            "opt": { "nonInteractive": true }
+        })
+        .to_string(),
+    );
 
     // Try to list root to verify connection
     let list_opts = serde_json::json!({
@@ -380,10 +393,10 @@ pub async fn gdrive_exchange_code(
         client_id,
         client_secret,
     };
-    
+
     let token = exchange_code(&config, &auth_code).await?;
     let token_json = format_token_for_rclone(&token);
-    
+
     Ok(token_json)
 }
 
@@ -392,7 +405,7 @@ pub async fn gdrive_exchange_code(
 pub async fn gdrive_verify_token(token_json: String) -> Result<bool, AppError> {
     let token: RcloneToken = serde_json::from_str(&token_json)
         .map_err(|e| AppError::invalid_input(format!("Invalid token format: {}", e)))?;
-    
+
     verify_token(&token).await
 }
 
@@ -405,4 +418,3 @@ pub async fn gdrive_test_connection(
 ) -> Result<bool, AppError> {
     test_gdrive_connection(&client_id, &client_secret, &token_json)
 }
-

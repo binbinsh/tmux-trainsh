@@ -7,7 +7,7 @@ The Recipe system replaces the fixed 6-step Task/Session workflow with a flexibl
 - **Atomic operations**: Basic building blocks (SSH commands, file sync, Vast.ai operations, etc.)
 - **Operation groups**: Compositions of atomic operations or other groups
 - **Dependency graphs**: Steps can depend on other steps, enabling parallel execution
-- **Execution control**: Pause, resume, retry, skip, and modify steps
+- **Execution control**: Pause, resume, cancel, and retry steps
 - **Persistence**: Save/load recipes as TOML files
 
 ## Core Concepts
@@ -68,9 +68,9 @@ Endpoints can be:
 
 | Operation | Description | Parameters |
 |-----------|-------------|------------|
-| `vast_start` | Start Vast instance | `instance_id` |
-| `vast_stop` | Stop Vast instance | `instance_id` |
-| `vast_destroy` | Destroy Vast instance | `instance_id` |
+| `vast_start` | Start target Vast host | (none; uses `${target}`) |
+| `vast_stop` | Stop target Vast host | (none; uses `${target}`) |
+| `vast_destroy` | Destroy target Vast host | (none; uses `${target}`) |
 
 #### Tmux
 
@@ -105,7 +105,7 @@ Endpoints can be:
 | `http_request` | Make HTTP request | `method`, `url`, `headers`, `body` |
 | `notify` | Send notification | `title`, `message` |
 
-#### Legacy (for backwards compatibility)
+#### SSH & Rsync
 
 | Operation | Description | Parameters |
 |-----------|-------------|------------|
@@ -144,7 +144,7 @@ Steps can declare dependencies:
 [[step]]
 id = "train"
 depends_on = ["sync_code", "sync_data"]  # Runs after both complete
-operation = { ssh_command = { command = "python train.py" } }
+run_commands = { commands = "python train.py" }
 ```
 
 The execution engine:
@@ -175,10 +175,10 @@ host = "vast-h100"
 
 [[step]]
 id = "train"
-operation = { ssh_command = { 
+run_commands = {
   host_id = "${host}",
-  command = "python train.py --model ${model_name} --epochs ${epochs}"
-}}
+  commands = "python train.py --model ${model_name} --epochs ${epochs}"
+}
 ```
 
 Special variables:
@@ -200,107 +200,115 @@ model = "llama-7b"
 local_project = "/Users/me/projects/llm-train"
 remote_workdir = "/workspace/train"
 
+[target]
+type = "vast"
+
 [[step]]
 id = "start_instance"
 name = "Start Vast Instance"
-operation = { vast_start = { instance_id = 12345 } }
+vast_start = {}
 
 [[step]]
 id = "wait_online"
 name = "Wait for Host Online"
 depends_on = ["start_instance"]
-operation = { wait_condition = { 
-  condition = { host_online = { host_id = "vast-12345" } },
+wait_condition = { 
+  condition = { host_online = { host_id = "${target}" } },
   timeout_secs = 300,
   poll_interval_secs = 10
-}}
+}
 
 [[step]]
 id = "sync_code"
 name = "Sync Source Code"
 depends_on = ["wait_online"]
-operation = { rsync_upload = {
-  host_id = "vast-12345",
+rsync_upload = {
+  host_id = "${target}",
   local_path = "${local_project}",
   remote_path = "${remote_workdir}",
   excludes = ["*.pth", "wandb/", "__pycache__/"]
-}}
+}
 
 [[step]]
 id = "install_deps"
 name = "Install Dependencies"
 depends_on = ["sync_code"]
-operation = { ssh_command = {
-  host_id = "vast-12345",
-  command = "cd ${remote_workdir} && pip install -r requirements.txt"
-}}
+run_commands = {
+  host_id = "${target}",
+  commands = "cd ${remote_workdir} && pip install -r requirements.txt"
+}
 
 [[step]]
 id = "train"
 name = "Run Training"
 depends_on = ["install_deps"]
-operation = { tmux_new = {
-  host_id = "vast-12345",
+tmux_new = {
+  host_id = "${target}",
   session_name = "train",
   command = "cd ${remote_workdir} && python train.py --model ${model}"
-}}
+}
 
 [[step]]
 id = "monitor"
 name = "Wait for Training Complete"
 depends_on = ["train"]
-operation = { wait_condition = {
+wait_condition = {
   condition = { file_exists = { 
-    host_id = "vast-12345",
+    host_id = "${target}",
     path = "${remote_workdir}/output/model.safetensors"
   }},
   timeout_secs = 86400,  # 24 hours
   poll_interval_secs = 60
-}}
+}
 
 [[step]]
 id = "download"
 name = "Download Results"
 depends_on = ["monitor"]
-operation = { rsync_download = {
-  host_id = "vast-12345",
+rsync_download = {
+  host_id = "${target}",
   remote_path = "${remote_workdir}/output",
   local_path = "/Users/me/models/output"
-}}
+}
 
 [[step]]
 id = "shutdown"
 name = "Stop Instance"
 depends_on = ["download"]
-operation = { vast_stop = { instance_id = 12345 } }
+vast_stop = {}
 ```
 
-## Execution State
+## Execution State (Interactive)
 
-Persisted alongside the recipe:
+Interactive executions are persisted as JSON under the app data directory:
 
-```toml
-[execution]
-recipe_path = "train-llama.toml"
-started_at = "2024-12-26T10:00:00Z"
-status = "running"  # pending, running, paused, completed, failed
+`<data_dir>/recipe_executions/interactive-<execution_id>.json`
 
-[[execution.steps]]
-id = "start_instance"
-status = "success"
-started_at = "2024-12-26T10:00:00Z"
-completed_at = "2024-12-26T10:00:05Z"
-output = "Instance started"
+Example (abridged):
 
-[[execution.steps]]
-id = "sync_code"
-status = "running"
-started_at = "2024-12-26T10:01:00Z"
-progress = { files_done = 50, files_total = 100, bytes_done = 1048576, bytes_total = 2097152 }
-
-[[execution.steps]]
-id = "train"
-status = "pending"
+```json
+{
+  "id": "exec-123",
+  "recipe_path": "train-llama.toml",
+  "recipe_name": "train-llama",
+  "terminal_id": null,
+  "terminal": {
+    "title": "Recipe: train-llama",
+    "tmux_session": "recipe-acde",
+    "cols": 120,
+    "rows": 32
+  },
+  "host_id": "vast:12345",
+  "status": "paused",
+  "current_step": "train",
+  "steps": [
+    { "step_id": "start_instance", "status": "success" },
+    { "step_id": "train", "status": "pending" }
+  ],
+  "variables": { "target": "vast:12345" },
+  "created_at": "2024-12-26T10:00:00Z",
+  "updated_at": "2024-12-26T10:15:00Z"
+}
 ```
 
 ## UI Components
@@ -332,7 +340,8 @@ src-tauri/src/
     mod.rs           # Module exports
     types.rs         # Recipe, Step, Operation types
     parser.rs        # TOML parsing
-    execution.rs     # DAG execution engine
+    execution.rs     # Shared step execution helpers
+    interactive.rs   # Interactive execution + persistence + resume
     operations/
       mod.rs
       ssh.rs
@@ -384,11 +393,13 @@ pub enum Operation {
 
 pub enum StepStatus {
     Pending,
+    Waiting,
     Running,
     Success,
-    Failed(String),
+    Failed,
     Skipped,
-    Retrying(u32),  // attempt number
+    Retrying,
+    Cancelled,
 }
 ```
 
@@ -405,21 +416,28 @@ recipe_delete(path: String) -> ()
 recipe_validate(recipe: Recipe) -> ValidationResult
 
 // Execution
-recipe_run(path: String, variables: HashMap<String, String>) -> ExecutionId
-recipe_pause(exec_id: String) -> ()
-recipe_resume(exec_id: String) -> ()
-recipe_cancel(exec_id: String) -> ()
-recipe_retry_step(exec_id: String, step_id: String) -> ()
-recipe_skip_step(exec_id: String, step_id: String) -> ()
-recipe_get_execution(exec_id: String) -> Execution
-recipe_list_executions() -> Vec<ExecutionSummary>
+recipe_run_interactive(app: AppHandle, term_mgr: State<TerminalManager>, path: String, host_id: String, variables: HashMap<String, String>, cols?: u16, rows?: u16) -> InteractiveExecution
+recipe_interactive_get(execution_id: String) -> InteractiveExecution
+recipe_interactive_list() -> Vec<InteractiveExecution>
+recipe_interactive_pause(execution_id: String) -> ()
+recipe_interactive_resume(app: AppHandle, term_mgr: State<TerminalManager>, execution_id: String) -> InteractiveExecution
+recipe_interactive_cancel(execution_id: String) -> ()
+recipe_interactive_send(execution_id: String, data: String) -> ()
+recipe_interactive_interrupt(execution_id: String) -> ()
+recipe_interactive_lock(execution_id: String, locked: bool) -> ()
+recipe_interactive_exec_command(execution_id: String, command: String) -> ()
+recipe_interactive_mark_complete(execution_id: String, step_id: String) -> ()
 
 // Events (emitted to frontend)
-recipe:step_started { exec_id, step_id }
-recipe:step_progress { exec_id, step_id, progress }
-recipe:step_completed { exec_id, step_id, output }
-recipe:step_failed { exec_id, step_id, error }
-recipe:execution_completed { exec_id }
+recipe:interactive_started { execution_id, terminal_id, recipe_name, host_id, steps }
+recipe:execution_updated { execution_id, status }
+recipe:step_started { execution_id, step_id, step_index }
+recipe:step_progress { execution_id, step_id, progress }
+recipe:step_completed { execution_id, step_id }
+recipe:step_failed { execution_id, step_id, error }
+recipe:execution_completed { execution_id }
+recipe:execution_failed { execution_id, error }
+recipe:execution_cancelled { execution_id }
 ```
 
 ## Migration from Session
@@ -432,24 +450,23 @@ name = "session-${name}"
 
 [[step]]
 id = "sync_source"
-operation = { rsync_upload = { ... } }
+rsync_upload = { ... }
 
 [[step]]
 id = "sync_data"
 depends_on = ["sync_source"]
-operation = { rsync_upload = { ... } }
+rsync_upload = { ... }
 when = "${data.enabled}"
 
 [[step]]
 id = "install_deps"
 depends_on = ["sync_source", "sync_data"]
-operation = { ssh_command = { command = "pip install -r requirements.txt" } }
+run_commands = { commands = "pip install -r requirements.txt" }
 
 [[step]]
 id = "run"
 depends_on = ["install_deps"]
-operation = { tmux_new = { command = "${run.command}" } }
+tmux_new = { command = "${run.command}" }
 ```
 
-This allows gradual migration while maintaining backwards compatibility.
-
+This allows gradual migration.

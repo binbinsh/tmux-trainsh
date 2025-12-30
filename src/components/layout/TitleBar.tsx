@@ -4,7 +4,6 @@ import { useLocation } from "@tanstack/react-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTerminalOptional, type TerminalSession } from "../../contexts/TerminalContext";
-import { useSidebar } from "./RootLayout";
 
 function IconPlus() {
   return (
@@ -62,15 +61,15 @@ function TerminalTab({
       transition={{ duration: 0.15 }}
       onClick={onClick}
       className={`
-        group relative flex items-center gap-1.5 pl-1.5 pr-3 h-6 w-56 flex-shrink-0 rounded-lg cursor-pointer
-        transition-all duration-150
-        ${isActive 
-          ? "bg-primary text-primary-foreground shadow-sm" 
-          : "bg-default-100/60 hover:bg-default-200/80 text-foreground/70 hover:text-foreground"
+        group relative flex items-center gap-2 pl-3 pr-3 h-7 w-52 flex-shrink-0 rounded-full cursor-pointer
+        border transition-all duration-150
+        ${isActive
+          ? "bg-[rgb(var(--doppio-titlebar-tab-active))] text-foreground border-divider shadow-sm"
+          : "bg-[rgb(var(--doppio-titlebar-tab-inactive))] text-foreground/70 border-divider/70 hover:bg-[rgb(var(--doppio-titlebar-tab-hover))] hover:text-foreground"
         }
       `}
     >
-      {/* Close button - on the left */}
+      {/* Close button - now at the front */}
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -78,15 +77,16 @@ function TerminalTab({
         }}
         className={`
           w-4 h-4 rounded-full flex items-center justify-center transition-all duration-150 flex-shrink-0
-          ${isActive 
-            ? "hover:bg-primary-foreground/20 text-primary-foreground/60 hover:text-primary-foreground" 
-            : "hover:bg-default-300 text-foreground/40 hover:text-foreground"
+          ${isActive
+            ? "text-foreground/60 hover:text-foreground hover:bg-default-200/70"
+            : "text-foreground/30 hover:text-foreground hover:bg-default-200/60 opacity-0 group-hover:opacity-100"
           }
         `}
+        aria-label="Close terminal"
       >
         <IconClose />
       </button>
-      
+
       {/* Title */}
       <span className="text-xs font-medium truncate min-w-0 flex-1">{session.title}</span>
     </motion.div>
@@ -97,7 +97,7 @@ export function TitleBar() {
   const location = useLocation();
   const isTerminalPage = location.pathname.startsWith("/terminal");
   const terminal = useTerminalOptional();
-  const sidebar = useSidebar();
+  const titleBarClassName = "h-9 flex items-center bg-[rgb(var(--doppio-titlebar-bg))] text-foreground border-b border-divider/70 pr-3 shadow-sm";
 
   // Handle drag on mousedown - more reliable than data-tauri-drag-region
   const handleMouseDown = async (e: React.MouseEvent) => {
@@ -122,30 +122,15 @@ export function TitleBar() {
     <div 
       data-tauri-drag-region
       onMouseDown={handleMouseDown}
-      className="h-8 flex items-center bg-content1/90 backdrop-blur-md border-b border-divider/50 pr-3"
+      className={`${titleBarClassName} backdrop-blur-md`}
       style={{ paddingLeft: 80 }} // Space for native macOS traffic lights
     >
-      {/* Left sidebar toggle - always visible */}
-      <div onMouseDown={(e) => e.stopPropagation()}>
-        <Tooltip content={sidebar.isCollapsed ? "Show Sidebar (⌘\\)" : "Hide Sidebar (⌘\\)"} delay={500}>
-          <Button
-            isIconOnly
-            size="sm"
-            variant="light"
-            onPress={sidebar.toggle}
-            className={`min-w-7 w-7 h-7 mr-2 ${sidebar.isCollapsed ? "text-foreground/40" : "text-foreground/60"} hover:text-foreground`}
-          >
-            <IconSidebar />
-          </Button>
-        </Tooltip>
-      </div>
-      
       {/* Terminal tabs - only show on terminal page */}
       {isTerminalPage && terminal && terminal.sessions.length > 0 ? (
         <>
           {/* Tabs area - NOT draggable, stop propagation */}
           <div 
-            className="flex items-center gap-1.5 overflow-x-auto shrink-0 py-0.5"
+            className="flex items-center gap-2 overflow-x-auto shrink-0 py-0.5"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <AnimatePresence mode="popLayout">
@@ -167,7 +152,7 @@ export function TitleBar() {
                 size="sm"
                 variant="light"
                 onPress={() => void terminal.openLocalTerminal()}
-                className="min-w-7 w-7 h-7 text-foreground/50 hover:text-foreground hover:bg-default-200 transition-colors"
+                className="min-w-7 w-7 h-7 text-foreground/50 hover:text-foreground hover:bg-default-200/70 transition-colors"
               >
                 <IconPlus />
               </Button>

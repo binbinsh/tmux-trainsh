@@ -1,7 +1,7 @@
 import { Chip } from "@nextui-org/react";
-import type { ExecutionStatus, HostStatus } from "../../lib/types";
+import type { HostStatus, InteractiveStatus } from "../../lib/types";
 
-type StatusType = ExecutionStatus | HostStatus | "uploading" | "created" | "stopped";
+type StatusType = HostStatus | InteractiveStatus | "uploading" | "created" | "stopped";
 
 const statusConfig: Record<StatusType, { color: "success" | "warning" | "danger" | "default" | "primary" | "secondary"; label: string }> = {
   // Execution statuses
@@ -11,6 +11,7 @@ const statusConfig: Record<StatusType, { color: "success" | "warning" | "danger"
   completed: { color: "secondary", label: "Completed" },
   failed: { color: "danger", label: "Failed" },
   cancelled: { color: "default", label: "Cancelled" },
+  waiting_for_input: { color: "secondary", label: "Waiting for Input" },
   // Legacy/compat statuses
   created: { color: "default", label: "Created" },
   uploading: { color: "primary", label: "Uploading" },

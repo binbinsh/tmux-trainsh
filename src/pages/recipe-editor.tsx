@@ -37,6 +37,7 @@ import {
 } from "../lib/tauri-api";
 import { useTerminalOptional } from "../contexts/TerminalContext";
 import type { Host, Recipe, Step, Storage, TargetHostType, TargetRequirements, ValidationResult } from "../lib/types";
+import { vastInstanceToHostCandidate } from "../lib/vast-host";
 import { FilePicker, type EndpointType, type SelectedEndpoint } from "../components/FilePicker";
 
 // Icons
@@ -201,9 +202,9 @@ const OPERATION_TYPES: OperationDef[] = [
   // Transfer
   { key: "transfer", label: "Transfer Files", icon: "📦", category: "transfer", description: "Transfer files between hosts/storage" },
   // Vast.ai
-  { key: "vast_start", label: "Start Instance", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Start a Vast.ai instance" },
-  { key: "vast_stop", label: "Stop Instance", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Stop a Vast.ai instance" },
-  { key: "vast_destroy", label: "Destroy Instance", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Destroy a Vast.ai instance" },
+  { key: "vast_start", label: "Start Target Host", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Start the target Vast.ai host" },
+  { key: "vast_stop", label: "Stop Target Host", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Stop the target Vast.ai host" },
+  { key: "vast_destroy", label: "Destroy Target Host", icon: <AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />, category: "vastai", description: "Destroy the target Vast.ai host" },
   // Tmux
   { key: "tmux_new", label: "New Session", icon: "📺", category: "tmux", description: "Create new tmux session" },
   { key: "tmux_send", label: "Send Keys", icon: "⌨️", category: "tmux", description: "Send keys to tmux session" },
@@ -325,8 +326,7 @@ function getOperationSummary(opType: string, opData: Record<string, unknown> | u
     case 'vast_start':
     case 'vast_stop':
     case 'vast_destroy': {
-      const instanceId = opData.instance_id;
-      return instanceId ? `#${instanceId}` : '';
+      return 'target';
     }
     
     case 'tmux_new': {
@@ -1066,11 +1066,11 @@ function createEmptyStep(id: string, opType: string): Step {
       return { ...baseStep, rsync_download: { host_id: "", remote_path: "", local_path: "" } };
     // Vast.ai
     case "vast_start":
-      return { ...baseStep, vast_start: { instance_id: 0 } };
+      return { ...baseStep, vast_start: {} };
     case "vast_stop":
-      return { ...baseStep, vast_stop: { instance_id: 0 } };
+      return { ...baseStep, vast_stop: {} };
     case "vast_destroy":
-      return { ...baseStep, vast_destroy: { instance_id: 0 } };
+      return { ...baseStep, vast_destroy: {} };
     // Tmux
     case "tmux_new":
       return { ...baseStep, tmux_new: { host_id: "", session_name: "" } };
@@ -1125,8 +1125,6 @@ function StepBlock({
   const opDef = getOperationDef(opType);
   const category = OPERATION_CATEGORIES[opDef.category];
   const opData = (step as Record<string, unknown>)[opType] as Record<string, unknown> | undefined;
-  const vastQuery = useVastInstances();
-  const vastInstances = (vastQuery.data ?? []).slice().sort((a, b) => a.id - b.id);
   
   const updateOp = (field: string, value: unknown) => {
     onChange({
@@ -1510,38 +1508,10 @@ function StepBlock({
       case "vast_stop":
       case "vast_destroy":
         return (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-black/60 w-24">Instance ID</span>
-            <Select
-              labelPlacement="inside"
-              selectedKeys={opData.instance_id ? [String(opData.instance_id)] : []}
-              onSelectionChange={(keys) => {
-                const id = Number(Array.from(keys)[0]);
-                if (Number.isFinite(id)) {
-                  updateOp("instance_id", id);
-                }
-              }}
-              size="sm"
-              variant="bordered"
-              className="max-w-[240px]"
-              placeholder={vastInstances.length > 0 ? "Select instance..." : "No instances found"}
-              isDisabled={vastInstances.length === 0}
-            >
-              {vastInstances.map((inst) => (
-                <SelectItem key={String(inst.id)} textValue={`#${inst.id}${inst.label ? ` ${inst.label}` : ""}`}>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium">
-                      #{inst.id}{inst.label ? ` - ${inst.label}` : ""}
-                    </span>
-                    <span className="text-xs text-foreground/60">
-                      {(inst.gpu_name ?? "Unknown GPU")}
-                      {inst.num_gpus ? ` | ${inst.num_gpus}x` : ""}
-                      {inst.actual_status ? ` | ${inst.actual_status}` : ""}
-                    </span>
-                  </div>
-                </SelectItem>
-              ))}
-            </Select>
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-700">
+              Uses the recipe target host (selected when you run the recipe).
+            </p>
           </div>
         );
         
@@ -1998,22 +1968,29 @@ export function RecipeEditorPage() {
   const params = useParams({ from: "/recipes/$path" });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const path = decodeURIComponent(params.path);
+  const routePath = decodeURIComponent(params.path);
   const terminalContext = useTerminalOptional();
   
-  const recipeQuery = useRecipe(path);
+  const recipePathRef = useRef(routePath);
+  useEffect(() => {
+    recipePathRef.current = routePath;
+  }, [routePath]);
+
+  const recipeQuery = useRecipe(routePath);
   const saveMutation = useSaveRecipe();
   const validateMutation = useValidateRecipe();
   
   const { isOpen: isVarsOpen, onOpen: onVarsOpen, onClose: onVarsClose } = useDisclosure();
   const { isOpen: isTargetOpen, onOpen: onTargetOpen, onClose: onTargetClose } = useDisclosure();
   const { isOpen: isHostSelectOpen, onOpen: onHostSelectOpen, onClose: onHostSelectClose } = useDisclosure();
+  const { isOpen: isRunErrorOpen, onOpen: onRunErrorOpen, onClose: onRunErrorClose } = useDisclosure();
   
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   
   // Ref to track last saved recipe for comparison
   const lastSavedRecipeRef = useRef<string>('');
@@ -2022,6 +1999,7 @@ export function RecipeEditorPage() {
   
   // Load hosts for selection
   const { data: hosts = [] } = useHosts();
+  const vastQuery = useVastInstances();
   
   // Debounced save function using use-debounce
   // This is more reliable than manual setTimeout as it properly handles closure values
@@ -2036,7 +2014,16 @@ export function RecipeEditorPage() {
       
       setSaveStatus('saving');
       try {
-        await saveMutation.mutateAsync({ path, recipe: recipeToSave });
+        const currentPath = recipePathRef.current;
+        const newPath = await saveMutation.mutateAsync({ path: currentPath, recipe: recipeToSave });
+        if (newPath !== currentPath) {
+          recipePathRef.current = newPath;
+          navigate({
+            to: "/recipes/$path",
+            params: { path: encodeURIComponent(newPath) },
+            replace: true,
+          });
+        }
         lastSavedRecipeRef.current = recipeJson;
         setSaveStatus('saved');
       } catch (e) {
@@ -2048,14 +2035,29 @@ export function RecipeEditorPage() {
     { maxWait: 2000 } // Max 2s wait to ensure saves happen
   );
   
-  // Load recipe data
+  // Load (and refresh) recipe data from the query cache.
+  // If the user has unsaved local edits, don't overwrite the editor state.
   useEffect(() => {
-    if (recipeQuery.data && !recipe) {
-      setRecipe(recipeQuery.data);
-      // Store the initial recipe as "last saved" to compare later
-      lastSavedRecipeRef.current = JSON.stringify(recipeQuery.data);
-      hasLoadedRef.current = true;
-    }
+    if (!recipeQuery.data) return;
+
+    const incomingJson = JSON.stringify(recipeQuery.data);
+
+    setRecipe((current) => {
+      if (!current) {
+        lastSavedRecipeRef.current = incomingJson;
+        hasLoadedRef.current = true;
+        return recipeQuery.data;
+      }
+
+      const currentJson = JSON.stringify(current);
+      const hasUnsavedChanges = currentJson !== lastSavedRecipeRef.current;
+      if (hasUnsavedChanges || currentJson === incomingJson) {
+        return current;
+      }
+
+      lastSavedRecipeRef.current = incomingJson;
+      return recipeQuery.data;
+    });
   }, [recipeQuery.data]);
   
   // Auto-save effect - triggers debounced save when recipe changes
@@ -2089,7 +2091,12 @@ export function RecipeEditorPage() {
   }, [recipe]);
   
   const handleRunClick = () => {
-    if (!recipe || !validation?.valid) return;
+    if (!recipe) return;
+    if (!validation?.valid) {
+      setRunError("Recipe is invalid. Fix validation errors before running.");
+      onRunErrorOpen();
+      return;
+    }
     
     // If recipe has a target defined, show host selection modal
     if (recipe.target) {
@@ -2108,6 +2115,7 @@ export function RecipeEditorPage() {
     try {
       // Ensure any pending save is completed before running
       await debouncedSave.flush();
+      const runPath = recipePathRef.current;
       
       // Build variables with target host if selected
       const variables: Record<string, string> = {};
@@ -2117,7 +2125,7 @@ export function RecipeEditorPage() {
       
       // Use interactive execution to run in terminal
       const execution = await interactiveRecipeApi.run({
-        path,
+        path: runPath,
         hostId: targetHostId || "__local__",
         variables,
       });
@@ -2131,6 +2139,9 @@ export function RecipeEditorPage() {
       
       // Add terminal session to context and navigate
       if (terminalContext) {
+        if (!execution.terminal_id) {
+          throw new Error("Execution did not return a terminal session");
+        }
         terminalContext.addRecipeTerminal({
           id: execution.terminal_id,
           title: `Recipe: ${execution.recipe_name}`,
@@ -2143,6 +2154,14 @@ export function RecipeEditorPage() {
       navigate({ to: "/terminal" });
     } catch (e) {
       console.error("Failed to run recipe:", e);
+      const msg =
+        typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setRunError(msg);
+      onRunErrorOpen();
     } finally {
       setIsRunning(false);
     }
@@ -2158,7 +2177,12 @@ export function RecipeEditorPage() {
   };
   
   // Filter hosts based on target requirements
-  const compatibleHosts = hosts.filter((host: Host) => {
+  const allHosts: Host[] = [
+    ...hosts,
+    ...(vastQuery.data ?? []).map(vastInstanceToHostCandidate),
+  ];
+
+  const compatibleHosts = allHosts.filter((host: Host) => {
     if (!recipe?.target) return true;
     
     // "any" type allows all hosts
@@ -2728,6 +2752,20 @@ export function RecipeEditorPage() {
               isLoading={isRunning}
             >
               {selectedHostId === "__local__" ? "Run Locally" : "Run on Selected Host"}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={isRunErrorOpen} onClose={onRunErrorClose} size="lg">
+        <ModalContent>
+          <ModalHeader>Failed to run recipe</ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-danger whitespace-pre-wrap">{runError ?? "Unknown error"}</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={onRunErrorClose}>
+              Close
             </Button>
           </ModalFooter>
         </ModalContent>

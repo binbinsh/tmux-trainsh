@@ -206,7 +206,11 @@ impl TransferStore {
         Ok(())
     }
 
-    pub async fn update_progress(&self, id: &str, progress: TransferProgress) -> Result<(), AppError> {
+    pub async fn update_progress(
+        &self,
+        id: &str,
+        progress: TransferProgress,
+    ) -> Result<(), AppError> {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get_mut(id) {
             task.progress = progress;
@@ -332,10 +336,14 @@ pub async fn execute_transfer(
     }
 
     // Emit starting progress
-    emit_transfer_progress(app, &task.id, TransferProgress {
-        current_file: Some("Starting transfer...".to_string()),
-        ..Default::default()
-    });
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            current_file: Some("Starting transfer...".to_string()),
+            ..Default::default()
+        },
+    );
 
     // Execute the operation
     let result = librclone::rpc(rpc_method, &sync_opts.to_string());
@@ -356,19 +364,26 @@ pub async fn execute_transfer(
     }
 
     result.map_err(|e| AppError::command(format!("Transfer failed: {}", e)))?;
-    
+
     // Emit completion
-    emit_transfer_progress(app, &task.id, TransferProgress {
-        files_done: 1,
-        files_total: 1,
-        current_file: None,
-        ..Default::default()
-    });
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            files_done: 1,
+            files_total: 1,
+            current_file: None,
+            ..Default::default()
+        },
+    );
 
     Ok(())
 }
 
-fn build_remote_spec(storage: &Storage, path: &str) -> Result<(Option<serde_json::Value>, String), AppError> {
+fn build_remote_spec(
+    storage: &Storage,
+    path: &str,
+) -> Result<(Option<serde_json::Value>, String), AppError> {
     match &storage.backend {
         StorageBackend::Local { root_path } => {
             let full_path = PathBuf::from(root_path)
@@ -377,10 +392,16 @@ fn build_remote_spec(storage: &Storage, path: &str) -> Result<(Option<serde_json
                 .to_string();
             Ok((None, full_path))
         }
-        StorageBackend::CloudflareR2 { account_id, access_key_id, secret_access_key, bucket, endpoint } => {
-            let endpoint = endpoint.clone().unwrap_or_else(|| {
-                format!("https://{}.r2.cloudflarestorage.com", account_id)
-            });
+        StorageBackend::CloudflareR2 {
+            account_id,
+            access_key_id,
+            secret_access_key,
+            bucket,
+            endpoint,
+        } => {
+            let endpoint = endpoint
+                .clone()
+                .unwrap_or_else(|| format!("https://{}.r2.cloudflarestorage.com", account_id));
             let config = serde_json::json!({
                 "type": "s3",
                 "provider": "Cloudflare",
@@ -392,7 +413,11 @@ fn build_remote_spec(storage: &Storage, path: &str) -> Result<(Option<serde_json
             let full_path = format!("{}/{}", bucket, path.trim_start_matches('/'));
             Ok((Some(config), full_path))
         }
-        StorageBackend::GoogleDrive { token, root_folder_id, .. } => {
+        StorageBackend::GoogleDrive {
+            token,
+            root_folder_id,
+            ..
+        } => {
             let mut config = serde_json::json!({
                 "type": "drive",
                 "scope": "drive",
@@ -405,7 +430,11 @@ fn build_remote_spec(storage: &Storage, path: &str) -> Result<(Option<serde_json
             }
             Ok((Some(config), path.trim_start_matches('/').to_string()))
         }
-        StorageBackend::GoogleCloudStorage { project_id, service_account_json, bucket } => {
+        StorageBackend::GoogleCloudStorage {
+            project_id,
+            service_account_json,
+            bucket,
+        } => {
             let mut config = serde_json::json!({
                 "type": "gcs",
                 "project_number": project_id,
@@ -416,7 +445,13 @@ fn build_remote_spec(storage: &Storage, path: &str) -> Result<(Option<serde_json
             let full_path = format!("{}/{}", bucket, path.trim_start_matches('/'));
             Ok((Some(config), full_path))
         }
-        StorageBackend::Smb { host, share, user, password, domain } => {
+        StorageBackend::Smb {
+            host,
+            share,
+            user,
+            password,
+            domain,
+        } => {
             let mut config = serde_json::json!({
                 "type": "smb",
                 "host": host,
@@ -433,7 +468,10 @@ fn build_remote_spec(storage: &Storage, path: &str) -> Result<(Option<serde_json
             let full_path = format!("{}/{}", share, path.trim_start_matches('/'));
             Ok((Some(config), full_path))
         }
-        StorageBackend::SshRemote { host_id, root_path: _ } => {
+        StorageBackend::SshRemote {
+            host_id,
+            root_path: _,
+        } => {
             // SSH remotes use SFTP via rclone - need async resolution
             Err(AppError::invalid_input(format!(
                 "SSH remote {} requires async resolution - use build_remote_spec_async",
@@ -477,7 +515,10 @@ fn build_sftp_config(ssh: &SshSpec) -> serde_json::Value {
 }
 
 /// Async version that can resolve SSH hosts
-async fn build_remote_spec_async(storage: &Storage, path: &str) -> Result<(Option<serde_json::Value>, String), AppError> {
+async fn build_remote_spec_async(
+    storage: &Storage,
+    path: &str,
+) -> Result<(Option<serde_json::Value>, String), AppError> {
     match &storage.backend {
         StorageBackend::SshRemote { host_id, root_path } => {
             let host_info = host::get_host(host_id).await?;
@@ -485,7 +526,11 @@ async fn build_remote_spec_async(storage: &Storage, path: &str) -> Result<(Optio
                 AppError::invalid_input(format!("Host {} has no SSH configuration", host_id))
             })?;
             let config = build_sftp_config(&ssh);
-            let full_path = format!("{}/{}", root_path.trim_end_matches('/'), path.trim_start_matches('/'));
+            let full_path = format!(
+                "{}/{}",
+                root_path.trim_end_matches('/'),
+                path.trim_start_matches('/')
+            );
             Ok((Some(config), full_path))
         }
         _ => build_remote_spec(storage, path),
@@ -494,13 +539,16 @@ async fn build_remote_spec_async(storage: &Storage, path: &str) -> Result<(Optio
 
 fn create_temp_remote(prefix: &str, config: &serde_json::Value) -> Result<String, AppError> {
     let remote_name = format!(
-        "{}_{}", 
-        prefix, 
+        "{}_{}",
+        prefix,
         uuid::Uuid::new_v4().to_string().replace("-", "")[..8].to_string()
     );
 
-    let remote_type = config.get("type").and_then(|v| v.as_str()).unwrap_or("local");
-    
+    let remote_type = config
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("local");
+
     // For Google Drive, use a different approach - create the remote without OAuth validation
     if remote_type == "drive" {
         // First create empty remote
@@ -514,42 +562,58 @@ fn create_temp_remote(prefix: &str, config: &serde_json::Value) -> Result<String
                 "noAutocomplete": true,
             }
         });
-        
+
         eprintln!("Creating Google Drive remote: {}", remote_name);
         librclone::rpc("config/create", &create_params.to_string())
             .map_err(|e| AppError::command(format!("Failed to create drive remote: {}", e)))?;
-        
+
         // Then set parameters one by one using config/update
         if let Some(client_id) = config.get("client_id").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "client_id": client_id },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "client_id": client_id },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
         if let Some(client_secret) = config.get("client_secret").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "client_secret": client_secret },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "client_secret": client_secret },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
         if let Some(token) = config.get("token").and_then(|v| v.as_str()) {
             eprintln!("Setting token for {}", remote_name);
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "token": token },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "token": token },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
         if let Some(scope) = config.get("scope").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "scope": scope },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "scope": scope },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
-        
+
         return Ok(remote_name);
     }
 
@@ -577,10 +641,13 @@ fn delete_temp_remote(remote_name: &str) {
 
 fn emit_transfer_progress(app: &AppHandle, task_id: &str, progress: TransferProgress) {
     let _ = app.emit(&format!("transfer-progress-{}", task_id), &progress);
-    let _ = app.emit("transfer-progress", serde_json::json!({
-        "task_id": task_id,
-        "progress": progress,
-    }));
+    let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+            "task_id": task_id,
+            "progress": progress,
+        }),
+    );
 }
 
 // ============================================================
@@ -596,7 +663,10 @@ pub async fn transfer_list(app: AppHandle) -> Result<Vec<TransferTask>, AppError
 #[tauri::command]
 pub async fn transfer_get(app: AppHandle, id: String) -> Result<TransferTask, AppError> {
     let store = app.state::<Arc<TransferStore>>();
-    store.get(&id).await.ok_or_else(|| AppError::not_found(format!("Transfer not found: {}", id)))
+    store
+        .get(&id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Transfer not found: {}", id)))
 }
 
 #[tauri::command]
@@ -647,7 +717,9 @@ async fn process_transfer_queue(app: AppHandle) {
 
         // Mark as running
         transfer_store.set_running(Some(task_id.clone())).await;
-        let _ = transfer_store.update_status(&task_id, TransferStatus::Running).await;
+        let _ = transfer_store
+            .update_status(&task_id, TransferStatus::Running)
+            .await;
 
         // Get task details
         let task = match transfer_store.get(&task_id).await {
@@ -659,7 +731,9 @@ async fn process_transfer_queue(app: AppHandle) {
         let source = match storage_store.get(&task.source_storage_id).await {
             Some(s) => s,
             None => {
-                let _ = transfer_store.set_error(&task_id, "Source storage not found".to_string()).await;
+                let _ = transfer_store
+                    .set_error(&task_id, "Source storage not found".to_string())
+                    .await;
                 continue;
             }
         };
@@ -667,7 +741,9 @@ async fn process_transfer_queue(app: AppHandle) {
         let dest = match storage_store.get(&task.dest_storage_id).await {
             Some(s) => s,
             None => {
-                let _ = transfer_store.set_error(&task_id, "Destination storage not found".to_string()).await;
+                let _ = transfer_store
+                    .set_error(&task_id, "Destination storage not found".to_string())
+                    .await;
                 continue;
             }
         };
@@ -675,7 +751,9 @@ async fn process_transfer_queue(app: AppHandle) {
         // Execute transfer
         match execute_transfer(&task, &source, &dest, &app).await {
             Ok(()) => {
-                let _ = transfer_store.update_status(&task_id, TransferStatus::Completed).await;
+                let _ = transfer_store
+                    .update_status(&task_id, TransferStatus::Completed)
+                    .await;
             }
             Err(e) => {
                 let _ = transfer_store.set_error(&task_id, e.to_string()).await;

@@ -21,7 +21,6 @@ export function AppLayout() {
     <div className="h-full flex flex-col">
       <Navbar maxWidth="full" className="border-b border-divider">
         <NavbarContent justify="start" className="gap-4">
-          <NavLink to="/dashboard" label="Dashboard" />
           <NavLink to="/hosts" label="Hosts" />
           <NavLink to="/sessions" label="Sessions" />
           <NavLink to="/colab" label="Colab" />

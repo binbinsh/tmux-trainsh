@@ -5,6 +5,7 @@ import {
   Chip,
   Divider,
   Input,
+  Skeleton,
   Spinner,
   Tab,
   Tabs,
@@ -17,15 +18,13 @@ import {
   Textarea,
   Progress,
   Tooltip,
-  Listbox,
-  ListboxItem,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { AppIcon } from "../components/AppIcon";
 import type { GpuInfo, Host, HostStatus, Storage, SystemInfo, VastInstance } from "../lib/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { copyText } from "../lib/clipboard";
 import {
   getConfig,
@@ -36,11 +35,17 @@ import {
   useStorages,
   useSyncVastPricing,
   useVastInstances,
+  sshCheck,
   vastAttachSshKey,
   vastFetchSystemInfo,
+  vastGetInstance,
+  vastStartInstance,
+  vastStopInstance,
   vastTestConnection,
+  gpuLookupCapability,
   type RemoteTmuxSession,
 } from "../lib/tauri-api";
+import { TmuxSessionSelectModal } from "../components/host/TmuxSessionSelectModal";
 import { StatusBadge } from "../components/shared/StatusBadge";
 import { formatPriceWithRates } from "../lib/currency";
 
@@ -100,6 +105,22 @@ function IconEdit() {
   );
 }
 
+function IconPlay() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3l14 9-14 9V3z" />
+    </svg>
+  );
+}
+
+function IconStop() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
+  );
+}
+
 function IconCopy() {
   return (
     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -126,6 +147,21 @@ function IconGpu() {
   );
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === "string") return maybeMessage;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
 // Temperature color helper
 function getTempColor(temp: number | null | undefined): string {
   if (temp == null) return "text-foreground/60";
@@ -135,11 +171,19 @@ function getTempColor(temp: number | null | undefined): string {
 }
 
 function getVastHostStatus(inst: VastInstance): HostStatus {
-  const v = (inst.actual_status ?? "").toLowerCase();
-  if (v.includes("running") || v.includes("active") || v.includes("online")) return "online";
-  if (v.includes("stopped") || v.includes("exited")) return "offline";
+  const parts = [
+    inst.cur_state,
+    inst.next_state,
+    inst.intended_status,
+    inst.actual_status,
+  ]
+    .filter(Boolean)
+    .map((s) => String(s).toLowerCase());
+  const v = parts.join(" ");
+
   if (v.includes("error") || v.includes("failed")) return "error";
-  if (v.includes("offline")) return "offline";
+  if (v.includes("running") || v.includes("active") || v.includes("online")) return "online";
+  if (v.includes("stopped") || v.includes("exited") || v.includes("offline")) return "offline";
   return "connecting";
 }
 
@@ -233,114 +277,6 @@ function VastPricingCard({
         )}
       </CardBody>
     </Card>
-  );
-}
-
-// Tmux Session Select Modal
-function TmuxSessionSelectModal({
-  sessions,
-  isOpen,
-  onClose,
-  onSelect,
-  onCreate,
-  isLoading,
-}: {
-  sessions: RemoteTmuxSession[];
-  isOpen: boolean;
-  onClose: () => void;
-  onSelect: (sessionName: string) => void;
-  onCreate: (sessionName: string) => void;
-  isLoading: boolean;
-}) {
-  const [newSessionName, setNewSessionName] = useState("");
-
-  const handleCreate = () => {
-    const name = newSessionName.trim() || "main";
-    onCreate(name);
-  };
-
-  return (
-    <Modal isOpen={isOpen} onOpenChange={(open) => !open && onClose()} isDismissable={true} size="md">
-      <ModalContent>
-        <ModalHeader className="flex items-center gap-2">
-          <IconTerminal />
-          Select Tmux Session
-        </ModalHeader>
-        <ModalBody className="gap-4">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Spinner size="lg" />
-            </div>
-          ) : sessions.length === 0 ? (
-            <div className="text-center py-4">
-              <p className="text-foreground/60 mb-4">No tmux sessions running on this host.</p>
-              <p className="text-sm text-foreground/50">A new session will be created when you connect.</p>
-            </div>
-          ) : (
-            <>
-              <p className="text-sm text-foreground/60">
-                Found {sessions.length} existing session{sessions.length > 1 ? "s" : ""}. Select one to attach:
-              </p>
-              <Listbox
-                aria-label="Tmux sessions"
-                selectionMode="single"
-                onAction={(key) => onSelect(String(key))}
-                className="p-0"
-              >
-                {sessions.map((s) => (
-                  <ListboxItem
-                    key={s.name}
-                    description={
-                      <span className="flex items-center gap-2">
-                        <span>{s.windows} window{s.windows !== 1 ? "s" : ""}</span>
-                        {s.attached && (
-                          <Chip size="sm" color="success" variant="flat" className="h-5">
-                            attached
-                          </Chip>
-                        )}
-                      </span>
-                    }
-                    className="py-3"
-                  >
-                    <span className="font-mono font-medium">{s.name}</span>
-                  </ListboxItem>
-                ))}
-              </Listbox>
-              <Divider />
-            </>
-          )}
-
-          {/* Create new session */}
-          <div>
-            <p className="text-sm font-medium mb-2">Or create a new session:</p>
-            <div className="flex gap-2">
-              <Input labelPlacement="inside" placeholder="Session name (default: main)"
-              value={newSessionName}
-              onValueChange={setNewSessionName}
-              size="sm"
-              className="flex-1"
-              classNames={{ input: "font-mono" }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
-              }} />
-              <Button
-                color="primary"
-                size="sm"
-                onPress={handleCreate}
-                className="min-w-[80px]"
-              >
-                Create
-              </Button>
-            </div>
-          </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
-            Cancel
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
   );
 }
 
@@ -632,8 +568,8 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
   const deleteModal = useDisclosure();
 
   // GPU detail state
-  const [selectedGpu, setSelectedGpu] = useState<GpuInfo | null>(null);
-  const [copiedSsh, setCopiedSsh] = useState(false);
+  const [selectedGpuIndex, setSelectedGpuIndex] = useState<number | null>(null);
+  const [copiedSsh, setCopiedSsh] = useState<null | "address" | "direct" | "proxy">(null);
   const pricingSettingsQuery = usePricingSettings();
   const displayCurrency = pricingSettingsQuery.data?.display_currency ?? "USD";
   const exchangeRates = pricingSettingsQuery.data?.exchange_rates;
@@ -658,6 +594,8 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
   const [vastCreatedAt] = useState(() => new Date().toISOString());
   const [vastSystemInfo, setVastSystemInfo] = useState<SystemInfo | null>(null);
   const [vastLastSeenAt, setVastLastSeenAt] = useState<string | null>(null);
+  const [vastStatusTarget, setVastStatusTarget] = useState<HostStatus | null>(null);
+  const [vastStatusPollUntil, setVastStatusPollUntil] = useState<number | null>(null);
 
   const cfgQuery = useQuery({
     queryKey: ["config"],
@@ -665,30 +603,72 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
     enabled: isVast,
   });
   const vastQuery = useVastInstances();
+  const vastInstanceDetailQuery = useQuery({
+    queryKey: ["vastInstance", vastInstanceId],
+    queryFn: () => vastGetInstance(vastInstanceId),
+    enabled: isVast && hasValidVastId,
+    staleTime: 10_000,
+  });
   const vastInstance = isVast && hasValidVastId
     ? (vastQuery.data ?? []).find((inst) => inst.id === vastInstanceId) ?? null
     : null;
-  const canVastConnect = Boolean(vastInstance?.ssh_host);
-  const vastHost: Host | null = isVast && vastInstance
+  const vastInstanceDetail = vastInstanceDetailQuery.data ?? vastInstance;
+  const vastInstanceForHost = vastInstanceDetail ?? vastInstance;
+  const vastGpuCapabilityQuery = useQuery({
+    queryKey: ["gpuCapability", vastInstanceDetail?.gpu_name ?? ""],
+    queryFn: () => gpuLookupCapability(vastInstanceDetail?.gpu_name ?? ""),
+    enabled: isVast && Boolean(vastInstanceDetail?.gpu_name),
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+  const vastDirectPort = vastInstanceDetail?.machine_dir_ssh_port ?? null;
+  const sshIdx = vastInstanceDetail?.ssh_idx ?? vastInstance?.ssh_idx ?? null;
+  const rawSshPort = vastInstanceDetail?.ssh_port ?? vastInstance?.ssh_port ?? null;
+  const normalizedSshIdx = sshIdx
+    ? sshIdx.startsWith("ssh")
+      ? sshIdx
+      : `ssh${sshIdx}`
+    : null;
+  const proxyHostFromApi = vastInstanceDetail?.ssh_host ?? vastInstance?.ssh_host ?? null;
+  const vastProxyHost = proxyHostFromApi?.includes("vast.ai")
+    ? proxyHostFromApi
+    : normalizedSshIdx
+      ? `${normalizedSshIdx}.vast.ai`
+      : null;
+  const vastProxyPort = rawSshPort != null ? rawSshPort : null;
+  const hasDirectSsh = Boolean(vastInstanceDetail?.public_ipaddr && vastDirectPort);
+  const hasProxySsh = Boolean((vastProxyHost ?? vastInstanceDetail?.ssh_host ?? vastInstance?.ssh_host) && rawSshPort);
+  const canVastConnect = hasDirectSsh || hasProxySsh;
+  const canVastExecute = isVast && hasValidVastId;
+  const vastPreferredSshMode = cfgQuery.data?.vast.ssh_connection_preference === "direct" ? "direct" : "proxy";
+  const vastSshMode = vastPreferredSshMode === "direct"
+    ? (hasDirectSsh ? "direct" : hasProxySsh ? "proxy" : null)
+    : (hasProxySsh ? "proxy" : hasDirectSsh ? "direct" : null);
+  const vastSshHostForMode = vastSshMode === "direct"
+    ? (vastInstanceDetail?.public_ipaddr ?? "")
+    : (vastProxyHost ?? vastInstanceForHost?.ssh_host ?? "");
+  const vastSshPortForMode = vastSshMode === "direct"
+    ? (vastDirectPort ?? 22)
+    : (vastProxyPort ?? rawSshPort ?? 22);
+  const vastHost: Host | null = isVast && vastInstanceForHost
     ? {
-        id: `vast-${vastInstance.id}`,
-        name: getVastDisplayName(vastInstance),
+        id: `vast-${vastInstanceForHost.id}`,
+        name: getVastDisplayName(vastInstanceForHost),
         type: "vast",
-        status: getVastHostStatus(vastInstance),
+        status: getVastHostStatus(vastInstanceForHost),
         ssh: canVastConnect
           ? {
-              host: vastInstance.ssh_host ?? "",
-              port: vastInstance.ssh_port ?? 22,
-              user: "root",
+              host: vastSshHostForMode,
+              port: vastSshPortForMode,
+              user: cfgQuery.data?.vast.ssh_user?.trim() || "root",
               keyPath: cfgQuery.data?.vast.ssh_key_path ?? null,
               extraArgs: [],
             }
           : null,
-        vast_instance_id: vastInstance.id,
+        vast_instance_id: vastInstanceForHost.id,
         cloudflared_hostname: null,
         env_vars: {},
-        gpu_name: vastInstance.gpu_name,
-        num_gpus: vastInstance.num_gpus,
+        gpu_name: vastInstanceForHost.gpu_name,
+        num_gpus: vastInstanceForHost.num_gpus,
         system_info: vastSystemInfo,
         created_at: vastCreatedAt,
         last_seen_at: vastLastSeenAt,
@@ -766,6 +746,98 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
 
   const refreshMutation = isVast ? vastRefreshMutation : savedRefreshMutation;
 
+  const vastStartMutation = useMutation({
+    mutationFn: async () => {
+      if (!hasValidVastId) {
+        throw new Error("Invalid Vast instance id");
+      }
+      return await vastStartInstance(vastInstanceId);
+    },
+    onSuccess: (inst) => {
+      queryClient.setQueryData(["vastInstance", vastInstanceId], inst);
+      queryClient.setQueryData(["vastInstances"], (prev: VastInstance[] | undefined) => {
+        if (!prev) return prev;
+        return prev.map((x) => (x.id === inst.id ? inst : x));
+      });
+      queryClient.invalidateQueries({ queryKey: ["vastInstances"] });
+      setVastStatusTarget("online");
+      setVastStatusPollUntil(Date.now() + 45_000);
+      void vastQuery.refetch();
+      void vastInstanceDetailQuery.refetch();
+    },
+  });
+
+  const vastStopMutation = useMutation({
+    mutationFn: async () => {
+      if (!hasValidVastId) {
+        throw new Error("Invalid Vast instance id");
+      }
+      return await vastStopInstance(vastInstanceId);
+    },
+    onSuccess: (inst) => {
+      queryClient.setQueryData(["vastInstance", vastInstanceId], inst);
+      queryClient.setQueryData(["vastInstances"], (prev: VastInstance[] | undefined) => {
+        if (!prev) return prev;
+        return prev.map((x) => (x.id === inst.id ? inst : x));
+      });
+      queryClient.invalidateQueries({ queryKey: ["vastInstances"] });
+      setVastStatusTarget("offline");
+      setVastStatusPollUntil(Date.now() + 45_000);
+      void vastQuery.refetch();
+      void vastInstanceDetailQuery.refetch();
+    },
+  });
+
+  const host = isVast ? vastHost : hostQuery.data;
+  const ipInfoTarget = useMemo(() => {
+    if (host?.status !== "online") return null;
+    if (isVast) {
+      const publicIp = vastInstanceDetail?.public_ipaddr?.trim();
+      return publicIp || null;
+    }
+    const hostValue = host?.ssh?.host?.trim();
+    return hostValue || null;
+  }, [host?.ssh?.host, host?.status, isVast, vastInstanceDetail?.public_ipaddr]);
+  const ipInfoQuery = useQuery({
+    queryKey: ["ipInfo", ipInfoTarget],
+    queryFn: async () => {
+      if (!ipInfoTarget) {
+        throw new Error("Missing IP info target");
+      }
+      return await hostApi.ipInfo(ipInfoTarget);
+    },
+    enabled: Boolean(ipInfoTarget),
+    staleTime: 10 * 60 * 1000,
+  });
+  const ipInfo = ipInfoTarget ? ipInfoQuery.data : null;
+
+  useEffect(() => {
+    if (!isVast || !vastStatusTarget) return;
+    const timer = window.setInterval(() => {
+      void vastQuery.refetch();
+      void vastInstanceDetailQuery.refetch();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [isVast, vastInstanceDetailQuery, vastQuery, vastStatusTarget]);
+
+  useEffect(() => {
+    if (!isVast || !vastStatusTarget) return;
+    if (host?.status === vastStatusTarget) {
+      setVastStatusTarget(null);
+      setVastStatusPollUntil(null);
+    }
+  }, [host?.status, isVast, vastStatusTarget]);
+
+  useEffect(() => {
+    if (!isVast || !vastStatusTarget || vastStatusPollUntil == null) return;
+    const ms = Math.max(0, vastStatusPollUntil - Date.now());
+    const timeout = window.setTimeout(() => {
+      setVastStatusTarget(null);
+      setVastStatusPollUntil(null);
+    }, ms);
+    return () => window.clearTimeout(timeout);
+  }, [isVast, vastStatusPollUntil, vastStatusTarget]);
+
   const deleteMutation = useMutation({
     mutationFn: () => hostApi.remove(hostId),
     onSuccess: () => {
@@ -816,7 +888,9 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
   // Clear test result when switching hosts
   useEffect(() => {
     setTestResult(null);
-    setSelectedGpu(null);
+    setSelectedGpuIndex(null);
+    setVastStatusTarget(null);
+    setVastStatusPollUntil(null);
   }, [hostId]);
 
   useEffect(() => {
@@ -832,8 +906,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
       const result = await testMutation.mutateAsync();
       setTestResult(result);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setTestResult({ success: false, message });
+      setTestResult({ success: false, message: getErrorMessage(e) });
     }
   }
 
@@ -844,17 +917,103 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
       return;
     }
 
+    if (isVast) {
+      setIsLoadingTmuxSessions(true);
+      try {
+        if (!cfgQuery.data?.vast.ssh_key_path) {
+          throw new Error("Missing Vast SSH key path. Configure it in Settings → Vast.ai → SSH Key Path.");
+        }
+        const vastUser = cfgQuery.data.vast.ssh_user?.trim() || "root";
+        const latest = await vastGetInstance(vastInstanceId);
+        queryClient.setQueryData(["vastInstance", vastInstanceId], latest);
+        const keyPath = hasValidVastId
+          ? await vastAttachSshKey(vastInstanceId, cfgQuery.data.vast.ssh_key_path)
+          : null;
+        await new Promise((r) => setTimeout(r, 1200));
+
+        const sshExtraArgs = [
+          "-o",
+          "IdentitiesOnly=yes",
+          "-o",
+          "PreferredAuthentications=publickey",
+          "-o",
+          "PasswordAuthentication=no",
+          "-o",
+          "BatchMode=yes",
+        ];
+
+        const candidates: Array<{ mode: "proxy" | "direct"; host: string; port: number }> = [];
+        const addCandidate = (mode: "proxy" | "direct") => {
+          if (mode === "proxy") {
+            const sshIdx = latest.ssh_idx ?? null;
+            const normalizedSshIdx = sshIdx
+              ? String(sshIdx).startsWith("ssh")
+                ? String(sshIdx)
+                : `ssh${sshIdx}`
+              : null;
+            const proxyHostFromApi = latest.ssh_host ?? null;
+            const proxyHost = proxyHostFromApi?.includes("vast.ai")
+              ? proxyHostFromApi
+              : normalizedSshIdx
+                ? `${normalizedSshIdx}.vast.ai`
+                : null;
+            const h = proxyHost?.trim();
+            const p = latest.ssh_port ?? null;
+            if (h && p) candidates.push({ mode, host: h, port: p });
+            return;
+          }
+          const h = latest.public_ipaddr?.trim();
+          const p = latest.machine_dir_ssh_port ?? null;
+          if (h && p) candidates.push({ mode, host: h, port: p });
+        };
+
+        const pref = cfgQuery.data.vast.ssh_connection_preference === "direct" ? "direct" : "proxy";
+        addCandidate(pref);
+        addCandidate(pref === "direct" ? "proxy" : "direct");
+
+        if (candidates.length === 0) {
+          throw new Error("No available SSH route for this instance (proxy/direct SSH not available yet).");
+        }
+
+        let lastError: unknown = null;
+        const attempts: string[] = [];
+        for (const cand of candidates) {
+          try {
+            await sshCheck({
+              host: cand.host,
+              port: cand.port,
+              user: vastUser,
+              keyPath,
+              extraArgs: sshExtraArgs,
+            });
+            await connectToTmuxSession("main", {
+              host: cand.host,
+              port: cand.port,
+              user: vastUser,
+              keyPath,
+              extraArgs: sshExtraArgs,
+            });
+            return;
+          } catch (e) {
+            lastError = e;
+            attempts.push(`${cand.mode.toUpperCase()} ${vastUser}@${cand.host}:${cand.port}: ${getErrorMessage(e)}`);
+          }
+        }
+
+        if (attempts.length > 0) {
+          throw new Error(`SSH connection failed.\n\n${attempts.join("\n\n")}`);
+        }
+        throw lastError ?? new Error("SSH connection failed");
+      } catch (e) {
+        console.error("Failed to open Vast terminal:", e);
+        setIsLoadingTmuxSessions(false);
+        alert(`Failed to open terminal: ${getErrorMessage(e)}`);
+      }
+      return;
+    }
+
     try {
       setIsLoadingTmuxSessions(true);
-
-      if (isVast) {
-        if (hasValidVastId) {
-          await vastAttachSshKey(vastInstanceId);
-        }
-        await connectToTmuxSession("main");
-        return;
-      }
-
       // Check for existing tmux sessions
       const sessions = await hostApi.listTmuxSessions(hostId);
 
@@ -878,20 +1037,24 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
     }
   }
 
-  async function connectToTmuxSession(sessionName: string) {
+  async function connectToTmuxSession(
+    sessionName: string,
+    sshOverride?: { host?: string; port?: number; user?: string; keyPath?: string | null; extraArgs?: string[] }
+  ) {
     const host = isVast ? vastHost : hostQuery.data;
     if (!host?.ssh) return;
 
     try {
+      const sshSpec = {
+        host: sshOverride?.host ?? host.ssh.host,
+        port: sshOverride?.port ?? host.ssh.port,
+        user: sshOverride?.user ?? host.ssh.user,
+        keyPath: sshOverride?.keyPath !== undefined ? sshOverride.keyPath : (host.ssh.keyPath ?? host.ssh.key_path ?? null),
+        extraArgs: sshOverride?.extraArgs ?? host.ssh.extraArgs ?? host.ssh.extra_args ?? [],
+      };
       console.log("Opening terminal for host:", host.name, "session:", sessionName);
       await termOpenSshTmux({
-        ssh: {
-          host: host.ssh.host,
-          port: host.ssh.port,
-          user: host.ssh.user,
-          keyPath: host.ssh.keyPath ?? host.ssh.key_path ?? null,
-          extraArgs: host.ssh.extraArgs ?? host.ssh.extra_args ?? [],
-        },
+        ssh: sshSpec,
         tmuxSession: sessionName,
         title: `${host.name} · ${sessionName}`,
         cols: 120,
@@ -910,21 +1073,225 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
     }
   }
 
-  const host = isVast ? vastHost : hostQuery.data;
   const isLoading = isVast
     ? vastQuery.isLoading || cfgQuery.isLoading
     : hostQuery.isLoading;
   const loadError = isVast
     ? vastQuery.error || cfgQuery.error
     : hostQuery.error;
-  const diskSpaceGb = vastInstance?.disk_space
+  const canStartVast = isVast && hasValidVastId && host?.status !== "online";
+  const canStopVast = isVast && hasValidVastId && host?.status === "online";
+  const diskSpaceGb = vastInstanceDetail?.disk_space
     ?? host?.system_info?.disks?.reduce((sum, disk) => sum + disk.total_gb, 0)
     ?? null;
-  const storagePerHour = vastInstance?.storage_cost != null && diskSpaceGb != null
-    ? (vastInstance.storage_cost / 720) * diskSpaceGb
+  const vastSshUser = cfgQuery.data?.vast.ssh_user?.trim() || "root";
+  const storagePerHour = vastInstanceDetail?.storage_cost != null && diskSpaceGb != null
+    ? (vastInstanceDetail.storage_cost / 720) * diskSpaceGb
     : null;
-  const uploadPerTb = vastInstance?.inet_up_cost != null ? vastInstance.inet_up_cost * 1024 : null;
-  const downloadPerTb = vastInstance?.inet_down_cost != null ? vastInstance.inet_down_cost * 1024 : null;
+  const uploadPerTb = vastInstanceDetail?.inet_up_cost != null ? vastInstanceDetail.inet_up_cost * 1024 : null;
+  const downloadPerTb = vastInstanceDetail?.inet_down_cost != null ? vastInstanceDetail.inet_down_cost * 1024 : null;
+  const vastSshHost = vastInstanceDetail?.public_ipaddr ?? null;
+  const vastSshIdx = normalizedSshIdx;
+  const directSsh = vastSshHost && vastDirectPort
+    ? `ssh -p ${vastDirectPort} ${vastSshUser}@${vastSshHost}`
+    : null;
+  const proxySsh = vastSshIdx && vastProxyPort
+    ? `ssh -p ${vastProxyPort} ${vastSshUser}@${vastSshIdx}.vast.ai`
+    : null;
+  const vastGpuList = useMemo(() => {
+    if (!isVast || !vastInstanceDetail?.gpu_name) return [];
+    const count = Math.max(1, vastInstanceDetail.num_gpus ?? 1);
+    const capability = vastGpuCapabilityQuery.data ?? null;
+    const perGpuRamMb = vastInstanceDetail.gpu_ram != null
+      ? Math.round(vastInstanceDetail.gpu_ram)
+      : vastInstanceDetail.gpu_totalram != null
+        ? Math.round(vastInstanceDetail.gpu_totalram / count)
+        : null;
+    const pcieGen = vastInstanceDetail.pci_gen != null ? Math.round(vastInstanceDetail.pci_gen) : null;
+    const pcieWidth = vastInstanceDetail.gpu_lanes != null ? Math.round(vastInstanceDetail.gpu_lanes) : null;
+    return Array.from({ length: count }, (_, idx) => ({
+      index: idx,
+      name: vastInstanceDetail.gpu_name ?? "GPU",
+      memory_total_mb: perGpuRamMb ?? 0,
+      memory_used_mb: null,
+      utilization: vastInstanceDetail.gpu_util != null ? Math.round(vastInstanceDetail.gpu_util) : null,
+      temperature: null,
+      driver_version: vastInstanceDetail.driver_version ?? null,
+      power_draw_w: null,
+      power_limit_w: null,
+      clock_graphics_mhz: null,
+      clock_memory_mhz: null,
+      fan_speed: null,
+      compute_mode: null,
+      pcie_gen: pcieGen,
+      pcie_width: pcieWidth,
+      capability,
+    }));
+  }, [isVast, vastGpuCapabilityQuery.data, vastInstanceDetail]);
+  const displaySystemInfo = useMemo<SystemInfo | null>(() => {
+    if (host?.system_info) return host.system_info;
+    if (!isVast || !vastInstanceDetail) return null;
+
+    const memoryTotalGb = (() => {
+      if (vastInstanceDetail.mem_limit != null && vastInstanceDetail.mem_limit > 0) {
+        return vastInstanceDetail.mem_limit;
+      }
+      if (vastInstanceDetail.cpu_ram != null && vastInstanceDetail.cpu_ram > 0) {
+        return vastInstanceDetail.cpu_ram / 1024;
+      }
+      return null;
+    })();
+
+    const memoryUsedGb = (() => {
+      if (memoryTotalGb == null || vastInstanceDetail.mem_usage == null) return null;
+      if (vastInstanceDetail.mem_usage <= 1) {
+        return memoryTotalGb * vastInstanceDetail.mem_usage;
+      }
+      return vastInstanceDetail.mem_usage;
+    })();
+
+    const memoryAvailableGb = memoryTotalGb != null && memoryUsedGb != null
+      ? Math.max(memoryTotalGb - memoryUsedGb, 0)
+      : null;
+
+    const diskTotalGb = vastInstanceDetail.disk_space ?? null;
+    const diskUsedGb = (() => {
+      if (diskTotalGb == null) return null;
+      if (vastInstanceDetail.disk_util != null && vastInstanceDetail.disk_util >= 0 && vastInstanceDetail.disk_util <= 1) {
+        return diskTotalGb * vastInstanceDetail.disk_util;
+      }
+      if (vastInstanceDetail.disk_usage != null && vastInstanceDetail.disk_usage >= 0 && vastInstanceDetail.disk_usage <= 1) {
+        return diskTotalGb * vastInstanceDetail.disk_usage;
+      }
+      if (vastInstanceDetail.disk_usage != null && vastInstanceDetail.disk_usage > 1) {
+        return Math.min(vastInstanceDetail.disk_usage, diskTotalGb);
+      }
+      return null;
+    })();
+    const diskAvailableGb = diskTotalGb != null && diskUsedGb != null
+      ? Math.max(diskTotalGb - diskUsedGb, 0)
+      : null;
+
+    const disks = diskTotalGb != null ? [
+      {
+        mount_point: vastInstanceDetail.disk_name?.trim() || "/",
+        total_gb: diskTotalGb,
+        used_gb: diskUsedGb ?? 0,
+        available_gb: diskAvailableGb ?? Math.max(diskTotalGb - (diskUsedGb ?? 0), 0),
+      },
+    ] : [];
+
+    const os = vastInstanceDetail.os_version
+      ? `Ubuntu ${vastInstanceDetail.os_version}`
+      : null;
+
+    return {
+      cpu_model: vastInstanceDetail.cpu_name ?? null,
+      cpu_cores: vastInstanceDetail.cpu_cores ?? null,
+      memory_total_gb: memoryTotalGb,
+      memory_used_gb: memoryUsedGb,
+      memory_available_gb: memoryAvailableGb,
+      disks,
+      gpu_list: [],
+      os,
+      hostname: null,
+    };
+  }, [host?.system_info, isVast, vastInstanceDetail]);
+  const displayGpuList = displaySystemInfo?.gpu_list?.length ? displaySystemInfo.gpu_list : (isVast ? vastGpuList : []);
+  const hasFullSystemInfo = Boolean(host?.system_info);
+  const selectedGpu = useMemo(() => {
+    if (selectedGpuIndex == null) return null;
+    return displayGpuList.find((gpu) => gpu.index === selectedGpuIndex) ?? null;
+  }, [displayGpuList, selectedGpuIndex]);
+
+  const renderGpuList = (gpuList: GpuInfo[]) => {
+    if (gpuList.length === 0) {
+      return (
+        <div>
+          <p className="text-sm text-foreground/60">GPU</p>
+          <p className="text-sm">No NVIDIA GPU detected</p>
+        </div>
+      );
+    }
+    return (
+      <div>
+        <p className="text-sm text-foreground/60 mb-2">GPUs ({gpuList.length})</p>
+        <div className="space-y-2">
+          {gpuList.map((gpu) => {
+            const memUsedPct = gpu.memory_used_mb != null && gpu.memory_total_mb > 0
+              ? Math.round((gpu.memory_used_mb / gpu.memory_total_mb) * 100)
+              : 0;
+            return (
+              <Tooltip key={gpu.index} content="Click for details" delay={500}>
+                <div
+                  className="p-3 rounded-lg bg-content2 cursor-pointer hover:bg-content3 transition-colors border border-transparent hover:border-primary/30"
+                  onClick={() => {
+                    setSelectedGpuIndex(gpu.index);
+                    gpuModal.onOpen();
+                  }}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <IconGpu />
+                      <span className="font-medium text-sm">{gpu.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {gpu.temperature != null && (
+                        <span className={`text-xs font-medium ${getTempColor(gpu.temperature)}`}>
+                          {gpu.temperature}°C
+                        </span>
+                      )}
+                      <Chip size="sm" variant="flat">GPU {gpu.index}</Chip>
+                    </div>
+                  </div>
+                  <div className="mb-2">
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-foreground/60">VRAM</span>
+                      <span>
+                        {gpu.memory_used_mb != null && gpu.memory_total_mb > 0 && (
+                          <>{(gpu.memory_used_mb / 1024).toFixed(1)} / </>
+                        )}
+                        {gpu.memory_total_mb > 0 ? (gpu.memory_total_mb / 1024).toFixed(0) : "-"} GB
+                        {gpu.memory_used_mb != null && gpu.memory_total_mb > 0 && (
+                          <span className="text-foreground/60 ml-1">({memUsedPct}%)</span>
+                        )}
+                      </span>
+                    </div>
+                    <Progress
+                      value={memUsedPct}
+                      size="sm"
+                      color={memUsedPct > 90 ? "danger" : memUsedPct > 70 ? "warning" : "primary"}
+                      className="h-1.5"
+                    />
+                  </div>
+                  <div className="flex gap-4 text-xs">
+                    {gpu.utilization != null && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-foreground/60">Util:</span>
+                        <span className="font-medium">{gpu.utilization}%</span>
+                      </div>
+                    )}
+                    {gpu.power_draw_w != null && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-foreground/60">Power:</span>
+                        <span className="font-medium">{gpu.power_draw_w.toFixed(0)}W</span>
+                      </div>
+                    )}
+                    {gpu.driver_version && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-foreground/60">Driver:</span>
+                        <span className="font-mono">{gpu.driver_version}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Tooltip>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   if (isLoading) {
     return (
@@ -979,11 +1346,46 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
             <Button
               variant="flat"
               startContent={<IconTerminal />}
-              onPress={handleOpenTerminal}
+              onPress={() => {
+                const label = host.name;
+                if (isVast) {
+                  if (!hasValidVastId) return;
+                  navigate({
+                    to: "/terminal",
+                    search: { connectVastInstanceId: String(vastInstanceId), connectLabel: label },
+                  });
+                  return;
+                }
+                navigate({ to: "/terminal", search: { connectHostId: hostId, connectLabel: label } });
+              }}
               isDisabled={!host.ssh || (isVast && !canVastConnect)}
             >
               Terminal
             </Button>
+            {isVast && canStartVast && (
+              <Button
+                variant="flat"
+                color="success"
+                startContent={<IconPlay />}
+                onPress={() => vastStartMutation.mutate()}
+                isLoading={vastStartMutation.isPending || vastStatusTarget === "online"}
+                isDisabled={vastStatusTarget === "online"}
+              >
+                Start
+              </Button>
+            )}
+            {isVast && canStopVast && (
+              <Button
+                variant="flat"
+                color="warning"
+                startContent={<IconStop />}
+                onPress={() => vastStopMutation.mutate()}
+                isLoading={vastStopMutation.isPending || vastStatusTarget === "offline"}
+                isDisabled={vastStatusTarget === "offline"}
+              >
+                Stop
+              </Button>
+            )}
             {!isVast && (
               <Button
                 variant="flat"
@@ -998,7 +1400,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
               startContent={<IconRefresh />}
               onPress={() => refreshMutation.mutate()}
               isLoading={refreshMutation.isPending}
-              isDisabled={isVast && !canVastConnect}
+              isDisabled={isVast && !canVastExecute}
             >
               Refresh
             </Button>
@@ -1030,7 +1432,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       variant="flat"
                       onPress={handleTest}
                       isLoading={testMutation.isPending}
-                      isDisabled={isVast && !canVastConnect}
+                      isDisabled={isVast && !canVastExecute}
                     >
                       Test Connection
                     </Button>
@@ -1040,33 +1442,79 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                 <CardBody className="gap-4">
                   {host.ssh ? (
                     <div className="grid grid-cols-2 gap-4">
-                      {sshAddress && (
+                      {!isVast && (
+                        sshAddress && (
+                          <div className="col-span-2 flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm text-foreground/60">SSH Address</p>
+                              <p className="font-mono select-text">{sshAddress}</p>
+                            </div>
+                            <Button
+                              isIconOnly
+                              size="sm"
+                              variant="light"
+                              onPress={async () => {
+                                await copyText(sshAddress);
+                              setCopiedSsh("address");
+                              setTimeout(() => setCopiedSsh(null), 1200);
+                            }}
+                          >
+                              {copiedSsh === "address" ? <IconCheck /> : <IconCopy />}
+                            </Button>
+                          </div>
+                        )
+                      )}
+                      {isVast && directSsh && (
                         <div className="col-span-2 flex items-center justify-between gap-3">
                           <div>
-                            <p className="text-sm text-foreground/60">SSH Address</p>
-                            <p className="font-mono select-text">{sshAddress}</p>
+                            <p className="text-sm text-foreground/60">Direct SSH</p>
+                            <p className="font-mono select-text">{directSsh}</p>
                           </div>
                           <Button
                             isIconOnly
                             size="sm"
                             variant="light"
                             onPress={async () => {
-                              await copyText(sshAddress);
-                              setCopiedSsh(true);
-                              setTimeout(() => setCopiedSsh(false), 1200);
+                              await copyText(directSsh);
+                              setCopiedSsh("direct");
+                              setTimeout(() => setCopiedSsh(null), 1200);
                             }}
                           >
-                            {copiedSsh ? <IconCheck /> : <IconCopy />}
+                            {copiedSsh === "direct" ? <IconCheck /> : <IconCopy />}
+                          </Button>
+                        </div>
+                      )}
+                      {isVast && proxySsh && (
+                        <div className="col-span-2 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm text-foreground/60">Proxy SSH</p>
+                            <p className="font-mono select-text">{proxySsh}</p>
+                          </div>
+                          <Button
+                            isIconOnly
+                            size="sm"
+                            variant="light"
+                            onPress={async () => {
+                              await copyText(proxySsh);
+                              setCopiedSsh("proxy");
+                              setTimeout(() => setCopiedSsh(null), 1200);
+                            }}
+                          >
+                            {copiedSsh === "proxy" ? <IconCheck /> : <IconCopy />}
                           </Button>
                         </div>
                       )}
                       <div>
                         <p className="text-sm text-foreground/60">Host</p>
-                        <p className="font-mono select-text">{host.ssh.host}</p>
+                        <p className="font-mono select-text">
+                          {host.ssh.host}
+                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-foreground/60">Port</p>
-                        <p className="font-mono select-text">{host.ssh.port}</p>
+                        <p className="font-mono select-text">
+                          {host.ssh.port}
+                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-foreground/60">User</p>
@@ -1090,6 +1538,105 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       {testResult.message}
                     </div>
                   )}
+                  {refreshMutation.error && (
+                    <div className="p-3 rounded-lg bg-danger/10 text-danger">
+                      {getErrorMessage(refreshMutation.error)}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
+
+              {/* IP Info Card */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between w-full">
+                    <span className="font-semibold">IP Info</span>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      onPress={() => ipInfoQuery.refetch()}
+                      isLoading={ipInfoQuery.isFetching}
+                      isDisabled={!ipInfoTarget}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                </CardHeader>
+                <Divider />
+                <CardBody className="gap-4">
+                  {host?.status !== "online" ? (
+                    <p className="text-foreground/60">Host is offline. IP info is available when online.</p>
+                  ) : !ipInfoTarget ? (
+                    <p className="text-foreground/60">No public host address available for IP lookup.</p>
+                  ) : ipInfoQuery.isLoading ? (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {[0, 1, 2, 3, 4, 5].map((idx) => (
+                        <div key={idx} className="space-y-2">
+                          <Skeleton className="h-3 w-20 rounded" />
+                          <Skeleton className="h-4 w-32 rounded" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : ipInfoQuery.error ? (
+                    <div className="p-3 rounded-lg bg-danger/10 text-danger">
+                      {getErrorMessage(ipInfoQuery.error)}
+                    </div>
+                  ) : ipInfo ? (
+                    <>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div>
+                          <p className="text-sm text-foreground/60">IP</p>
+                          <p className="font-mono text-sm">{ipInfo.ip ?? "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-foreground/60">Hostname</p>
+                          <p className="text-sm break-all">{ipInfo.hostname ?? "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-foreground/60">Location</p>
+                          <p className="font-mono text-sm">{ipInfo.loc ?? "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-foreground/60">City</p>
+                          <p className="text-sm">{ipInfo.city ?? "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-foreground/60">Region</p>
+                          <p className="text-sm">{ipInfo.region ?? "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-foreground/60">Country</p>
+                          <p className="text-sm">{ipInfo.country ?? "-"}</p>
+                        </div>
+                        <div className="col-span-2 md:col-span-3">
+                          <p className="text-sm text-foreground/60">Organization</p>
+                          <p className="text-sm break-all">{ipInfo.org ?? "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-foreground/60">Timezone</p>
+                          <p className="text-sm">{ipInfo.timezone ?? "-"}</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-foreground/50">
+                        Source: ipinfo.io
+                        {ipInfo.readme && (
+                          <>
+                            {" - "}
+                            <a
+                              href={ipInfo.readme}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline"
+                            >
+                              Readme
+                            </a>
+                          </>
+                        )}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-foreground/60">No IP info available.</p>
+                  )}
                 </CardBody>
               </Card>
 
@@ -1098,13 +1645,13 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                 <CardHeader>
                   <div className="flex items-center justify-between w-full">
                     <span className="font-semibold">System Information</span>
-                    {!host.system_info && (
+                    {!hasFullSystemInfo && (
                       <Button
                         size="sm"
                         variant="flat"
                         onPress={() => refreshMutation.mutate()}
                         isLoading={refreshMutation.isPending}
-                        isDisabled={isVast && !canVastConnect}
+                        isDisabled={isVast && !canVastExecute}
                       >
                         Fetch Info
                       </Button>
@@ -1113,17 +1660,22 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                 </CardHeader>
                 <Divider />
                 <CardBody className="gap-4">
-                  {host.system_info ? (
+                  {displaySystemInfo ? (
                     <>
+                      {isVast && !hasFullSystemInfo && (
+                        <p className="text-foreground/60 mb-3">
+                          Limited info from Vast.ai. Click "Refresh" to fetch full system info.
+                        </p>
+                      )}
                       {/* OS & Hostname */}
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <p className="text-sm text-foreground/60">OS</p>
-                          <p className="text-sm">{host.system_info.os ?? "-"}</p>
+                          <p className="text-sm">{displaySystemInfo.os ?? "-"}</p>
                         </div>
                         <div>
                           <p className="text-sm text-foreground/60">Hostname</p>
-                          <p className="text-sm font-mono">{host.system_info.hostname ?? "-"}</p>
+                          <p className="text-sm font-mono">{displaySystemInfo.hostname ?? "-"}</p>
                         </div>
                       </div>
 
@@ -1131,11 +1683,11 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <p className="text-sm text-foreground/60">CPU</p>
-                          <p className="text-sm">{host.system_info.cpu_model ?? "-"}</p>
+                          <p className="text-sm">{displaySystemInfo.cpu_model ?? "-"}</p>
                         </div>
                         <div>
                           <p className="text-sm text-foreground/60">Cores</p>
-                          <p className="text-sm">{host.system_info.cpu_cores ?? "-"}</p>
+                          <p className="text-sm">{displaySystemInfo.cpu_cores ?? "-"}</p>
                         </div>
                       </div>
 
@@ -1143,24 +1695,26 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       <div className="grid grid-cols-3 gap-4">
                         <div>
                           <p className="text-sm text-foreground/60">Memory Total</p>
-                          <p className="text-sm">{host.system_info.memory_total_gb?.toFixed(1) ?? "-"} GB</p>
+                          <p className="text-sm">{displaySystemInfo.memory_total_gb?.toFixed(1) ?? "-"} GB</p>
                         </div>
                         <div>
                           <p className="text-sm text-foreground/60">Memory Used</p>
-                          <p className="text-sm">{host.system_info.memory_used_gb?.toFixed(1) ?? "-"} GB</p>
+                          <p className="text-sm">{displaySystemInfo.memory_used_gb?.toFixed(1) ?? "-"} GB</p>
                         </div>
                         <div>
                           <p className="text-sm text-foreground/60">Memory Available</p>
-                          <p className="text-sm">{host.system_info.memory_available_gb?.toFixed(1) ?? "-"} GB</p>
+                          <p className="text-sm">{displaySystemInfo.memory_available_gb?.toFixed(1) ?? "-"} GB</p>
                         </div>
                       </div>
 
                       {/* Disks */}
-                      {host.system_info.disks && host.system_info.disks.length > 0 && (
+                      {displaySystemInfo.disks && displaySystemInfo.disks.length > 0 && (
                         <div>
-                          <p className="text-sm text-foreground/60 mb-2">Disks ({host.system_info.disks.length})</p>
+                          <p className="text-sm text-foreground/60 mb-2">
+                            Disks ({displaySystemInfo.disks.length})
+                          </p>
                           <div className="space-y-2">
-                            {host.system_info.disks.map((disk) => (
+                            {displaySystemInfo.disks.map((disk) => (
                               <div key={disk.mount_point} className="p-3 rounded-lg bg-content2">
                                 <div className="flex items-center justify-between mb-2">
                                   <span className="font-mono text-sm font-medium">{disk.mount_point}</span>
@@ -1194,105 +1748,29 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                         </div>
                       )}
 
-                      {/* GPUs */}
-                      {host.system_info.gpu_list.length > 0 ? (
-                        <div>
-                          <p className="text-sm text-foreground/60 mb-2">GPUs ({host.system_info.gpu_list.length})</p>
-                          <div className="space-y-2">
-                            {host.system_info.gpu_list.map((gpu) => {
-                              const memUsedPct = gpu.memory_used_mb != null 
-                                ? Math.round((gpu.memory_used_mb / gpu.memory_total_mb) * 100) 
-                                : 0;
-                              return (
-                                <Tooltip key={gpu.index} content="Click for details" delay={500}>
-                                  <div 
-                                    className="p-3 rounded-lg bg-content2 cursor-pointer hover:bg-content3 transition-colors border border-transparent hover:border-primary/30"
-                                    onClick={() => {
-                                      setSelectedGpu(gpu);
-                                      gpuModal.onOpen();
-                                    }}
-                                  >
-                                    <div className="flex items-center justify-between mb-2">
-                                      <div className="flex items-center gap-2">
-                                        <IconGpu />
-                                        <span className="font-medium text-sm">{gpu.name}</span>
-                                      </div>
-                                      <div className="flex items-center gap-3">
-                                        {gpu.temperature != null && (
-                                          <span className={`text-xs font-medium ${getTempColor(gpu.temperature)}`}>
-                                            {gpu.temperature}°C
-                                          </span>
-                                        )}
-                                        <Chip size="sm" variant="flat">GPU {gpu.index}</Chip>
-                                      </div>
-                                    </div>
-                                    
-                                    {/* VRAM Progress */}
-                                    <div className="mb-2">
-                                      <div className="flex justify-between text-xs mb-1">
-                                        <span className="text-foreground/60">VRAM</span>
-                                        <span>
-                                          {gpu.memory_used_mb != null && (
-                                            <>{(gpu.memory_used_mb / 1024).toFixed(1)} / </>
-                                          )}
-                                          {(gpu.memory_total_mb / 1024).toFixed(0)} GB
-                                          {gpu.memory_used_mb != null && (
-                                            <span className="text-foreground/60 ml-1">({memUsedPct}%)</span>
-                                          )}
-                                        </span>
-                                      </div>
-                                      <Progress 
-                                        value={memUsedPct} 
-                                        size="sm"
-                                        color={memUsedPct > 90 ? "danger" : memUsedPct > 70 ? "warning" : "primary"}
-                                        className="h-1.5"
-                                      />
-                                    </div>
-
-                                    {/* Quick stats row */}
-                                    <div className="flex gap-4 text-xs">
-                                      {gpu.utilization != null && (
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-foreground/60">Util:</span>
-                                          <span className="font-medium">{gpu.utilization}%</span>
-                                        </div>
-                                      )}
-                                      {gpu.power_draw_w != null && (
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-foreground/60">Power:</span>
-                                          <span className="font-medium">{gpu.power_draw_w.toFixed(0)}W</span>
-                                        </div>
-                                      )}
-                                      {gpu.driver_version && (
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-foreground/60">Driver:</span>
-                                          <span className="font-mono">{gpu.driver_version}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </Tooltip>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <p className="text-sm text-foreground/60">GPU</p>
-                          <p className="text-sm">No NVIDIA GPU detected</p>
-                        </div>
-                      )}
+                      {renderGpuList(displayGpuList)}
                     </>
                   ) : (
-                    <p className="text-foreground/60">
-                      Click "Refresh" or "Fetch Info" to retrieve system information
-                    </p>
+                    <>
+                      {isVast && displayGpuList.length > 0 ? (
+                        <>
+                          <p className="text-foreground/60 mb-3">
+                            Limited info from Vast.ai. Click "Refresh" to fetch full system info.
+                          </p>
+                          {renderGpuList(displayGpuList)}
+                        </>
+                      ) : (
+                        <p className="text-foreground/60">
+                          Click "Refresh" or "Fetch Info" to retrieve system information
+                        </p>
+                      )}
+                    </>
                   )}
                 </CardBody>
               </Card>
 
               {/* Type-specific Info */}
-              {isVast && vastInstance && (
+              {isVast && vastInstanceDetail && (
                 <Card>
                   <CardHeader>
                     <span className="font-semibold">Vast.ai Rates</span>
@@ -1301,12 +1779,14 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                   <CardBody className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-foreground/60">{displayCurrency}/hr</p>
-                      <p className="font-mono">{vastInstance.dph_total != null ? formatUsd(vastInstance.dph_total, 3) : "-"}</p>
+                      <p className="font-mono">
+                        {vastInstanceDetail.dph_total != null ? formatUsd(vastInstanceDetail.dph_total, 3) : "-"}
+                      </p>
                     </div>
-                    {vastInstance.gpu_util != null && (
+                    {vastInstanceDetail.gpu_util != null && (
                       <div>
                         <p className="text-sm text-foreground/60">GPU Util</p>
-                        <p className="font-mono">{Math.round(vastInstance.gpu_util)}%</p>
+                        <p className="font-mono">{Math.round(vastInstanceDetail.gpu_util)}%</p>
                       </div>
                     )}
                     <div>
@@ -1440,11 +1920,15 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       <>
                         <div>
                           <p className="text-sm text-foreground/60">SSH Host</p>
-                          <p className="font-mono text-sm">{host.ssh.host}</p>
+                          <p className="font-mono text-sm">
+                            {isVast ? (vastSshHost ?? host.ssh.host) : host.ssh.host}
+                          </p>
                         </div>
                         <div>
                           <p className="text-sm text-foreground/60">SSH Port</p>
-                          <p className="font-mono">{host.ssh.port}</p>
+                          <p className="font-mono">
+                            {isVast ? (vastDirectPort ?? host.ssh.port) : host.ssh.port}
+                          </p>
                         </div>
                         <div>
                           <p className="text-sm text-foreground/60">SSH User</p>
@@ -1572,7 +2056,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
         isOpen={gpuModal.isOpen} 
         onClose={() => {
           gpuModal.onClose();
-          setSelectedGpu(null);
+          setSelectedGpuIndex(null);
         }} 
       />
 

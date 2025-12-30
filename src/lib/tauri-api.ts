@@ -5,15 +5,15 @@ import type {
   ColabGpuPricing,
   ColabPricingResult,
   ColabSubscription,
-  Execution,
-  ExecutionSummary,
   ExchangeRates,
   FileEntry,
+  GpuCapability,
   GpuRow,
   Host,
   HostConfig,
   HostCostBreakdown,
   HostPricing,
+  IpInfo,
   InteractiveExecution,
   InteractiveRecipeEvent,
   LogEntry,
@@ -22,7 +22,6 @@ import type {
   PricingSettings,
   PricingSource,
   Recipe,
-  RecipeEvent,
   RecipeSummary,
   RemoteJobMeta,
   Session,
@@ -142,6 +141,10 @@ export async function sshKeyCandidates(): Promise<string[]> {
   return await invoke("ssh_key_candidates");
 }
 
+export async function sshSecretKeyCandidates(): Promise<string[]> {
+  return await invoke("ssh_secret_key_candidates");
+}
+
 export async function sshPublicKey(privateKeyPath: string): Promise<string> {
   return await invoke("ssh_public_key", { privateKeyPath });
 }
@@ -158,6 +161,17 @@ export type SshKeyInfo = {
 
 export async function sshGenerateKey(params: { path: string; comment?: string | null }): Promise<SshKeyInfo> {
   return await invoke("ssh_generate_key", { path: params.path, comment: params.comment ?? null });
+}
+
+export async function sshCheck(ssh: SshSpec): Promise<void> {
+  const payload = {
+    host: ssh.host,
+    port: ssh.port,
+    user: ssh.user,
+    keyPath: ssh.keyPath ?? ssh.key_path ?? null,
+    extraArgs: ssh.extraArgs ?? ssh.extra_args ?? [],
+  };
+  await safeInvoke("ssh_check", { ssh: payload });
 }
 
 // ============================================================
@@ -204,6 +218,10 @@ export const hostApi = {
   /** List tmux sessions running on the remote host */
   listTmuxSessions: async (id: string): Promise<RemoteTmuxSession[]> => {
     return await safeInvoke<RemoteTmuxSession[]>("host_list_tmux_sessions", { id });
+  },
+
+  ipInfo: async (target: string): Promise<IpInfo> => {
+    return await safeInvoke<IpInfo>("host_ip_info", { target });
   },
 };
 
@@ -261,8 +279,12 @@ export async function vastListInstances(): Promise<VastInstance[]> {
   return await invoke("vast_list_instances");
 }
 
-export async function vastAttachSshKey(instanceId: number): Promise<void> {
-  await safeInvoke("vast_attach_ssh_key", { instanceId });
+export async function vastGetInstance(instanceId: number): Promise<VastInstance> {
+  return await invoke("vast_get_instance", { instanceId });
+}
+
+export async function vastAttachSshKey(instanceId: number, privateKeyPath?: string | null): Promise<string> {
+  return await safeInvoke<string>("vast_attach_ssh_key", { instanceId, privateKeyPath: privateKeyPath ?? null });
 }
 
 export async function vastTestConnection(instanceId: number): Promise<{ success: boolean; message: string }> {
@@ -316,6 +338,10 @@ export type VastCreateInstanceInput = {
 
 export async function vastCreateInstance(input: VastCreateInstanceInput): Promise<number> {
   return await invoke("vast_create_instance", { input });
+}
+
+export async function gpuLookupCapability(name: string): Promise<GpuCapability | null> {
+  return await safeInvoke<GpuCapability | null>("gpu_lookup_capability", { name });
 }
 
 // ============================================================
@@ -1149,8 +1175,8 @@ export const recipeApi = {
   },
 
   /** Save a recipe to a file */
-  save: async (path: string, recipe: Recipe): Promise<void> => {
-    await safeInvoke("recipe_save", { path, recipe });
+  save: async (path: string, recipe: Recipe): Promise<string> => {
+    return await safeInvoke<string>("recipe_save", { path, recipe });
   },
 
   /** Delete a recipe file */
@@ -1168,46 +1194,6 @@ export const recipeApi = {
     return await safeInvoke<string>("recipe_create", { name });
   },
 
-  /** Run a recipe */
-  run: async (path: string, variables?: Record<string, string>): Promise<string> => {
-    return await safeInvoke<string>("recipe_run", { path, variables: variables ?? {} });
-  },
-
-  /** Pause an execution */
-  pause: async (executionId: string): Promise<void> => {
-    await safeInvoke("recipe_pause", { executionId });
-  },
-
-  /** Resume an execution */
-  resume: async (executionId: string): Promise<void> => {
-    await safeInvoke("recipe_resume", { executionId });
-  },
-
-  /** Cancel an execution */
-  cancel: async (executionId: string): Promise<void> => {
-    await safeInvoke("recipe_cancel", { executionId });
-  },
-
-  /** Retry a failed step */
-  retryStep: async (executionId: string, stepId: string): Promise<void> => {
-    await safeInvoke("recipe_retry_step", { executionId, stepId });
-  },
-
-  /** Skip a step */
-  skipStep: async (executionId: string, stepId: string): Promise<void> => {
-    await safeInvoke("recipe_skip_step", { executionId, stepId });
-  },
-
-  /** Get execution details */
-  getExecution: async (executionId: string): Promise<Execution> => {
-    return await safeInvoke<Execution>("recipe_get_execution", { executionId });
-  },
-
-  /** List all executions */
-  listExecutions: async (): Promise<ExecutionSummary[]> => {
-    return await safeInvoke<ExecutionSummary[]>("recipe_list_executions");
-  },
-
   /** Import a recipe from external file */
   import: async (sourcePath: string): Promise<string> => {
     return await safeInvoke<string>("recipe_import", { sourcePath });
@@ -1223,59 +1209,6 @@ export const recipeApi = {
     return await safeInvoke<string>("recipe_duplicate", { path, newName });
   },
 };
-
-// ============================================================
-// Recipe Event Listeners
-// ============================================================
-
-/** Listen for all recipe events */
-export async function listenRecipeEvents(
-  callback: (event: RecipeEvent) => void
-): Promise<UnlistenFn> {
-  // Listen to all recipe event types
-  const unlisteners: UnlistenFn[] = [];
-  
-  const eventTypes = [
-    "recipe:execution_started",
-    "recipe:step_started",
-    "recipe:step_progress",
-    "recipe:step_completed",
-    "recipe:step_failed",
-    "recipe:step_retrying",
-    "recipe:step_skipped",
-    "recipe:execution_paused",
-    "recipe:execution_resumed",
-    "recipe:execution_completed",
-    "recipe:execution_failed",
-    "recipe:execution_cancelled",
-  ];
-  
-  for (const eventType of eventTypes) {
-    const unlisten = await listen<RecipeEvent>(eventType, (event) => {
-      callback(event.payload);
-    });
-    unlisteners.push(unlisten);
-  }
-  
-  return () => {
-    for (const unlisten of unlisteners) {
-      unlisten();
-    }
-  };
-}
-
-/** Listen for events for a specific execution */
-export async function listenExecutionEvents(
-  executionId: string,
-  callback: (event: RecipeEvent) => void
-): Promise<UnlistenFn> {
-  return await listenRecipeEvents((event) => {
-    // Filter by execution ID
-    if ("execution_id" in event && event.execution_id === executionId) {
-      callback(event);
-    }
-  });
-}
 
 // ============================================================
 // Recipe Hooks
@@ -1297,23 +1230,6 @@ export function useRecipe(path: string | null) {
   });
 }
 
-export function useRecipeExecutions() {
-  return useQuery({
-    queryKey: ["recipe-executions"],
-    queryFn: recipeApi.listExecutions,
-    refetchInterval: 2_000,
-  });
-}
-
-export function useRecipeExecution(id: string | null) {
-  return useQuery({
-    queryKey: ["recipe-executions", id],
-    queryFn: () => recipeApi.getExecution(id!),
-    enabled: !!id,
-    refetchInterval: 1_000,
-  });
-}
-
 export function useCreateRecipe() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -1325,11 +1241,39 @@ export function useCreateRecipe() {
 }
 
 export function useSaveRecipe() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ path, recipe }: { path: string; recipe: Recipe }) =>
       recipeApi.save(path, recipe),
-    // Don't invalidate queries on save - the editor has local state
-    // and we don't want to cause flickering during auto-save
+    onSuccess: (newPath, variables) => {
+      // Keep the recipe detail + list caches in sync so navigation shows the latest content.
+      queryClient.setQueryData(["recipes", newPath], variables.recipe);
+      if (newPath !== variables.path) {
+        queryClient.removeQueries({ queryKey: ["recipes", variables.path] });
+      }
+
+      queryClient.setQueryData<RecipeSummary[]>(["recipes"], (prev) => {
+        if (!prev) return prev;
+
+        const nextSummary: RecipeSummary = {
+          path: newPath,
+          name: variables.recipe.name,
+          version: variables.recipe.version,
+          description: variables.recipe.description ?? null,
+          step_count: variables.recipe.steps.length,
+        };
+
+        const oldIndex = prev.findIndex((r) => r.path === variables.path);
+        if (oldIndex >= 0) {
+          return prev.map((r) => (r.path === variables.path ? { ...r, ...nextSummary } : r));
+        }
+
+        const exists = prev.some((r) => r.path === newPath);
+        return exists
+          ? prev.map((r) => (r.path === newPath ? { ...r, ...nextSummary } : r))
+          : [...prev, nextSummary];
+      });
+    },
   });
 }
 
@@ -1339,69 +1283,6 @@ export function useDeleteRecipe() {
     mutationFn: recipeApi.delete,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["recipes"] });
-    },
-  });
-}
-
-export function useRunRecipe() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ path, variables }: { path: string; variables?: Record<string, string> }) =>
-      recipeApi.run(path, variables),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recipe-executions"] });
-    },
-  });
-}
-
-export function usePauseExecution() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: recipeApi.pause,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recipe-executions"] });
-    },
-  });
-}
-
-export function useResumeExecution() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: recipeApi.resume,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recipe-executions"] });
-    },
-  });
-}
-
-export function useCancelExecution() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: recipeApi.cancel,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recipe-executions"] });
-    },
-  });
-}
-
-export function useRetryStep() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ executionId, stepId }: { executionId: string; stepId: string }) =>
-      recipeApi.retryStep(executionId, stepId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recipe-executions"] });
-    },
-  });
-}
-
-export function useSkipStep() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ executionId, stepId }: { executionId: string; stepId: string }) =>
-      recipeApi.skipStep(executionId, stepId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recipe-executions"] });
     },
   });
 }
@@ -1481,8 +1362,8 @@ export const interactiveRecipeApi = {
   },
 
   /** Resume a paused interactive execution */
-  resume: async (executionId: string): Promise<void> => {
-    await safeInvoke("recipe_interactive_resume", { executionId });
+  resume: async (executionId: string): Promise<InteractiveExecution> => {
+    return await safeInvoke<InteractiveExecution>("recipe_interactive_resume", { executionId });
   },
 
   /** Cancel an interactive execution */
@@ -1566,6 +1447,7 @@ export function useInteractiveExecution(id: string | null) {
         "recipe:command_failed",
         "recipe:execution_completed",
         "recipe:execution_failed",
+        "recipe:execution_cancelled",
         "recipe:intervention_lock_changed",
       ];
       
@@ -1590,6 +1472,7 @@ export function useInteractiveExecution(id: string | null) {
                 }
                 if (eventName === "recipe:execution_completed") next.status = "completed";
                 if (eventName === "recipe:execution_failed") next.status = "failed";
+                if (eventName === "recipe:execution_cancelled") next.status = "cancelled";
                 if (eventName === "recipe:step_progress") {
                   const stepIdForProgress = event.payload.step_id;
                   if (stepIdForProgress) {

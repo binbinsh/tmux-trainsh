@@ -2,7 +2,7 @@ import cloudflareIcon from "../assets/icons/cloudflare.svg";
 import googleColabIcon from "../assets/icons/google-colab.svg";
 import googleDriveIcon from "../assets/icons/google-drive.svg";
 import sshIcon from "../assets/icons/ssh.ico";
-import sambaIcon from "../assets/icons/samba.ico";
+import sambaIcon from "../assets/icons/nas.png";
 import vastAiIcon from "../assets/icons/vast-ai.png";
 import hostServerIcon from "../assets/icons/host-server.svg";
 

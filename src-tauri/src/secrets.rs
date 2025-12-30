@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::error::AppError;
 use crate::config::doppio_data_dir;
+use crate::error::AppError;
 
 /// The service name used for keyring entries
 const KEYRING_SERVICE: &str = "dev.doppio.secrets";
@@ -27,11 +27,9 @@ fn load_file_secrets() -> HashMap<String, String> {
     if !path.exists() {
         return HashMap::new();
     }
-    
+
     match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            serde_json::from_str(&content).unwrap_or_default()
-        }
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => HashMap::new(),
     }
 }
@@ -95,31 +93,35 @@ pub struct SecretInput {
 /// Tries file storage first (primary), then keyring as fallback
 pub fn get_secret(name: &str) -> Result<String, AppError> {
     eprintln!("[secrets] get_secret('{}') called", name);
-    
+
     // Try file storage first (primary storage)
     if let Some(value) = get_file_secret(name) {
         eprintln!("[secrets] Found '{}' in file storage", name);
         return Ok(value);
     }
-    
+
     // Fallback to keyring (legacy)
     match keyring::Entry::new(KEYRING_SERVICE, name) {
-        Ok(entry) => {
-            match entry.get_password() {
-                Ok(password) => {
-                    eprintln!("[secrets] Found '{}' in keyring (legacy)", name);
-                    return Ok(password);
-                }
-                Err(e) => {
-                    eprintln!("[secrets] Keyring get_password failed for '{}': {:?}", name, e);
-                }
+        Ok(entry) => match entry.get_password() {
+            Ok(password) => {
+                eprintln!("[secrets] Found '{}' in keyring (legacy)", name);
+                return Ok(password);
             }
-        }
+            Err(e) => {
+                eprintln!(
+                    "[secrets] Keyring get_password failed for '{}': {:?}",
+                    name, e
+                );
+            }
+        },
         Err(e) => {
-            eprintln!("[secrets] Keyring entry creation failed for '{}': {:?}", name, e);
+            eprintln!(
+                "[secrets] Keyring entry creation failed for '{}': {:?}",
+                name, e
+            );
         }
     }
-    
+
     Err(AppError::not_found(format!("Secret '{}' not found", name)))
 }
 
@@ -127,18 +129,18 @@ pub fn get_secret(name: &str) -> Result<String, AppError> {
 /// Always saves to file storage (keyring on macOS has issues in dev mode)
 pub fn set_secret(name: &str, value: &str) -> Result<(), AppError> {
     eprintln!("[secrets] Setting secret: {}", name);
-    
+
     // Try keyring (best effort, but don't rely on it)
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, name) {
         if entry.set_password(value).is_ok() {
             eprintln!("[secrets] Also saved to keyring");
         }
     }
-    
+
     // Always save to file storage as primary/backup
     set_file_secret(name, value)?;
     eprintln!("[secrets] Saved to file storage");
-    
+
     eprintln!("[secrets] Secret '{}' saved successfully", name);
     Ok(())
 }
@@ -149,10 +151,10 @@ pub fn delete_secret(name: &str) -> Result<(), AppError> {
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, name) {
         let _ = entry.delete_credential(); // Ignore errors
     }
-    
+
     // Also delete from file storage
     delete_file_secret(name)?;
-    
+
     Ok(())
 }
 
@@ -176,44 +178,44 @@ fn load_secrets_meta() -> Result<HashMap<String, SecretMeta>, AppError> {
     if !path.exists() {
         return Ok(HashMap::new());
     }
-    
+
     let content = std::fs::read_to_string(&path)
         .map_err(|e| AppError::io_error(format!("Failed to read secrets metadata: {}", e)))?;
-    
+
     let meta: HashMap<String, SecretMeta> = serde_json::from_str(&content)
         .map_err(|e| AppError::internal(format!("Failed to parse secrets metadata: {}", e)))?;
-    
+
     Ok(meta)
 }
 
 fn save_secrets_meta(meta: &HashMap<String, SecretMeta>) -> Result<(), AppError> {
     let path = secrets_meta_path();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::io_error(format!("Failed to create data directory: {}", e)))?;
     }
-    
+
     let content = serde_json::to_string_pretty(meta)
         .map_err(|e| AppError::internal(format!("Failed to serialize secrets metadata: {}", e)))?;
-    
+
     std::fs::write(&path, content)
         .map_err(|e| AppError::io_error(format!("Failed to write secrets metadata: {}", e)))?;
-    
+
     Ok(())
 }
 
 /// Create or update a secret
 pub fn upsert_secret(input: &SecretInput) -> Result<SecretMeta, AppError> {
     let now = chrono::Utc::now().to_rfc3339();
-    
+
     // Store the actual value in keyring
     set_secret(&input.name, &input.value)?;
-    
+
     // Update metadata
     let mut meta_store = load_secrets_meta()?;
-    
+
     let meta = if let Some(existing) = meta_store.get(&input.name) {
         SecretMeta {
             name: input.name.clone(),
@@ -229,18 +231,21 @@ pub fn upsert_secret(input: &SecretInput) -> Result<SecretMeta, AppError> {
             updated_at: now,
         }
     };
-    
+
     meta_store.insert(input.name.clone(), meta.clone());
     save_secrets_meta(&meta_store)?;
-    
+
     Ok(meta)
 }
 
 /// List all secrets (metadata only, no values)
 pub fn list_secrets() -> Result<Vec<SecretMeta>, AppError> {
     let meta_store = load_secrets_meta()?;
-    eprintln!("[secrets] Loaded {} secrets from metadata", meta_store.len());
-    
+    eprintln!(
+        "[secrets] Loaded {} secrets from metadata",
+        meta_store.len()
+    );
+
     // Verify each secret still exists in keyring
     let mut secrets: Vec<SecretMeta> = meta_store
         .into_values()
@@ -250,12 +255,12 @@ pub fn list_secrets() -> Result<Vec<SecretMeta>, AppError> {
             exists
         })
         .collect();
-    
+
     eprintln!("[secrets] After filtering: {} secrets", secrets.len());
-    
+
     // Sort by name
     secrets.sort_by(|a, b| a.name.cmp(&b.name));
-    
+
     Ok(secrets)
 }
 
@@ -263,14 +268,14 @@ pub fn list_secrets() -> Result<Vec<SecretMeta>, AppError> {
 pub fn get_secret_full(name: &str) -> Result<Secret, AppError> {
     let value = get_secret(name)?;
     let meta_store = load_secrets_meta()?;
-    
+
     let meta = meta_store.get(name).cloned().unwrap_or_else(|| SecretMeta {
         name: name.to_string(),
         description: None,
         created_at: chrono::Utc::now().to_rfc3339(),
         updated_at: chrono::Utc::now().to_rfc3339(),
     });
-    
+
     Ok(Secret {
         name: meta.name,
         value,
@@ -284,12 +289,12 @@ pub fn get_secret_full(name: &str) -> Result<Secret, AppError> {
 pub fn remove_secret(name: &str) -> Result<(), AppError> {
     // Delete from keyring
     delete_secret(name)?;
-    
+
     // Remove metadata
     let mut meta_store = load_secrets_meta()?;
     meta_store.remove(name);
     save_secrets_meta(&meta_store)?;
-    
+
     Ok(())
 }
 
@@ -298,20 +303,20 @@ pub fn remove_secret(name: &str) -> Result<(), AppError> {
 // ============================================================
 
 /// Interpolate secrets in a string
-/// 
+///
 /// Replaces `${secret:name}` patterns with actual secret values.
 /// Returns an error if any referenced secret is not found.
 pub fn interpolate_secrets(template: &str) -> Result<String, AppError> {
     let re = regex::Regex::new(r"\$\{secret:([^}]+)\}")
         .map_err(|e| AppError::internal(format!("Invalid regex: {}", e)))?;
-    
+
     let mut result = template.to_string();
     let mut errors = Vec::new();
-    
+
     for cap in re.captures_iter(template) {
         let full_match = cap.get(0).unwrap().as_str();
         let secret_name = cap.get(1).unwrap().as_str();
-        
+
         match get_secret(secret_name) {
             Ok(value) => {
                 result = result.replace(full_match, &value);
@@ -321,21 +326,21 @@ pub fn interpolate_secrets(template: &str) -> Result<String, AppError> {
             }
         }
     }
-    
+
     if !errors.is_empty() {
         return Err(AppError::invalid_input(format!(
             "Failed to resolve secrets: {}",
             errors.join(", ")
         )));
     }
-    
+
     Ok(result)
 }
 
 /// Extract secret names referenced in a template
 pub fn extract_secret_refs(template: &str) -> Vec<String> {
     let re = regex::Regex::new(r"\$\{secret:([^}]+)\}").unwrap();
-    
+
     re.captures_iter(template)
         .map(|cap| cap.get(1).unwrap().as_str().to_string())
         .collect()
@@ -358,11 +363,31 @@ pub mod common {
 /// Suggested secrets with descriptions
 pub fn suggested_secrets() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
-        (common::GITHUB_TOKEN, "GitHub Personal Access Token", "Access private repos with `git clone`"),
-        (common::HUGGINGFACE_TOKEN, "HuggingFace Token", "Download/upload models on HuggingFace Hub"),
-        (common::WANDB_API_KEY, "Weights & Biases API Key", "Log training metrics to W&B"),
-        (common::OPENAI_API_KEY, "OpenAI API Key", "Access GPT models"),
-        (common::ANTHROPIC_API_KEY, "Anthropic API Key", "Access Claude models"),
+        (
+            common::GITHUB_TOKEN,
+            "GitHub Personal Access Token",
+            "Access private repos with `git clone`",
+        ),
+        (
+            common::HUGGINGFACE_TOKEN,
+            "HuggingFace Token",
+            "Download/upload models on HuggingFace Hub",
+        ),
+        (
+            common::WANDB_API_KEY,
+            "Weights & Biases API Key",
+            "Log training metrics to W&B",
+        ),
+        (
+            common::OPENAI_API_KEY,
+            "OpenAI API Key",
+            "Access GPT models",
+        ),
+        (
+            common::ANTHROPIC_API_KEY,
+            "Anthropic API Key",
+            "Access Claude models",
+        ),
     ]
 }
 
@@ -424,7 +449,7 @@ pub async fn secret_validate_refs(template: String) -> Result<serde_json::Value,
     let refs = extract_secret_refs(&template);
     let mut missing: Vec<String> = vec![];
     let mut found: Vec<String> = vec![];
-    
+
     for name in refs {
         if secret_exists(&name) {
             found.push(name);
@@ -432,7 +457,7 @@ pub async fn secret_validate_refs(template: String) -> Result<serde_json::Value,
             missing.push(name);
         }
     }
-    
+
     Ok(serde_json::json!({
         "valid": missing.is_empty(),
         "found": found,
@@ -443,14 +468,15 @@ pub async fn secret_validate_refs(template: String) -> Result<serde_json::Value,
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_extract_secret_refs() {
-        let template = "export HF_TOKEN=${secret:huggingface/token} && export GH=${secret:github/token}";
+        let template =
+            "export HF_TOKEN=${secret:huggingface/token} && export GH=${secret:github/token}";
         let refs = extract_secret_refs(template);
         assert_eq!(refs, vec!["huggingface/token", "github/token"]);
     }
-    
+
     #[test]
     fn test_extract_no_secrets() {
         let template = "echo hello ${var}";

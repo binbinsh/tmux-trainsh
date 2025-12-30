@@ -111,6 +111,18 @@ export type HostConfig = {
   cloudflared_path: string | null;
 };
 
+export type IpInfo = {
+  ip: string | null;
+  hostname: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  loc: string | null;
+  org: string | null;
+  timezone: string | null;
+  readme: string | null;
+};
+
 // ============================================================
 // Session & Task Types
 // ============================================================
@@ -248,6 +260,7 @@ export type VastConfig = {
   url: string;
   ssh_user: string;
   ssh_key_path: string | null;
+  ssh_connection_preference: "proxy" | "direct";
 };
 
 export type ColabConfig = {
@@ -267,13 +280,56 @@ export type VastInstance = {
   gpu_name: string | null;
   num_gpus: number | null;
   gpu_util: number | null;
+  driver_version: string | null;
+  cpu_name: string | null;
+  cpu_cores: number | null;
+  cpu_cores_effective: number | null;
+  cpu_ram: number | null;
+  cpu_util: number | null;
+  mem_limit: number | null;
+  mem_usage: number | null;
+  gpu_totalram: number | null;
+  gpu_ram: number | null;
+  gpu_mem_bw: number | null;
+  gpu_lanes: number | null;
+  pci_gen: number | null;
+  pcie_bw: number | null;
   dph_total: number | null;
   storage_cost: number | null;
   inet_up_cost: number | null;
   inet_down_cost: number | null;
   disk_space: number | null;
+  disk_name: string | null;
+  disk_bw: number | null;
+  disk_util: number | null;
+  disk_usage: number | null;
+  inet_up: number | null;
+  inet_down: number | null;
+  os_version: string | null;
+  geolocation: string | null;
+  mobo_name: string | null;
+  host_id: number | null;
+  machine_id: number | null;
+  bundle_id: number | null;
+  start_date: number | null;
+  end_date: number | null;
+  duration: number | null;
+  host_run_time: number | null;
+  uptime_mins: number | null;
+  status_msg: string | null;
+  intended_status: string | null;
+  cur_state: string | null;
+  next_state: string | null;
+  verification: string | null;
+  image_uuid: string | null;
+  image_runtype: string | null;
+  template_name: string | null;
+  template_id: number | null;
+  ssh_idx: string | null;
   ssh_host: string | null;
   ssh_port: number | null;
+  machine_dir_ssh_port: number | null;
+  public_ipaddr: string | null;
   label: string | null;
 };
 
@@ -771,9 +827,7 @@ export type RsyncDownloadOp = {
   excludes?: string[];
 };
 
-export type VastInstanceOp = {
-  instance_id: number;
-};
+export type VastInstanceOp = Record<string, never>;
 
 export type TmuxNewOp = {
   host_id: string;
@@ -895,56 +949,6 @@ export type StepStatus =
   | "retrying"
   | "cancelled";
 
-export type StepProgress = {
-  message?: string | null;
-  current?: number | null;
-  total?: number | null;
-  percent?: number | null;
-};
-
-export type StepExecution = {
-  step_id: string;
-  status: StepStatus;
-  started_at?: string | null;
-  completed_at?: string | null;
-  output?: string | null;
-  error?: string | null;
-  retry_attempt: number;
-  progress?: StepProgress | null;
-};
-
-export type ExecutionStatus =
-  | "pending"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export type Execution = {
-  id: string;
-  recipe_path: string;
-  recipe_name: string;
-  status: ExecutionStatus;
-  variables: Record<string, string>;
-  steps: StepExecution[];
-  created_at: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  error?: string | null;
-};
-
-export type ExecutionSummary = {
-  id: string;
-  recipe_name: string;
-  status: ExecutionStatus;
-  created_at: string;
-  completed_at?: string | null;
-  steps_total: number;
-  steps_completed: number;
-  steps_failed: number;
-};
-
 export type RecipeSummary = {
   path: string;
   name: string;
@@ -969,21 +973,6 @@ export type ValidationWarning = {
   message: string;
 };
 
-// Recipe events (from Tauri)
-export type RecipeEvent =
-  | { type: "execution_started"; execution_id: string }
-  | { type: "step_started"; execution_id: string; step_id: string }
-  | { type: "step_progress"; execution_id: string; step_id: string; progress: StepProgress }
-  | { type: "step_completed"; execution_id: string; step_id: string; output?: string | null }
-  | { type: "step_failed"; execution_id: string; step_id: string; error: string }
-  | { type: "step_retrying"; execution_id: string; step_id: string; attempt: number }
-  | { type: "step_skipped"; execution_id: string; step_id: string }
-  | { type: "execution_paused"; execution_id: string }
-  | { type: "execution_resumed"; execution_id: string }
-  | { type: "execution_completed"; execution_id: string }
-  | { type: "execution_failed"; execution_id: string; error: string }
-  | { type: "execution_cancelled"; execution_id: string };
-
 // ============================================================
 // Interactive Recipe Execution Types
 // ============================================================
@@ -998,6 +987,13 @@ export type InteractiveStatus =
   | "failed"
   | "cancelled";
 
+export type InteractiveTerminal = {
+  title: string;
+  tmux_session?: string | null;
+  cols: number;
+  rows: number;
+};
+
 export type InteractiveStepState = {
   step_id: string;
   name?: string | null;
@@ -1009,16 +1005,19 @@ export type InteractiveExecution = {
   id: string;
   recipe_path: string;
   recipe_name: string;
-  terminal_id: string;
+  terminal_id?: string | null;
+  terminal: InteractiveTerminal;
   host_id: string;
   status: InteractiveStatus;
   intervention_locked: boolean;
   current_step?: string | null;
   steps: InteractiveStepState[];
   step_progress?: Record<string, string>;
+  variables: Record<string, string>;
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
+  updated_at?: string | null;
 };
 
 // Interactive recipe events

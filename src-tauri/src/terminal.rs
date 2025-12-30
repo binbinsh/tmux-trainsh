@@ -726,7 +726,7 @@ async fn open_ssh_tmux_inner(
     .spawn_command(cmd)
     .map_err(|e| AppError::command(format!("spawn ssh failed: {e}")))?;
 
-  let mut reader = pair
+  let reader = pair
     .master
     .try_clone_reader()
     .map_err(|e| AppError::io(format!("clone pty reader failed: {e}")))?;
@@ -1002,7 +1002,7 @@ pub async fn open_local_inner(
     .spawn_command(cmd)
     .map_err(|e| AppError::io(format!("spawn shell failed: {e}")))?;
 
-  let mut reader = pair
+  let reader = pair
     .master
     .try_clone_reader()
     .map_err(|e| AppError::io(format!("clone pty reader failed: {e}")))?;
@@ -1311,7 +1311,7 @@ pub async fn open_ssh_tmux_inner_static(
     .spawn_command(cmd)
     .map_err(|e| AppError::command(format!("spawn ssh failed: {e}")))?;
 
-  let mut reader = pair
+  let reader = pair
     .master
     .try_clone_reader()
     .map_err(|e| AppError::io(format!("clone pty reader failed: {e}")))?;

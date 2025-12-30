@@ -162,53 +162,53 @@ fn default_retry_delay() -> u64 {
 pub enum Operation {
     // Commands (new unified command runner)
     RunCommands(RunCommandsOp),
-    
+
     // Legacy SSH command (kept for backwards compatibility)
     SshCommand(SshCommandOp),
-    
+
     // File Transfer (new unified transfer)
     Transfer(TransferOp),
-    
+
     // Legacy rsync operations (kept for backwards compatibility)
     RsyncUpload(RsyncUploadOp),
     RsyncDownload(RsyncDownloadOp),
-    
+
     // Vast.ai Operations
     VastStart(VastInstanceOp),
     VastStop(VastInstanceOp),
     VastDestroy(VastInstanceOp),
-    
+
     // Tmux Operations
     TmuxNew(TmuxNewOp),
     TmuxSend(TmuxSendOp),
     TmuxCapture(TmuxCaptureOp),
     TmuxKill(TmuxKillOp),
-    
+
     // Google Drive Operations
     GdriveMount(GdriveMountOp),
     GdriveUnmount(GdriveUnmountOp),
-    
+
     // Git Operations
     GitClone(GitCloneOp),
-    
+
     // HuggingFace Operations
     HfDownload(HfDownloadOp),
-    
+
     // Flow Control
     Sleep(SleepOp),
     WaitCondition(WaitConditionOp),
     Assert(AssertOp),
-    
+
     // Variables
     SetVar(SetVarOp),
     GetValue(GetValueOp),
-    
+
     // HTTP
     HttpRequest(HttpRequestOp),
-    
+
     // Notifications
     Notify(NotifyOp),
-    
+
     // Composite
     Group(GroupOp),
 }
@@ -333,9 +333,7 @@ pub struct TransferOp {
 #[serde(rename_all = "snake_case")]
 pub enum TransferEndpoint {
     /// Local filesystem
-    Local {
-        path: String,
-    },
+    Local { path: String },
     /// A configured host (uses recipe target if host_id is None)
     Host {
         #[serde(default)]
@@ -343,10 +341,7 @@ pub enum TransferEndpoint {
         path: String,
     },
     /// A configured storage backend (Google Drive, S3, etc.)
-    Storage {
-        storage_id: String,
-        path: String,
-    },
+    Storage { storage_id: String, path: String },
 }
 
 /// Git clone operation
@@ -405,10 +400,8 @@ pub enum HfRepoType {
 
 /// Vast.ai instance operation (start/stop/destroy)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VastInstanceOp {
-    /// Vast instance ID
-    pub instance_id: i64,
-}
+#[serde(deny_unknown_fields)]
+pub struct VastInstanceOp {}
 
 /// Mount Google Drive on remote host using rclone
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -743,105 +736,13 @@ pub struct GdriveMountedCondition {
 #[serde(rename_all = "snake_case")]
 pub enum StepStatus {
     Pending,
-    Waiting,     // Waiting for dependencies
+    Waiting, // Waiting for dependencies
     Running,
     Success,
     Failed,
     Skipped,
     Retrying,
     Cancelled,
-}
-
-/// Execution state for a single step
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepExecution {
-    pub step_id: String,
-    pub status: StepStatus,
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-    /// Output captured from the step
-    pub output: Option<String>,
-    /// Error message if failed
-    pub error: Option<String>,
-    /// Current retry attempt
-    pub retry_attempt: u32,
-    /// Progress info (for long-running operations)
-    pub progress: Option<StepProgress>,
-}
-
-/// Progress information for a step
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepProgress {
-    pub message: Option<String>,
-    pub current: Option<u64>,
-    pub total: Option<u64>,
-    pub percent: Option<f64>,
-}
-
-/// Overall execution status
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionStatus {
-    Pending,
-    Running,
-    Paused,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-/// Complete execution state for a recipe run
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Execution {
-    /// Unique execution ID
-    pub id: String,
-    /// Path to the recipe file
-    pub recipe_path: String,
-    /// Recipe name
-    pub recipe_name: String,
-    /// Overall status
-    pub status: ExecutionStatus,
-    /// Variable values (including overrides)
-    pub variables: HashMap<String, String>,
-    /// Per-step execution state
-    pub steps: Vec<StepExecution>,
-    /// Timestamps
-    pub created_at: String,
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-    /// Error message if failed
-    pub error: Option<String>,
-}
-
-/// Summary of an execution (for listing)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionSummary {
-    pub id: String,
-    pub recipe_name: String,
-    pub status: ExecutionStatus,
-    pub created_at: String,
-    pub completed_at: Option<String>,
-    pub steps_total: usize,
-    pub steps_completed: usize,
-    pub steps_failed: usize,
-}
-
-impl From<&Execution> for ExecutionSummary {
-    fn from(exec: &Execution) -> Self {
-        let steps_completed = exec.steps.iter().filter(|s| s.status == StepStatus::Success).count();
-        let steps_failed = exec.steps.iter().filter(|s| s.status == StepStatus::Failed).count();
-        
-        ExecutionSummary {
-            id: exec.id.clone(),
-            recipe_name: exec.recipe_name.clone(),
-            status: exec.status.clone(),
-            created_at: exec.created_at.clone(),
-            completed_at: exec.completed_at.clone(),
-            steps_total: exec.steps.len(),
-            steps_completed,
-            steps_failed,
-        }
-    }
 }
 
 /// Summary of a recipe (for listing)
@@ -873,4 +774,3 @@ pub struct ValidationWarning {
     pub step_id: Option<String>,
     pub message: String,
 }
-

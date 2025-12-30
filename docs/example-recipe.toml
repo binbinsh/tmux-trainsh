@@ -15,11 +15,10 @@ name = "train-llama"
 version = "1.0.0"
 description = "Train LLaMA model on Vast.ai with automatic provisioning"
 
-[variables]
-# Vast.ai configuration
-vast_instance_id = "12345"
-host_id = "vast-12345"
+[target]
+type = "vast"
 
+[variables]
 # Paths
 local_project = "/Users/me/projects/llm-train"
 remote_workdir = "/workspace/train"
@@ -38,7 +37,7 @@ batch_size = "32"
 [[step]]
 id = "start_instance"
 name = "Start Vast Instance"
-vast_start = { instance_id = 12345 }
+vast_start = {}
 retry = { max_attempts = 3, delay_secs = 10 }
 
 # Step 2: Wait for the host to come online
@@ -47,7 +46,7 @@ id = "wait_online"
 name = "Wait for Host to be Online"
 depends_on = ["start_instance"]
 wait_condition = { 
-  condition = { host_online = { host_id = "${host_id}" } },
+  condition = { host_online = { host_id = "${target}" } },
   timeout_secs = 300,
   poll_interval_secs = 10
 }
@@ -173,7 +172,7 @@ id = "cleanup_tmux"
 name = "Cleanup Tmux Session"
 depends_on = ["download_model", "download_logs"]
 tmux_kill = {
-  host_id = "${host_id}",
+  host_id = "${target}",
   session_name = "train"
 }
 continue_on_failure = true  # Don't fail if tmux session already dead
@@ -183,7 +182,7 @@ continue_on_failure = true  # Don't fail if tmux session already dead
 id = "stop_instance"
 name = "Stop Instance"
 depends_on = ["cleanup_tmux"]
-vast_stop = { instance_id = 12345 }
+vast_stop = {}
 
 # Step 13: Final notification
 [[step]]
@@ -195,4 +194,3 @@ notify = {
   message = "Model saved to ${local_output}. Instance stopped.",
   level = "success"
 }
-

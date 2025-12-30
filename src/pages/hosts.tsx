@@ -38,6 +38,8 @@ import {
 } from "../lib/tauri-api";
 import type { Host, HostConfig, HostType, VastInstance, ColabPricingResult, ColabGpuHourlyPrice, Currency, ExchangeRates } from "../lib/types";
 import { StatusBadge } from "../components/shared/StatusBadge";
+import { StatsCard } from "../components/shared/StatsCard";
+import { PageLayout, PageSection } from "../components/shared/PageLayout";
 import { AppIcon } from "../components/AppIcon";
 import { formatPriceWithRates } from "../lib/currency";
 import { open } from "@tauri-apps/plugin-shell";
@@ -55,6 +57,14 @@ function IconRefresh() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+    </svg>
+  );
+}
+
+function IconTerminal() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
     </svg>
   );
 }
@@ -116,6 +126,11 @@ export function HostListPage() {
   const queryClient = useQueryClient();
   const addHostModal = useDisclosure();
   const labelModal = useDisclosure();
+
+  const cfgQuery = useQuery({
+    queryKey: ["config"],
+    queryFn: getConfig,
+  });
 
   // Hosts query
   const hostsQuery = useQuery({
@@ -261,163 +276,153 @@ export function HostListPage() {
   }
 
   return (
-    <div className="h-full p-6 overflow-auto">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold">Hosts</h1>
-            <p className="text-sm text-foreground/60">Manage your remote compute instances</p>
+    <PageLayout
+      title="Hosts"
+      subtitle="Manage your remote compute instances"
+      actions={
+        <>
+          <Button
+            variant="flat"
+            startContent={<IconRefresh />}
+            onPress={() => {
+              hostsQuery.refetch();
+              vastQuery.refetch();
+            }}
+            isLoading={hostsQuery.isFetching || vastQuery.isFetching}
+          >
+            Refresh
+          </Button>
+          <Button
+            variant="flat"
+            onPress={() => { void openVastConsole(); }}
+          >
+            Rent from Vast.ai
+          </Button>
+          <Button color="primary" startContent={<IconPlus />} onPress={addHostModal.onOpen}>
+            Add Host
+          </Button>
+        </>
+      }
+    >
+      {/* Stats */}
+      <div className="doppio-stats-grid">
+        <StatsCard title="Saved Hosts" value={hostsQuery.data?.length ?? 0} />
+        <StatsCard title="Online" value={onlineHosts} valueColor="success" />
+        <StatsCard title="Vast.ai Instances" value={vastInstances.length} />
+        <StatsCard title="Vast.ai Running" value={runningVast} valueColor="success" />
+      </div>
+
+      {/* Saved Hosts */}
+      <PageSection title="Saved Hosts">
+        {hostsQuery.isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Spinner size="lg" />
           </div>
-          <div className="flex gap-2">
-            <Button
-              variant="flat"
-              startContent={<IconRefresh />}
-              onPress={() => {
-                hostsQuery.refetch();
-                vastQuery.refetch();
-              }}
-              isLoading={hostsQuery.isFetching || vastQuery.isFetching}
-            >
-              Refresh
-            </Button>
-            <Button 
-              variant="flat"
-              onPress={() => { void openVastConsole(); }}
-            >
-              Rent from Vast.ai
-            </Button>
-            <Button color="primary" startContent={<IconPlus />} onPress={addHostModal.onOpen}>
-              Add Host
-            </Button>
+        ) : hostsQuery.error ? (
+          <Card>
+            <CardBody>
+              <p className="text-danger">Failed to load hosts: {String(hostsQuery.error)}</p>
+            </CardBody>
+          </Card>
+        ) : (hostsQuery.data ?? []).length === 0 ? (
+          <p className="text-foreground/60 text-sm py-4">No hosts saved yet. Add a host to get started.</p>
+        ) : (
+          <div className="doppio-card-grid">
+            <AnimatePresence>
+              {(hostsQuery.data ?? []).map((host, index) => (
+                <motion.div
+                  key={host.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="h-full"
+                >
+                  <HostCard
+                    host={host}
+                    onDelete={() => removeHostMutation.mutate(host.id)}
+                    onConnect={() => {
+                      navigate({
+                        to: "/terminal",
+                        search: { connectHostId: host.id, connectLabel: host.name },
+                      });
+                    }}
+                    colabPricing={colabPricing}
+                    colabPricingLoading={colabPricingLoading}
+                    displayCurrency={displayCurrency}
+                    exchangeRates={exchangeRates}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
           </div>
-        </div>
+        )}
+      </PageSection>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Saved Hosts</p>
-              <p className="text-2xl font-bold">{hostsQuery.data?.length ?? 0}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Online</p>
-              <p className="text-2xl font-bold text-success">{onlineHosts}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Vast.ai Instances</p>
-              <p className="text-2xl font-bold">{vastInstances.length}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Vast.ai Running</p>
-              <p className="text-2xl font-bold text-success">{runningVast}</p>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* Saved Hosts */}
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold mb-4">Saved Hosts</h2>
-          {hostsQuery.isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Spinner size="lg" />
-            </div>
-          ) : hostsQuery.error ? (
-            <Card>
-              <CardBody>
-                <p className="text-danger">Failed to load hosts: {String(hostsQuery.error)}</p>
-              </CardBody>
-            </Card>
-          ) : (hostsQuery.data ?? []).length === 0 ? (
-            <p className="text-foreground/60 text-sm py-4">No hosts saved yet. Add a host to get started.</p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <AnimatePresence>
-                {(hostsQuery.data ?? []).map((host, index) => (
-                  <motion.div
-                    key={host.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="h-full"
-                  >
-                    <HostCard
-                      host={host}
-                      onDelete={() => removeHostMutation.mutate(host.id)}
-                      colabPricing={colabPricing}
-                      colabPricingLoading={colabPricingLoading}
-                      displayCurrency={displayCurrency}
-                      exchangeRates={exchangeRates}
-                    />
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          )}
-        </div>
-
-        {/* Vast.ai Instances - inline subsection */}
-        <div>
-          <div className="flex items-center gap-3 mb-4">
-            <h2 className="text-lg font-semibold">Vast.ai Instances</h2>
+      {/* Vast.ai Instances */}
+      <PageSection
+        title="Vast.ai Instances"
+        titleRight={
+          <div className="flex items-center gap-3">
             {vastQuery.isLoading && <Spinner size="sm" />}
             <span className="text-xs text-foreground/40">(auto-refresh)</span>
           </div>
-
-          {vastQuery.error ? (
-            <p className="text-danger text-sm py-2">
-              Failed to load. Check your API key in Settings.
-            </p>
-          ) : vastInstances.length === 0 ? (
-            <p className="text-foreground/60 text-sm py-2">No active instances</p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <AnimatePresence>
-                {vastInstances.map((inst, index) => (
-                  <motion.div
-                    key={inst.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="h-full"
-                  >
-                    <VastInstanceCard
-                      inst={inst}
-                      displayCurrency={displayCurrency}
-                      exchangeRates={exchangeRates}
-                      lastSeenAt={vastLastSeenAt[inst.id] ?? null}
-                      onOpenDetails={() => {
-                        navigate({ to: "/hosts/vast/$id", params: { id: String(inst.id) } });
-                      }}
-                      onStart={() => vastStartMut.mutate(inst.id)}
-                      onStop={() => vastStopMut.mutate(inst.id)}
-                      onDestroy={() => {
-                        if (confirm(`Destroy instance ${inst.id}? This will stop billing.`)) {
-                          vastDestroyMut.mutate(inst.id);
-                        }
-                      }}
-                      onLabel={() => {
-                        setLabelDraft({ id: inst.id, label: inst.label ?? "" });
-                        labelModal.onOpen();
-                      }}
-                      isStarting={vastStartMut.isPending && vastStartMut.variables === inst.id}
-                      isStopping={vastStopMut.isPending && vastStopMut.variables === inst.id}
-                    />
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          )}
-        </div>
-      </div>
+        }
+      >
+        {vastQuery.error ? (
+          <p className="text-danger text-sm py-2">
+            Failed to load. Check your API key in Settings.
+          </p>
+        ) : vastInstances.length === 0 ? (
+          <p className="text-foreground/60 text-sm py-2">No active instances</p>
+        ) : (
+          <div className="doppio-card-grid">
+            <AnimatePresence>
+              {vastInstances.map((inst, index) => (
+                <motion.div
+                  key={inst.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="h-full"
+                >
+                  <VastInstanceCard
+                    inst={inst}
+                    sshUser={cfgQuery.data?.vast.ssh_user?.trim() || "root"}
+                    sshPreference={cfgQuery.data?.vast.ssh_connection_preference === "direct" ? "direct" : "proxy"}
+                    displayCurrency={displayCurrency}
+                    exchangeRates={exchangeRates}
+                    lastSeenAt={vastLastSeenAt[inst.id] ?? null}
+                    onOpenDetails={() => {
+                      navigate({ to: "/hosts/vast/$id", params: { id: String(inst.id) } });
+                    }}
+                    onStart={() => vastStartMut.mutate(inst.id)}
+                    onStop={() => vastStopMut.mutate(inst.id)}
+                    onDestroy={() => {
+                      if (confirm(`Destroy instance ${inst.id}? This will stop billing.`)) {
+                        vastDestroyMut.mutate(inst.id);
+                      }
+                    }}
+                    onConnect={() => {
+                      navigate({
+                        to: "/terminal",
+                        search: { connectVastInstanceId: String(inst.id), connectLabel: inst.label ?? `vast #${inst.id}` },
+                      });
+                    }}
+                    onLabel={() => {
+                      setLabelDraft({ id: inst.id, label: inst.label ?? "" });
+                      labelModal.onOpen();
+                    }}
+                    isStarting={vastStartMut.isPending && vastStartMut.variables === inst.id}
+                    isStopping={vastStopMut.isPending && vastStopMut.variables === inst.id}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </PageSection>
 
       {/* Add Host Modal */}
       <Modal 
@@ -629,7 +634,7 @@ except KeyboardInterrupt:
         </ModalContent>
       </Modal>
 
-    </div>
+    </PageLayout>
   );
 }
 
@@ -749,6 +754,7 @@ function getVastBadgeStatus(inst: VastInstance): VastBadgeStatus {
 function HostCard({
   host,
   onDelete,
+  onConnect,
   colabPricing,
   colabPricingLoading,
   displayCurrency,
@@ -756,6 +762,7 @@ function HostCard({
 }: {
   host: Host;
   onDelete: () => void;
+  onConnect: () => void;
   colabPricing?: ColabPricingResult | null;
   colabPricingLoading?: boolean;
   displayCurrency: Currency;
@@ -782,6 +789,7 @@ function HostCard({
   const formatUsd = (value: number, decimals = 3) =>
     formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
   const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : null;
+  const canConnect = Boolean(host.ssh);
 
   return (
     <>
@@ -796,9 +804,9 @@ function HostCard({
           }
           openDetails();
         }}
-        className="h-full border border-divider hover:border-primary/50 transition-colors data-[pressed=true]:scale-100"
+        className="doppio-card-interactive h-full data-[pressed=true]:scale-100"
       >
-        <CardBody className="p-3 flex flex-col gap-2">
+        <CardBody className="p-4 flex flex-col gap-3">
           {/* Header: Icon, Name, Status, Actions */}
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-2 min-w-0 flex-1">
@@ -892,6 +900,22 @@ function HostCard({
             </div>
           )}
 
+          {/* Quick connect */}
+          <div className="flex items-center gap-2" data-host-card-action>
+            <Button
+              size="sm"
+              variant="flat"
+              startContent={<IconTerminal />}
+              onPress={onConnect}
+              isDisabled={!canConnect}
+            >
+              Connect
+            </Button>
+            {!canConnect && (
+              <span className="text-xs text-foreground/40">SSH not configured</span>
+            )}
+          </div>
+
           {/* Spacer to push last seen to bottom */}
           <div className="flex-1" />
 
@@ -927,6 +951,8 @@ function HostCard({
 
 function VastInstanceCard({
   inst,
+  sshUser,
+  sshPreference,
   displayCurrency,
   exchangeRates,
   lastSeenAt,
@@ -935,10 +961,13 @@ function VastInstanceCard({
   onStop,
   onLabel,
   onDestroy,
+  onConnect,
   isStarting,
   isStopping,
 }: {
   inst: VastInstance;
+  sshUser: string;
+  sshPreference: "proxy" | "direct";
   displayCurrency: Currency;
   exchangeRates?: ExchangeRates;
   lastSeenAt: string | null;
@@ -947,23 +976,56 @@ function VastInstanceCard({
   onStop: () => void;
   onLabel: () => void;
   onDestroy: () => void;
+  onConnect: () => void;
   isStarting: boolean;
   isStopping: boolean;
 }) {
   const [copiedSsh, setCopiedSsh] = useState(false);
   const name = inst.label?.trim() || `vast #${inst.id}`;
   const badgeStatus = getVastBadgeStatus(inst);
+  const canStart = badgeStatus !== "running" && badgeStatus !== "connecting";
+  const canStop = badgeStatus === "running";
   const formatUsd = (value: number, decimals = 3) =>
     formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
   const storagePerHour = inst.storage_cost != null && inst.disk_space != null
     ? (inst.storage_cost / 720) * inst.disk_space
+    : null;
+  const gpuPerHour = inst.dph_total ?? null;
+  const totalPerHour = gpuPerHour != null || storagePerHour != null
+    ? (gpuPerHour ?? 0) + (storagePerHour ?? 0)
     : null;
   const uploadPerTb = inst.inet_up_cost != null ? inst.inet_up_cost * 1024 : null;
   const downloadPerTb = inst.inet_down_cost != null ? inst.inet_down_cost * 1024 : null;
   const gpuLabel = inst.gpu_name
     ? `${inst.num_gpus ?? 1}x ${getGpuShortName(inst.gpu_name)}`
     : null;
-  const sshAddress = inst.ssh_host ? `root@${inst.ssh_host}:${inst.ssh_port ?? "-"}` : null;
+  const directPort = inst.machine_dir_ssh_port ?? null;
+  const directHost = inst.public_ipaddr ?? null;
+  const sshIdx = inst.ssh_idx ?? null;
+  const rawSshPort = inst.ssh_port ?? null;
+  const normalizedSshIdx = sshIdx
+    ? sshIdx.startsWith("ssh")
+      ? sshIdx
+      : `ssh${sshIdx}`
+    : null;
+  const proxyHostFromApi = inst.ssh_host ?? null;
+  const proxyHost = proxyHostFromApi?.includes("vast.ai")
+    ? proxyHostFromApi
+    : normalizedSshIdx
+      ? `${normalizedSshIdx}.vast.ai`
+      : null;
+  const proxyPort = rawSshPort != null ? rawSshPort : null;
+  const hasDirect = Boolean(directHost && directPort);
+  const hasProxy = Boolean(proxyHost && proxyPort);
+  const mode = sshPreference === "direct"
+    ? (hasDirect ? "direct" : hasProxy ? "proxy" : null)
+    : (hasProxy ? "proxy" : hasDirect ? "direct" : null);
+  const sshAddress = mode === "direct"
+    ? `${sshUser}@${directHost}:${directPort}`
+    : mode === "proxy"
+      ? `${sshUser}@${proxyHost}:${proxyPort}`
+      : null;
+  const canConnect = Boolean(sshAddress);
 
   return (
     <Card
@@ -976,9 +1038,9 @@ function VastInstanceCard({
         }
         onOpenDetails();
       }}
-      className="h-full w-full border border-divider hover:border-primary/50 transition-colors data-[pressed=true]:scale-100"
+      className="doppio-card-interactive h-full w-full data-[pressed=true]:scale-100"
     >
-      <CardBody className="p-3 flex flex-col gap-2">
+      <CardBody className="p-4 flex flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-2 min-w-0 flex-1">
             <AppIcon name="vast" className="w-6 h-6 shrink-0 mt-0.5" alt="Vast.ai icon" />
@@ -996,11 +1058,11 @@ function VastInstanceCard({
                   <IconEllipsis />
                 </Button>
               </DropdownTrigger>
-              <DropdownMenu>
-                <DropdownItem key="start" onPress={onStart} isDisabled={isStarting}>
+                <DropdownMenu>
+                <DropdownItem key="start" onPress={onStart} isDisabled={isStarting || !canStart}>
                   Start
                 </DropdownItem>
-                <DropdownItem key="stop" onPress={onStop} isDisabled={isStopping}>
+                <DropdownItem key="stop" onPress={onStop} isDisabled={isStopping || !canStop}>
                   Stop
                 </DropdownItem>
                 <DropdownItem key="label" onPress={onLabel}>
@@ -1045,14 +1107,9 @@ function VastInstanceCard({
               {gpuLabel}
             </Chip>
           )}
-          {inst.dph_total != null && (
+          {totalPerHour != null && (
             <Chip size="sm" variant="flat" color="warning">
-              GPU {formatUsd(inst.dph_total) + "/hr"}
-            </Chip>
-          )}
-          {storagePerHour != null && (
-            <Chip size="sm" variant="flat" color="default">
-              SSD {formatUsd(storagePerHour, 3)}/hr
+              {formatUsd(totalPerHour, 3)}/hr
             </Chip>
           )}
           {uploadPerTb != null && (
@@ -1064,6 +1121,21 @@ function VastInstanceCard({
             <Chip size="sm" variant="flat" color="default">
               ↓ {formatUsd(downloadPerTb, 3)}/TB
             </Chip>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2" data-vast-card-action>
+          <Button
+            size="sm"
+            variant="flat"
+            startContent={<IconTerminal />}
+            onPress={onConnect}
+            isDisabled={!canConnect}
+          >
+            Connect
+          </Button>
+          {!canConnect && (
+            <span className="text-xs text-foreground/40">SSH not ready</span>
           )}
         </div>
 

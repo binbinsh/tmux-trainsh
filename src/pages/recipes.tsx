@@ -29,11 +29,21 @@ import {
   useDeleteRecipe,
   useDuplicateRecipe,
   useHosts,
-  useRecipeExecutions,
+  useInteractiveExecutions,
+  useVastInstances,
   useRecipes,
 } from "../lib/tauri-api";
 import { useTerminalOptional } from "../contexts/TerminalContext";
-import type { ExecutionStatus, ExecutionSummary, Host, Recipe, RecipeSummary } from "../lib/types";
+import type {
+  Host,
+  InteractiveExecution,
+  InteractiveStatus,
+  Recipe,
+  RecipeSummary,
+} from "../lib/types";
+import { vastInstanceToHostCandidate } from "../lib/vast-host";
+import { PageLayout, PageSection } from "../components/shared/PageLayout";
+import { StatsCard } from "../components/shared/StatsCard";
 
 // Icons
 function IconPlus() {
@@ -76,26 +86,45 @@ function IconUpload() {
   );
 }
 
-function getStatusColor(status: ExecutionStatus): "default" | "primary" | "secondary" | "success" | "warning" | "danger" {
+function getStatusColor(status: InteractiveStatus): "default" | "primary" | "secondary" | "success" | "warning" | "danger" {
   switch (status) {
-    case "completed": return "success";
-    case "running": return "primary";
-    case "failed": return "danger";
-    case "paused": return "warning";
-    case "cancelled": return "default";
-    default: return "default";
+    case "completed":
+      return "success";
+    case "running":
+    case "waiting_for_input":
+      return "primary";
+    case "failed":
+      return "danger";
+    case "paused":
+    case "connecting":
+      return "warning";
+    case "cancelled":
+      return "default";
+    default:
+      return "default";
   }
 }
 
-function getStatusLabel(status: ExecutionStatus): string {
+function getStatusLabel(status: InteractiveStatus): string {
   switch (status) {
-    case "pending": return "Pending";
-    case "running": return "Running";
-    case "paused": return "Paused";
-    case "completed": return "Completed";
-    case "failed": return "Failed";
-    case "cancelled": return "Cancelled";
-    default: return status;
+    case "pending":
+      return "Pending";
+    case "connecting":
+      return "Connecting";
+    case "running":
+      return "Running";
+    case "waiting_for_input":
+      return "Waiting";
+    case "paused":
+      return "Paused";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return status;
   }
 }
 
@@ -107,8 +136,8 @@ function RecipeCard({ recipe, onRun, onEdit, onDuplicate, onDelete }: {
   onDelete: () => void;
 }) {
   return (
-    <Card className="h-full border border-divider hover:border-primary/50 transition-colors">
-      <CardBody className="flex flex-col gap-3">
+    <Card className="doppio-card-interactive h-full">
+      <CardBody className="flex flex-col gap-3 p-4">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <span className="text-2xl">📜</span>
@@ -166,18 +195,21 @@ function RecipeCard({ recipe, onRun, onEdit, onDuplicate, onDelete }: {
 }
 
 function ExecutionCard({ execution, onClick }: {
-  execution: ExecutionSummary;
+  execution: InteractiveExecution;
   onClick: () => void;
 }) {
-  const progress = execution.steps_total > 0
-    ? ((execution.steps_completed + execution.steps_failed) / execution.steps_total) * 100
+  const stepsCompleted = execution.steps.filter((s) => s.status === "success").length;
+  const stepsFailed = execution.steps.filter((s) => s.status === "failed").length;
+  const stepsTotal = execution.steps.length;
+  const progress = stepsTotal > 0
+    ? ((stepsCompleted + stepsFailed) / stepsTotal) * 100
     : 0;
-  
+
   return (
-    <Card 
-      isPressable 
+    <Card
+      isPressable
       onPress={onClick}
-      className="border border-divider hover:border-primary/50 transition-colors"
+      className="doppio-card-interactive"
     >
       <CardBody className="p-4">
         <div className="flex items-center justify-between gap-3 mb-2">
@@ -196,8 +228,8 @@ function ExecutionCard({ execution, onClick }: {
         
         <div className="flex items-center justify-between text-xs text-foreground/60">
           <span>
-            {execution.steps_completed}/{execution.steps_total} steps
-            {execution.steps_failed > 0 && ` (${execution.steps_failed} failed)`}
+            {stepsCompleted}/{stepsTotal} steps
+            {stepsFailed > 0 && ` (${stepsFailed} failed)`}
           </span>
           <span>{new Date(execution.created_at).toLocaleString()}</span>
         </div>
@@ -211,11 +243,13 @@ export function RecipesPage() {
   const queryClient = useQueryClient();
   const terminalContext = useTerminalOptional();
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isOpen: isRunErrorOpen, onOpen: onRunErrorOpen, onClose: onRunErrorClose } = useDisclosure();
   const [newRecipeName, setNewRecipeName] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   
   const recipesQuery = useRecipes();
-  const executionsQuery = useRecipeExecutions();
+  const executionsQuery = useInteractiveExecutions();
   const createMutation = useCreateRecipe();
   const deleteMutation = useDeleteRecipe();
   const duplicateMutation = useDuplicateRecipe();
@@ -229,6 +263,7 @@ export function RecipesPage() {
   const [recipeToRun, setRecipeToRun] = useState<{ path: string; recipe: Recipe } | null>(null);
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const { data: hosts = [] } = useHosts();
+  const vastQuery = useVastInstances();
   
   const handleCreate = async () => {
     if (!newRecipeName.trim()) return;
@@ -259,6 +294,14 @@ export function RecipesPage() {
       }
     } catch (e) {
       console.error("Failed to run recipe:", e);
+      const msg =
+        typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setRunError(msg);
+      onRunErrorOpen();
     }
   };
   
@@ -286,6 +329,9 @@ export function RecipesPage() {
       
       // Add terminal session to context and navigate
       if (terminalContext) {
+        if (!execution.terminal_id) {
+          throw new Error("Execution did not return a terminal session");
+        }
         terminalContext.addRecipeTerminal({
           id: execution.terminal_id,
           title: `Recipe: ${execution.recipe_name}`,
@@ -298,6 +344,14 @@ export function RecipesPage() {
       navigate({ to: "/terminal" });
     } catch (e) {
       console.error("Failed to run recipe:", e);
+      const msg =
+        typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setRunError(msg);
+      onRunErrorOpen();
     } finally {
       setIsRunning(false);
     }
@@ -311,9 +365,59 @@ export function RecipesPage() {
     await executeRecipe(recipeToRun.path, selectedHostId || "__local__");
     setRecipeToRun(null);
   };
+
+  const handleExecutionClick = async (execution: InteractiveExecution) => {
+    try {
+      if (execution.terminal_id) {
+        if (terminalContext) {
+          const existing = terminalContext.getSession(execution.terminal_id);
+          if (!existing) {
+            terminalContext.addRecipeTerminal({
+              id: execution.terminal_id,
+              title: `Recipe: ${execution.recipe_name}`,
+              recipeExecutionId: execution.id,
+              hostId: execution.host_id,
+            });
+          } else {
+            terminalContext.setActiveId(execution.terminal_id);
+          }
+        }
+        navigate({ to: "/terminal" });
+        return;
+      }
+
+      const resumed = await interactiveRecipeApi.resume(execution.id);
+      queryClient.setQueryData(["interactive-executions", resumed.id], resumed);
+      queryClient.invalidateQueries({ queryKey: ["interactive-executions"] });
+      if (terminalContext && resumed.terminal_id) {
+        terminalContext.addRecipeTerminal({
+          id: resumed.terminal_id,
+          title: `Recipe: ${resumed.recipe_name}`,
+          recipeExecutionId: resumed.id,
+          hostId: resumed.host_id,
+        });
+      }
+      navigate({ to: "/terminal" });
+    } catch (e) {
+      console.error("Failed to open execution:", e);
+      const msg =
+        typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setRunError(msg);
+      onRunErrorOpen();
+    }
+  };
   
   // Filter hosts based on target requirements
-  const compatibleHosts = hosts.filter((host: Host) => {
+  const allHosts: Host[] = [
+    ...hosts,
+    ...(vastQuery.data ?? []).map(vastInstanceToHostCandidate),
+  ];
+
+  const compatibleHosts = allHosts.filter((host: Host) => {
     if (!recipeToRun?.recipe.target) return true;
     const target = recipeToRun.recipe.target;
     
@@ -384,135 +488,116 @@ export function RecipesPage() {
   
   const recipes = recipesQuery.data ?? [];
   const executions = executionsQuery.data ?? [];
-  const activeExecutions = executions.filter(e => e.status === "running" || e.status === "paused");
-  const recentExecutions = executions.filter(e => e.status !== "running" && e.status !== "paused").slice(0, 5);
+  const activeStatuses: InteractiveStatus[] = [
+    "running",
+    "paused",
+    "waiting_for_input",
+    "connecting",
+  ];
+  const activeExecutions = executions.filter((e) => activeStatuses.includes(e.status));
+  const recentExecutions = executions
+    .filter((e) => !activeStatuses.includes(e.status))
+    .slice(0, 5);
   const completedExecutions = executions.filter(e => e.status === "completed").length;
   const failedExecutions = executions.filter(e => e.status === "failed").length;
   
   return (
-    <div className="h-full p-6 overflow-auto">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold">Recipes</h1>
-            <p className="text-sm text-foreground/60">Automate your training workflows</p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="flat" startContent={<IconUpload />} onPress={handleImport}>
-              Import
-            </Button>
-            <Button color="primary" startContent={<IconPlus />} onPress={onOpen}>
-              New Recipe
-            </Button>
-          </div>
-        </div>
-        
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Total Recipes</p>
-              <p className="text-2xl font-bold">{recipes.length}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Running</p>
-              <p className="text-2xl font-bold text-primary">{activeExecutions.length}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Completed</p>
-              <p className="text-2xl font-bold text-success">{completedExecutions}</p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody>
-              <p className="text-sm text-foreground/60">Failed</p>
-              <p className="text-2xl font-bold text-danger">{failedExecutions}</p>
-            </CardBody>
-          </Card>
-        </div>
-        
-        {/* Active Executions */}
-        {activeExecutions.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-              </span>
-              Running
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {activeExecutions.map(exec => (
-                <ExecutionCard
-                  key={exec.id}
-                  execution={exec}
-                  onClick={() => navigate({ to: "/recipes/executions/$id", params: { id: exec.id } })}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {/* Recipes */}
-        <div className="mb-8">
-          <h2 className="text-lg font-semibold mb-4">My Recipes</h2>
-            
-            {recipesQuery.isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Spinner size="lg" />
-              </div>
-            ) : recipes.length === 0 ? (
-              <Card className="border border-dashed border-divider">
-                <CardBody className="text-center py-12">
-                  <div className="flex justify-center mb-4 text-foreground/40">
-                    <IconDocument />
-                  </div>
-                  <h3 className="font-semibold mb-2">No recipes yet</h3>
-                  <p className="text-sm text-foreground/60 mb-4">
-                    Create your first recipe to automate training workflows
-                  </p>
-                  <Button color="primary" onPress={onOpen}>
-                    Create Recipe
-                  </Button>
-                </CardBody>
-              </Card>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {recipes.map(recipe => (
-                  <RecipeCard
-                    key={recipe.path}
-                    recipe={recipe}
-                    onRun={() => handleRunClick(recipe.path)}
-                    onEdit={() => handleEdit(recipe.path)}
-                    onDuplicate={() => handleDuplicate(recipe.path, recipe.name)}
-                    onDelete={() => handleDeleteClick(recipe.path)}
-                  />
-                ))}
-              </div>
-            )}
-        </div>
-        
-        {/* Recent Executions */}
-        {recentExecutions.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold mb-4">Recent Runs</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {recentExecutions.map(exec => (
-                <ExecutionCard
-                  key={exec.id}
-                  execution={exec}
-                  onClick={() => navigate({ to: "/recipes/executions/$id", params: { id: exec.id } })}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+    <PageLayout
+      title="Recipes"
+      subtitle="Automate your training workflows"
+      actions={
+        <>
+          <Button variant="flat" startContent={<IconUpload />} onPress={handleImport}>
+            Import
+          </Button>
+          <Button color="primary" startContent={<IconPlus />} onPress={onOpen}>
+            New Recipe
+          </Button>
+        </>
+      }
+    >
+      {/* Stats */}
+      <div className="doppio-stats-grid">
+        <StatsCard title="Total Recipes" value={recipes.length} />
+        <StatsCard title="Running" value={activeExecutions.length} valueColor="primary" />
+        <StatsCard title="Completed" value={completedExecutions} valueColor="success" />
+        <StatsCard title="Failed" value={failedExecutions} valueColor="danger" />
       </div>
+
+      {/* Active Executions */}
+      {activeExecutions.length > 0 && (
+        <PageSection
+          title="Running"
+          titleRight={
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+            </span>
+          }
+        >
+          <div className="doppio-card-grid-2">
+            {activeExecutions.map(exec => (
+              <ExecutionCard
+                key={exec.id}
+                execution={exec}
+                onClick={() => handleExecutionClick(exec)}
+              />
+            ))}
+          </div>
+        </PageSection>
+      )}
+
+      {/* Recipes */}
+      <PageSection title="My Recipes">
+        {recipesQuery.isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Spinner size="lg" />
+          </div>
+        ) : recipes.length === 0 ? (
+          <Card className="doppio-card border-dashed">
+            <CardBody className="text-center py-12">
+              <div className="flex justify-center mb-4 text-foreground/40">
+                <IconDocument />
+              </div>
+              <h3 className="font-semibold mb-2">No recipes yet</h3>
+              <p className="text-sm text-foreground/60 mb-4">
+                Create your first recipe to automate training workflows
+              </p>
+              <Button color="primary" onPress={onOpen}>
+                Create Recipe
+              </Button>
+            </CardBody>
+          </Card>
+        ) : (
+          <div className="doppio-card-grid">
+            {recipes.map(recipe => (
+              <RecipeCard
+                key={recipe.path}
+                recipe={recipe}
+                onRun={() => handleRunClick(recipe.path)}
+                onEdit={() => handleEdit(recipe.path)}
+                onDuplicate={() => handleDuplicate(recipe.path, recipe.name)}
+                onDelete={() => handleDeleteClick(recipe.path)}
+              />
+            ))}
+          </div>
+        )}
+      </PageSection>
+
+      {/* Recent Executions */}
+      {recentExecutions.length > 0 && (
+        <PageSection title="Recent Runs">
+          <div className="doppio-card-grid">
+            {recentExecutions.map(exec => (
+              <ExecutionCard
+                key={exec.id}
+                execution={exec}
+                onClick={() => handleExecutionClick(exec)}
+              />
+            ))}
+          </div>
+        </PageSection>
+      )}
       
       {/* Create Recipe Modal */}
       <Modal isOpen={isOpen} onClose={onClose}>
@@ -652,7 +737,20 @@ export function RecipesPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+
+      <Modal isOpen={isRunErrorOpen} onClose={onRunErrorClose} size="lg">
+        <ModalContent>
+          <ModalHeader>Failed to run recipe</ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-danger whitespace-pre-wrap">{runError ?? "Unknown error"}</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={onRunErrorClose}>
+              Close
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    </PageLayout>
   );
 }
-

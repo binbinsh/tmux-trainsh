@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::config;
 use crate::error::AppError;
@@ -31,14 +32,8 @@ pub async fn mount(
         }
     };
 
-    // Verify host exists and has SSH
-    let host_info = host::get_host(host_id).await?;
-    if host_info.ssh.is_none() {
-        return Err(AppError::invalid_input(format!(
-            "Host {} has no SSH configuration",
-            host_id
-        )));
-    }
+    // Verify host has SSH
+    let _ = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
 
     // Get storage configuration
     let storage = get_storage_from_file(storage_id).await?;
@@ -49,14 +44,16 @@ pub async fn mount(
             token,
             ..
         } => {
-            let client_id = client_id.clone().ok_or_else(|| {
-                AppError::invalid_input("Google Drive storage missing client_id")
-            })?;
+            let client_id = client_id
+                .clone()
+                .ok_or_else(|| AppError::invalid_input("Google Drive storage missing client_id"))?;
             let client_secret = client_secret.clone().ok_or_else(|| {
                 AppError::invalid_input("Google Drive storage missing client_secret")
             })?;
             let token = token.clone().ok_or_else(|| {
-                AppError::invalid_input("Google Drive storage missing token - please complete OAuth first")
+                AppError::invalid_input(
+                    "Google Drive storage missing token - please complete OAuth first",
+                )
             })?;
             (client_id, client_secret, token)
         }
@@ -76,7 +73,7 @@ pub async fn mount(
     report("Configuring OAuth credentials");
     let config_content = create_rclone_config(&client_id, &client_secret, &token);
     let config_path = "~/.config/rclone/rclone.conf";
-    
+
     // Ensure config directory exists and write config
     let setup_commands = format!(
         r#"mkdir -p ~/.config/rclone && cat > {} << 'RCLONE_CONFIG_EOF'
@@ -84,7 +81,7 @@ pub async fn mount(
 RCLONE_CONFIG_EOF"#,
         config_path, config_content
     );
-    
+
     run_ssh(host_id, &setup_commands).await?;
 
     // Create mount point
@@ -106,7 +103,7 @@ RCLONE_CONFIG_EOF"#,
 
     // Add options
     mount_cmd.push_str(" --allow-other --allow-non-empty");
-    
+
     if vfs_cache {
         mount_cmd.push_str(" --vfs-cache-mode ");
         mount_cmd.push_str(cache_mode);
@@ -121,7 +118,7 @@ RCLONE_CONFIG_EOF"#,
 
     // Ensure PATH includes ~/bin for fusermount3 if installed there
     let path_prefix = "export PATH=\"$HOME/bin:$PATH\"; ";
-    
+
     if background {
         // Run in background using nohup and disown
         mount_cmd = format!(
@@ -139,52 +136,66 @@ RCLONE_CONFIG_EOF"#,
     // Verify mount (give it a moment to initialize)
     report("Verifying mount");
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    
+
     // Step 1: Check if it's a mount point
-    let check_cmd = format!("mountpoint -q {} && echo 'mounted' || echo 'not mounted'", mount_path);
+    let check_cmd = format!(
+        "mountpoint -q {} && echo 'mounted' || echo 'not mounted'",
+        mount_path
+    );
     let result = run_ssh(host_id, &check_cmd).await?;
-    
+
     if !result.contains("mounted") {
         // Check rclone log for errors
         let log = run_ssh(host_id, "cat /tmp/rclone-mount.log 2>/dev/null | tail -30")
             .await
             .unwrap_or_default();
-        
+
         return Err(AppError::command(format!(
             "Failed to mount Google Drive at {}. Mount point not created.\nLog:\n{}",
             mount_path, log
         )));
     }
-    
+
     // Step 2: Try to actually list the directory to verify rclone is working
     // This catches cases where mount point exists but rclone can't access Drive
-    let list_cmd = format!("timeout 10 ls {} 2>&1 || echo 'RCLONE_LIST_FAILED'", mount_path);
+    let list_cmd = format!(
+        "timeout 10 ls {} 2>&1 || echo 'RCLONE_LIST_FAILED'",
+        mount_path
+    );
     let list_result = run_ssh(host_id, &list_cmd).await?;
-    
-    if list_result.contains("RCLONE_LIST_FAILED") || list_result.contains("Transport endpoint is not connected") {
+
+    if list_result.contains("RCLONE_LIST_FAILED")
+        || list_result.contains("Transport endpoint is not connected")
+    {
         // Mount point exists but rclone is broken - check log
         let log = run_ssh(host_id, "cat /tmp/rclone-mount.log 2>/dev/null | tail -30")
             .await
             .unwrap_or_default();
-        
+
         // Also check rclone process status
-        let ps_result = run_ssh(host_id, "ps aux | grep 'rclone mount' | grep -v grep || echo 'no rclone process'")
-            .await
-            .unwrap_or_default();
-        
+        let ps_result = run_ssh(
+            host_id,
+            "ps aux | grep 'rclone mount' | grep -v grep || echo 'no rclone process'",
+        )
+        .await
+        .unwrap_or_default();
+
         return Err(AppError::command(format!(
             "Google Drive mounted at {} but cannot access files.\n\nRclone log:\n{}\n\nProcess status:\n{}",
             mount_path, log, ps_result
         )));
     }
-    
+
     // Log what we found for debugging
-    let contents_preview = if list_result.trim().is_empty() { 
-        "(empty)".to_string() 
-    } else { 
-        list_result.lines().take(5).collect::<Vec<_>>().join(", ") 
+    let contents_preview = if list_result.trim().is_empty() {
+        "(empty)".to_string()
+    } else {
+        list_result.lines().take(5).collect::<Vec<_>>().join(", ")
     };
-    eprintln!("[gdrive_mount] Mount successful at {}. Contents: {}", mount_path, contents_preview);
+    eprintln!(
+        "[gdrive_mount] Mount successful at {}. Contents: {}",
+        mount_path, contents_preview
+    );
     report("Mount verified");
 
     // Return success message for display in terminal
@@ -201,7 +212,7 @@ pub async fn unmount(host_id: &str, mount_path: &str) -> Result<(), AppError> {
         "fusermount -uz {} 2>/dev/null || umount -l {} 2>/dev/null || true",
         mount_path, mount_path
     );
-    
+
     run_ssh(host_id, &unmount_cmd).await?;
 
     // Kill any lingering rclone processes for this mount
@@ -218,7 +229,7 @@ pub async fn unmount(host_id: &str, mount_path: &str) -> Result<(), AppError> {
 async fn install_rclone_if_needed(host_id: &str) -> Result<(), AppError> {
     // Check if rclone is installed
     let check = run_ssh(host_id, "which rclone 2>/dev/null || echo 'not found'").await?;
-    
+
     if check.contains("not found") {
         // Install rclone using the official script
         let install_cmd = r#"curl -s https://rclone.org/install.sh | sudo bash 2>/dev/null || {
@@ -231,21 +242,21 @@ async fn install_rclone_if_needed(host_id: &str) -> Result<(), AppError> {
             rm -rf rclone-current-linux-amd64.zip rclone-*-linux-amd64 && \
             echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
         }"#;
-        
+
         run_ssh(host_id, install_cmd).await?;
-        
+
         // Verify installation
         let verify = run_ssh(host_id, "which rclone || ~/bin/rclone version 2>/dev/null").await?;
         if verify.is_empty() && !verify.contains("rclone") {
             return Err(AppError::command("Failed to install rclone on remote host"));
         }
     }
-    
+
     // Ensure fuse3 is available for mounting (rclone requires fusermount3)
     let fuse3_check = run_ssh(host_id, "which fusermount3 2>/dev/null || echo 'not found'").await?;
     if fuse3_check.contains("not found") {
         eprintln!("[gdrive_mount] fusermount3 not found, installing fuse3...");
-        
+
         // Install fuse3 package - more robust installation script
         let install_fuse = r#"
 set -e
@@ -308,7 +319,7 @@ fi
 "#;
         let install_result = run_ssh(host_id, install_fuse).await?;
         eprintln!("[gdrive_mount] fuse3 install output: {}", install_result);
-        
+
         // Verify fuse is now available
         let verify_fuse = run_ssh(host_id, "which fusermount3 2>/dev/null || [ -x ~/bin/fusermount3 ] && echo 'found' || echo 'not found'").await?;
         if verify_fuse.contains("not found") {
@@ -345,14 +356,14 @@ team_drive =
 async fn get_storage_from_file(storage_id: &str) -> Result<Storage, AppError> {
     let data_dir = PathBuf::from(config::get_data_dir_path());
     let storages_path = data_dir.join("storages.json");
-    
+
     let content = tokio::fs::read_to_string(&storages_path)
         .await
         .map_err(|e| AppError::io(format!("Failed to read storages file: {}", e)))?;
-    
+
     let storages: HashMap<String, Storage> = serde_json::from_str(&content)
         .map_err(|e| AppError::io(format!("Failed to parse storages file: {}", e)))?;
-    
+
     storages
         .get(storage_id)
         .cloned()
@@ -363,7 +374,7 @@ async fn get_storage_from_file(storage_id: &str) -> Result<Storage, AppError> {
 pub async fn is_mounted(host_id: &str, mount_path: &str) -> Result<bool, AppError> {
     let check_cmd = format!("mountpoint -q {} && echo 'yes' || echo 'no'", mount_path);
     let result = run_ssh(host_id, &check_cmd).await?;
-    
+
     Ok(result.trim() == "yes")
 }
 
@@ -371,20 +382,20 @@ pub async fn is_mounted(host_id: &str, mount_path: &str) -> Result<bool, AppErro
 pub async fn find_gdrive_storage() -> Result<String, AppError> {
     let data_dir = PathBuf::from(config::get_data_dir_path());
     let storages_path = data_dir.join("storages.json");
-    
+
     let content = tokio::fs::read_to_string(&storages_path)
         .await
         .map_err(|e| AppError::io(format!("Failed to read storages file: {}", e)))?;
-    
+
     let storages: HashMap<String, Storage> = serde_json::from_str(&content)
         .map_err(|e| AppError::io(format!("Failed to parse storages file: {}", e)))?;
-    
+
     for (id, storage) in storages {
         if matches!(storage.backend, StorageBackend::GoogleDrive { .. }) {
             return Ok(id);
         }
     }
-    
+
     Err(AppError::not_found(
         "No Google Drive storage configured. Please add a Google Drive storage in Settings → Storage."
     ))

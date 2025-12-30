@@ -4,13 +4,15 @@
 //! allowing real-time output display and human intervention.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
-use crate::error::AppError;
 use super::types::*;
+use crate::config::doppio_data_dir;
+use crate::error::AppError;
 
 // ============================================================
 // Interactive Execution Types
@@ -35,6 +37,36 @@ fn default_intervention() -> bool {
     true
 }
 
+fn default_terminal_cols() -> u16 {
+    120
+}
+
+fn default_terminal_rows() -> u16 {
+    32
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveTerminal {
+    pub title: String,
+    #[serde(default)]
+    pub tmux_session: Option<String>,
+    #[serde(default = "default_terminal_cols")]
+    pub cols: u16,
+    #[serde(default = "default_terminal_rows")]
+    pub rows: u16,
+}
+
+impl Default for InteractiveTerminal {
+    fn default() -> Self {
+        Self {
+            title: "Recipe".to_string(),
+            tmux_session: None,
+            cols: default_terminal_cols(),
+            rows: default_terminal_rows(),
+        }
+    }
+}
+
 /// State of an interactive execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteractiveExecution {
@@ -45,7 +77,11 @@ pub struct InteractiveExecution {
     /// Recipe name
     pub recipe_name: String,
     /// Associated terminal session ID
-    pub terminal_id: String,
+    #[serde(default)]
+    pub terminal_id: Option<String>,
+    /// Terminal metadata for reconnection
+    #[serde(default)]
+    pub terminal: InteractiveTerminal,
     /// Host ID being used
     pub host_id: String,
     /// Current status
@@ -57,11 +93,17 @@ pub struct InteractiveExecution {
     /// Step statuses
     pub steps: Vec<InteractiveStepState>,
     /// Optional progress messages keyed by step_id
+    #[serde(default)]
     pub step_progress: std::collections::HashMap<String, String>,
+    /// Effective variables used for interpolation
+    #[serde(default)]
+    pub variables: HashMap<String, String>,
     /// Timestamps
     pub created_at: String,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -138,10 +180,7 @@ pub enum InteractiveEvent {
         error: String,
     },
     /// Intervention lock changed
-    InterventionLockChanged {
-        execution_id: String,
-        locked: bool,
-    },
+    InterventionLockChanged { execution_id: String, locked: bool },
     /// Waiting for user to confirm/modify command
     WaitingForConfirmation {
         execution_id: String,
@@ -149,31 +188,79 @@ pub enum InteractiveEvent {
         command: String,
     },
     /// Execution paused
-    ExecutionPaused {
-        execution_id: String,
-    },
+    ExecutionPaused { execution_id: String },
     /// Execution resumed
-    ExecutionResumed {
-        execution_id: String,
-    },
+    ExecutionResumed { execution_id: String },
     /// Execution completed
-    ExecutionCompleted {
-        execution_id: String,
-    },
+    ExecutionCompleted { execution_id: String },
     /// Execution failed
-    ExecutionFailed {
-        execution_id: String,
-        error: String,
-    },
+    ExecutionFailed { execution_id: String, error: String },
     /// Execution cancelled
-    ExecutionCancelled {
-        execution_id: String,
-    },
+    ExecutionCancelled { execution_id: String },
 }
 
 // ============================================================
 // Interactive Execution Manager
 // ============================================================
+
+fn executions_dir() -> PathBuf {
+    doppio_data_dir().join("recipe_executions")
+}
+
+fn execution_path(id: &str) -> PathBuf {
+    executions_dir().join(format!("interactive-{}.json", id))
+}
+
+async fn save_execution_to_disk(execution: &InteractiveExecution) -> Result<(), AppError> {
+    let dir = executions_dir();
+    tokio::fs::create_dir_all(&dir).await?;
+    let path = execution_path(&execution.id);
+    let data = serde_json::to_string_pretty(execution)?;
+    tokio::fs::write(&path, format!("{}\n", data)).await?;
+    Ok(())
+}
+
+async fn load_executions_from_disk() -> Result<Vec<InteractiveExecution>, AppError> {
+    let dir = executions_dir();
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut executions = Vec::new();
+    let mut entries = tokio::fs::read_dir(&dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.extension().map_or(true, |ext| ext != "json") {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if !file_name.starts_with("interactive-") {
+            continue;
+        }
+        let data = match tokio::fs::read_to_string(&path).await {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!(
+                    "[interactive_recipe] Failed to read execution file {:?}: {}",
+                    path, e
+                );
+                continue;
+            }
+        };
+        match serde_json::from_str::<InteractiveExecution>(&data) {
+            Ok(exec) => executions.push(exec),
+            Err(e) => {
+                eprintln!(
+                    "[interactive_recipe] Failed to parse execution file {:?}: {}",
+                    path, e
+                );
+            }
+        }
+    }
+
+    executions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(executions)
+}
 
 /// Manages interactive recipe executions
 pub struct InteractiveRunner {
@@ -185,9 +272,9 @@ pub struct InteractiveRunner {
 
 struct InteractiveExecutionState {
     execution: RwLock<InteractiveExecution>,
-    recipe: Recipe,
     /// Control channel
     control_tx: mpsc::Sender<InteractiveControl>,
+    control_rx: Mutex<Option<mpsc::Receiver<InteractiveControl>>>,
     /// Whether execution is active
     active: RwLock<bool>,
 }
@@ -227,18 +314,26 @@ impl InteractiveRunner {
             event_tx: None,
         }
     }
-    
+
     pub fn with_event_sender(mut self, tx: mpsc::UnboundedSender<InteractiveEvent>) -> Self {
         self.event_tx = Some(tx);
         self
     }
-    
+
     fn emit(&self, event: InteractiveEvent) {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(event);
         }
     }
-    
+
+    async fn persist_execution(&self, execution: &InteractiveExecution) -> Result<(), AppError> {
+        save_execution_to_disk(execution).await
+    }
+
+    fn touch_execution(execution: &mut InteractiveExecution) {
+        execution.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+
     /// Start an interactive recipe execution
     /// Returns (execution_id, terminal_id)
     pub async fn start(
@@ -247,196 +342,322 @@ impl InteractiveRunner {
         recipe_path: String,
         host_id: String,
         terminal_id: String,
-        _variable_overrides: HashMap<String, String>,
+        terminal: InteractiveTerminal,
+        variables: HashMap<String, String>,
     ) -> Result<(String, String), AppError> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        
+
         // Initialize step states
-        let steps: Vec<InteractiveStepState> = recipe.steps.iter().map(|s| {
-            InteractiveStepState {
+        let steps: Vec<InteractiveStepState> = recipe
+            .steps
+            .iter()
+            .map(|s| InteractiveStepState {
                 step_id: s.id.clone(),
                 name: s.name.clone(),
                 status: StepStatus::Pending,
                 command: None,
-            }
-        }).collect();
-        
+            })
+            .collect();
+
         let execution = InteractiveExecution {
             id: id.clone(),
             recipe_path,
             recipe_name: recipe.name.clone(),
-            terminal_id: terminal_id.clone(),
+            terminal_id: Some(terminal_id.clone()),
+            terminal,
             host_id: host_id.clone(),
             status: InteractiveStatus::Pending,
             intervention_locked: false,
             current_step: None,
             steps,
             step_progress: std::collections::HashMap::new(),
+            variables,
             created_at: now,
             started_at: None,
             completed_at: None,
+            updated_at: Some(now),
         };
-        
+
         // Create control channel
-        let (control_tx, _control_rx) = mpsc::channel(16);
-        
+        let (control_tx, control_rx) = mpsc::channel(16);
+
+        let snapshot = execution.clone();
         let state = Arc::new(InteractiveExecutionState {
             execution: RwLock::new(execution),
-            recipe,
             control_tx,
+            control_rx: Mutex::new(Some(control_rx)),
             active: RwLock::new(true),
         });
-        
+
         // Store execution
         {
             let mut execs = self.executions.write().await;
             execs.insert(id.clone(), state.clone());
         }
-        
+
+        self.persist_execution(&snapshot).await?;
+
         // Emit start event
         self.emit(InteractiveEvent::ExecutionStarted {
             execution_id: id.clone(),
             terminal_id: terminal_id.clone(),
         });
-        
+
         Ok((id, terminal_id))
     }
-    
+
     /// Get execution by ID
     pub async fn get_execution(&self, id: &str) -> Result<InteractiveExecution, AppError> {
         let state = {
             let execs = self.executions.read().await;
-            execs.get(id)
+            execs
+                .get(id)
                 .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?
                 .clone()
         };
         let exec = state.execution.read().await.clone();
         Ok(exec)
     }
-    
+
     /// Send control signal to execution
-    pub async fn send_control(&self, id: &str, control: InteractiveControl) -> Result<(), AppError> {
+    pub async fn send_control(
+        &self,
+        id: &str,
+        control: InteractiveControl,
+    ) -> Result<(), AppError> {
         let execs = self.executions.read().await;
-        let state = execs.get(id)
+        let state = execs
+            .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        
-        state.control_tx.send(control).await
+
+        state
+            .control_tx
+            .send(control)
+            .await
             .map_err(|_| AppError::command("Failed to send control signal"))?;
-        
+
         Ok(())
     }
-    
+
+    pub async fn take_control_receiver(
+        &self,
+        id: &str,
+    ) -> Result<mpsc::Receiver<InteractiveControl>, AppError> {
+        let execs = self.executions.read().await;
+        let state = execs
+            .get(id)
+            .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
+
+        let mut guard = state.control_rx.lock().await;
+        guard
+            .take()
+            .ok_or_else(|| AppError::invalid_input("Control receiver already taken"))
+    }
+
+    pub async fn is_active(&self, id: &str) -> Result<bool, AppError> {
+        let execs = self.executions.read().await;
+        let state = execs
+            .get(id)
+            .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
+        Ok(*state.active.read().await)
+    }
+
+    pub async fn set_active(&self, id: &str, active: bool) -> Result<(), AppError> {
+        let execs = self.executions.read().await;
+        let state = execs
+            .get(id)
+            .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
+        *state.active.write().await = active;
+        Ok(())
+    }
+
+    pub async fn update_terminal(
+        &self,
+        id: &str,
+        terminal_id: Option<String>,
+        terminal: Option<InteractiveTerminal>,
+    ) -> Result<InteractiveExecution, AppError> {
+        let execs = self.executions.read().await;
+        let state = execs
+            .get(id)
+            .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
+
+        let snapshot = {
+            let mut exec = state.execution.write().await;
+            if let Some(term_id) = terminal_id {
+                exec.terminal_id = Some(term_id);
+            }
+            if let Some(term) = terminal {
+                exec.terminal = term;
+            }
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+        Ok(snapshot)
+    }
+
     /// Lock intervention (called when script is sending commands)
     pub async fn lock_intervention(&self, id: &str) -> Result<(), AppError> {
         let execs = self.executions.read().await;
-        let state = execs.get(id)
+        let state = execs
+            .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        
-        {
+
+        let snapshot = {
             let mut exec = state.execution.write().await;
             exec.intervention_locked = true;
-        }
-        
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+
         self.emit(InteractiveEvent::InterventionLockChanged {
             execution_id: id.to_string(),
             locked: true,
         });
-        
+
         Ok(())
     }
-    
+
     /// Unlock intervention (allow human input)
     pub async fn unlock_intervention(&self, id: &str) -> Result<(), AppError> {
         let execs = self.executions.read().await;
-        let state = execs.get(id)
+        let state = execs
+            .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        
-        {
+
+        let snapshot = {
             let mut exec = state.execution.write().await;
             exec.intervention_locked = false;
-        }
-        
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+
         self.emit(InteractiveEvent::InterventionLockChanged {
             execution_id: id.to_string(),
             locked: false,
         });
-        
+
         Ok(())
     }
-    
+
     /// Update step status
-    pub async fn update_step_status(&self, id: &str, step_id: &str, status: StepStatus) -> Result<(), AppError> {
+    pub async fn update_step_status(
+        &self,
+        id: &str,
+        step_id: &str,
+        status: StepStatus,
+    ) -> Result<(), AppError> {
         let execs = self.executions.read().await;
-        let state = execs.get(id)
+        let state = execs
+            .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        
-        let mut exec = state.execution.write().await;
-        if let Some(step) = exec.steps.iter_mut().find(|s| s.step_id == step_id) {
-            step.status = status;
-        }
-        
+
+        let snapshot = {
+            let mut exec = state.execution.write().await;
+            if let Some(step) = exec.steps.iter_mut().find(|s| s.step_id == step_id) {
+                step.status = status;
+            }
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+
         Ok(())
     }
-    
+
     /// Update or clear step progress message
-    pub async fn set_step_progress(&self, id: &str, step_id: &str, progress: Option<String>) -> Result<(), AppError> {
+    pub async fn set_step_progress(
+        &self,
+        id: &str,
+        step_id: &str,
+        progress: Option<String>,
+    ) -> Result<(), AppError> {
         let execs = self.executions.read().await;
-        let state = execs.get(id)
+        let state = execs
+            .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        
-        let mut exec = state.execution.write().await;
-        if let Some(msg) = progress {
-            exec.step_progress.insert(step_id.to_string(), msg);
-        } else {
-            exec.step_progress.remove(step_id);
-        }
-        
+
+        let snapshot = {
+            let mut exec = state.execution.write().await;
+            if let Some(msg) = progress {
+                exec.step_progress.insert(step_id.to_string(), msg);
+            } else {
+                exec.step_progress.remove(step_id);
+            }
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
         Ok(())
     }
-    
+
     /// Set current step
-    pub async fn set_current_step(&self, id: &str, step_id: Option<String>) -> Result<(), AppError> {
+    pub async fn set_current_step(
+        &self,
+        id: &str,
+        step_id: Option<String>,
+    ) -> Result<(), AppError> {
         let execs = self.executions.read().await;
-        let state = execs.get(id)
+        let state = execs
+            .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        
-        let mut exec = state.execution.write().await;
-        exec.current_step = step_id;
-        
+
+        let snapshot = {
+            let mut exec = state.execution.write().await;
+            exec.current_step = step_id;
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+
         Ok(())
     }
-    
+
     /// Update execution status
     pub async fn update_status(&self, id: &str, status: InteractiveStatus) -> Result<(), AppError> {
         let execs = self.executions.read().await;
-        let state = execs.get(id)
+        let state = execs
+            .get(id)
             .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
-        
-        let mut exec = state.execution.write().await;
-        exec.status = status.clone();
-        
-        if status == InteractiveStatus::Running && exec.started_at.is_none() {
-            exec.started_at = Some(chrono::Utc::now().to_rfc3339());
-        }
-        
-        if matches!(status, InteractiveStatus::Completed | InteractiveStatus::Failed | InteractiveStatus::Cancelled) {
-            exec.completed_at = Some(chrono::Utc::now().to_rfc3339());
-            *state.active.write().await = false;
-        }
-        
+
+        let snapshot = {
+            let mut exec = state.execution.write().await;
+            exec.status = status.clone();
+
+            if status == InteractiveStatus::Running && exec.started_at.is_none() {
+                exec.started_at = Some(chrono::Utc::now().to_rfc3339());
+            }
+
+            if matches!(
+                status,
+                InteractiveStatus::Completed
+                    | InteractiveStatus::Failed
+                    | InteractiveStatus::Cancelled
+            ) {
+                exec.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                *state.active.write().await = false;
+            }
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+
         Ok(())
     }
-    
+
     /// List all interactive executions
     pub async fn list_executions(&self) -> Vec<InteractiveExecution> {
         let execs = self.executions.read().await;
         let mut result = Vec::new();
-        
+
         for state in execs.values() {
             result.push(state.execution.read().await.clone());
         }
-        
+
         result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         result
     }
@@ -463,4 +684,56 @@ pub async fn get_runner() -> tokio::sync::MutexGuard<'static, InteractiveRunner>
 pub async fn init_runner(tx: mpsc::UnboundedSender<InteractiveEvent>) {
     let mut runner = get_runner_inner().lock().await;
     *runner = InteractiveRunner::new().with_event_sender(tx);
+}
+
+fn normalize_loaded_execution(exec: &mut InteractiveExecution) {
+    exec.terminal_id = None;
+    exec.intervention_locked = false;
+
+    if matches!(
+        exec.status,
+        InteractiveStatus::Running
+            | InteractiveStatus::Connecting
+            | InteractiveStatus::WaitingForInput
+    ) {
+        exec.status = InteractiveStatus::Paused;
+    }
+
+    for step in &mut exec.steps {
+        if step.status == StepStatus::Running {
+            step.status = StepStatus::Pending;
+        }
+    }
+
+    exec.updated_at = Some(chrono::Utc::now().to_rfc3339());
+}
+
+/// Restore persisted interactive executions into memory for resuming.
+pub async fn restore_persisted_executions() -> Result<(), AppError> {
+    let executions = load_executions_from_disk().await?;
+
+    if executions.is_empty() {
+        return Ok(());
+    }
+
+    let mut restored = Vec::with_capacity(executions.len());
+    for mut exec in executions {
+        normalize_loaded_execution(&mut exec);
+        save_execution_to_disk(&exec).await?;
+        restored.push(exec);
+    }
+
+    let mut runner = get_runner_inner().lock().await;
+    for exec in restored {
+        let (control_tx, control_rx) = mpsc::channel(16);
+        let state = Arc::new(InteractiveExecutionState {
+            execution: RwLock::new(exec.clone()),
+            control_tx,
+            control_rx: Mutex::new(Some(control_rx)),
+            active: RwLock::new(false),
+        });
+        runner.executions.insert(exec.id.clone(), state);
+    }
+
+    Ok(())
 }

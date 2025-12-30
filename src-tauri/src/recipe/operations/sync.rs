@@ -3,6 +3,7 @@
 use crate::error::AppError;
 use crate::host;
 use crate::sync as sync_module;
+use std::time::Duration;
 
 /// Upload local directory to remote host
 pub async fn upload(
@@ -12,10 +13,8 @@ pub async fn upload(
     excludes: &[String],
     delete: bool,
 ) -> Result<(), AppError> {
-    let host = host::get_host(host_id).await?;
-    let ssh = host.ssh.as_ref()
-        .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
-    
+    let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
+
     let config = sync_module::SyncConfig {
         local_path: local_path.to_string(),
         remote_path: remote_path.to_string(),
@@ -23,9 +22,9 @@ pub async fn upload(
         extra_excludes: excludes.to_vec(),
         delete_remote: delete,
     };
-    
+
     // Use empty session ID for non-session syncs
-    sync_module::sync_to_remote("recipe", ssh, &config, None).await
+    sync_module::sync_to_remote("recipe", &ssh, &config, None).await
 }
 
 /// Download remote directory to local
@@ -35,11 +34,8 @@ pub async fn download(
     local_path: &str,
     _excludes: &[String],
 ) -> Result<(), AppError> {
-    let host = host::get_host(host_id).await?;
-    let ssh = host.ssh.as_ref()
-        .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
-    
-    // Use sync_from_remote
-    sync_module::sync_from_remote("recipe", ssh, remote_path, local_path, None).await
-}
+    let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
 
+    // Use sync_from_remote
+    sync_module::sync_from_remote("recipe", &ssh, remote_path, local_path, None).await
+}

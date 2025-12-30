@@ -31,6 +31,7 @@ import {
   saveConfig,
   secretsApi,
   sshKeyCandidates,
+  sshSecretKeyCandidates,
   sshPrivateKey,
   sshPublicKey,
   useFetchExchangeRates,
@@ -122,46 +123,37 @@ function IconX({ className }: { className?: string }) {
 }
 
 // ============================================================
-// Section Card Component
+// Section Card Component - Using unified doppio-card style
 // ============================================================
 
 type SectionIconType = "settings" | "server" | "beaker" | "key";
 
-const SECTION_STYLES: Record<SectionIconType, { bg: string; color: string }> = {
-  settings: { bg: "bg-slate-500/10", color: "text-slate-600 dark:text-slate-400" },
-  server: { bg: "bg-blue-500/10", color: "text-blue-600 dark:text-blue-400" },
-  beaker: { bg: "bg-amber-500/10", color: "text-amber-600 dark:text-amber-400" },
-  key: { bg: "bg-rose-500/10", color: "text-rose-600 dark:text-rose-400" },
-};
-
-function SectionCard({ 
-  title, 
-  subtitle, 
-  icon, 
+function SectionCard({
+  title,
+  subtitle,
+  icon,
   children,
   actions
-}: { 
-  title: string; 
-  subtitle?: string; 
+}: {
+  title: string;
+  subtitle?: string;
   icon: SectionIconType;
   children: React.ReactNode;
   actions?: React.ReactNode;
 }) {
-  const style = SECTION_STYLES[icon];
-  
   const IconComponent = {
     settings: IconSettings,
     server: IconServer,
     beaker: IconBeaker,
     key: IconKey,
   }[icon];
-  
+
   return (
-    <Card className="bg-content1 shadow-md border border-divider/50">
-      <CardHeader className="flex justify-between items-start gap-3 pb-3 border-b border-divider/30">
+    <div className="doppio-card">
+      <div className="flex justify-between items-start gap-3 p-4 border-b border-divider">
         <div className="flex gap-3 items-center">
-          <div className={`w-10 h-10 rounded-xl ${style.bg} flex items-center justify-center`}>
-            <IconComponent className={`w-5 h-5 ${style.color}`} />
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <IconComponent className="w-5 h-5 text-primary" />
           </div>
           <div>
             <h3 className="text-base font-semibold">{title}</h3>
@@ -169,11 +161,11 @@ function SectionCard({
           </div>
         </div>
         {actions}
-      </CardHeader>
-      <CardBody className="pt-4">
+      </div>
+      <div className="p-4">
         {children}
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -186,6 +178,14 @@ export function SettingsPage() {
     queryKey: ["config"],
     queryFn: getConfig
   });
+  const sshKeysQuery = useQuery({
+    queryKey: ["sshKeyCandidates"],
+    queryFn: sshKeyCandidates
+  });
+  const sshSecretKeysQuery = useQuery({
+    queryKey: ["sshSecretKeyCandidates"],
+    queryFn: sshSecretKeyCandidates
+  });
   const fetchRates = useFetchExchangeRates();
 
   const [draft, setDraft] = useState<TrainshConfig | null>(null);
@@ -195,9 +195,22 @@ export function SettingsPage() {
   const [isColabDirty, setIsColabDirty] = useState(false);
   const colabSaveRef = useRef<null | (() => Promise<void>)>(null);
 
+  const sshKeyOptions = useMemo(() => {
+    const secrets = sshSecretKeysQuery.data ?? [];
+    const files = sshKeysQuery.data ?? [];
+    return [...secrets, ...files];
+  }, [sshKeysQuery.data, sshSecretKeysQuery.data]);
+
   useEffect(() => {
     if (cfgQuery.data) {
-      setDraft(cfgQuery.data);
+      setDraft({
+        ...cfgQuery.data,
+        vast: {
+          ...cfgQuery.data.vast,
+          ssh_user: cfgQuery.data.vast.ssh_user.trim() || "root",
+          ssh_connection_preference: cfgQuery.data.vast.ssh_connection_preference ?? "proxy",
+        }
+      });
     }
   }, [cfgQuery.data]);
 
@@ -211,7 +224,17 @@ export function SettingsPage() {
     setSaving(true);
     setSaveError(null);
     try {
-      await saveConfig(draft);
+      const normalized: TrainshConfig = {
+        ...draft,
+        vast: {
+          ...draft.vast,
+          ssh_user: draft.vast.ssh_user.trim() || "root",
+          ssh_key_path: draft.vast.ssh_key_path?.trim() || null,
+          ssh_connection_preference: draft.vast.ssh_connection_preference === "direct" ? "direct" : "proxy",
+        }
+      };
+      setDraft(normalized);
+      await saveConfig(normalized);
       if (colabSaveRef.current) {
         await colabSaveRef.current();
       }
@@ -250,13 +273,13 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="max-w-4xl mx-auto p-6 space-y-8">
+    <div className="doppio-page">
+      <div className="doppio-page-content">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="doppio-page-header">
           <div>
-            <h1 className="text-2xl font-bold">Settings</h1>
-            <p className="text-sm text-foreground/50">Configuration saved locally</p>
+            <h1 className="doppio-page-title">Settings</h1>
+            <p className="doppio-page-subtitle">Configuration saved locally</p>
           </div>
           <div className="flex items-center gap-3">
             {savedAt && !saveError && (
@@ -280,15 +303,17 @@ export function SettingsPage() {
             </Button>
             <Button
               size="sm"
-              color="primary" 
-              isLoading={saving} 
-              isDisabled={!draft || saving || !isDirty} 
+              color="primary"
+              isLoading={saving}
+              isDisabled={!draft || saving || !isDirty}
               onPress={onSave}
             >
               Save
             </Button>
           </div>
         </div>
+
+        <div className="space-y-6">
 
         <SectionCard icon="settings" title="General" subtitle="Default paths, preferences, and currency">
           <div className="space-y-4">
@@ -330,24 +355,76 @@ export function SettingsPage() {
                 </div>
 
             <VastPricingSection />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Input labelPlacement="inside" label="SSH User"
               value={draft.vast.ssh_user}
               onValueChange={(v) =>
-              setDraft({ ...draft, vast: { ...draft.vast, ssh_user: v } })
+              setDraft({ ...draft, vast: { ...draft.vast, ssh_user: v || "root" } })
               }
+              placeholder="root"
               size="sm"
                                 variant="flat"
                                 classNames={{ inputWrapper: "bg-content2" }} />
-              <Input labelPlacement="inside" label="SSH Key Path"
-              value={draft.vast.ssh_key_path ?? ""}
-              onValueChange={(v) =>
-              setDraft({ ...draft, vast: { ...draft.vast, ssh_key_path: v.trim() ? v : null } })
-              }
-              placeholder="~/.ssh/id_ed25519"
-              size="sm"
-                                variant="flat"
-                                classNames={{ inputWrapper: "bg-content2" }} />
+              <Select
+                labelPlacement="inside"
+                label="SSH Connection"
+                selectedKeys={[draft.vast.ssh_connection_preference ?? "proxy"]}
+                onSelectionChange={(keys) => {
+                  const selected = (Array.from(keys)[0] as string | undefined) ?? "proxy";
+                  setDraft({
+                    ...draft,
+                    vast: { ...draft.vast, ssh_connection_preference: selected === "direct" ? "direct" : "proxy" }
+                  });
+                }}
+                size="sm"
+                variant="flat"
+                classNames={{ trigger: "bg-content2" }}
+              >
+                <SelectItem key="proxy" textValue="Proxy">
+                  Proxy (sshX.vast.ai)
+                </SelectItem>
+                <SelectItem key="direct" textValue="Direct">
+                  Direct (public IP + direct port)
+                </SelectItem>
+              </Select>
+              <Select
+                labelPlacement="inside"
+                label="SSH Key"
+                selectedKeys={draft.vast.ssh_key_path ? [draft.vast.ssh_key_path] : []}
+                onSelectionChange={(keys) => {
+                  const selected = Array.from(keys)[0] as string | undefined;
+                  setDraft({
+                    ...draft,
+                    vast: { ...draft.vast, ssh_key_path: selected?.trim() ? selected : null }
+                  });
+                }}
+                size="sm"
+                variant="flat"
+                classNames={{ trigger: "bg-content2" }}
+                isDisabled={
+                  (sshKeysQuery.isLoading || sshSecretKeysQuery.isLoading)
+                    ? false
+                    : sshKeyOptions.length === 0
+                }
+                placeholder={
+                  sshKeysQuery.isLoading || sshSecretKeysQuery.isLoading
+                    ? "Loading..."
+                    : "Select a key (secret or ~/.ssh)"
+                }
+              >
+                {sshKeyOptions.map((value) => {
+                  const isSecret = value.startsWith("${secret:") && value.endsWith("}");
+                  const label = isSecret ? value.slice("${secret:".length, -1) : (value.split("/").slice(-1)[0] ?? value);
+                  return (
+                    <SelectItem key={value} textValue={label}>
+                      <span className="font-mono text-sm">{label}</span>
+                      <span className="text-foreground/50 text-xs ml-2">
+                        {isSecret ? "secret" : value}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </Select>
             </div>
               </div>
         </SectionCard>
@@ -366,6 +443,7 @@ export function SettingsPage() {
             <SecretsSection />
           </div>
         </SectionCard>
+        </div>
 
       </div>
     </div>
@@ -806,10 +884,6 @@ function SecretsSection() {
   const keyPaths = keysQuery.data || [];
   const showEmptyState = !keysQuery.isLoading && keyPaths.length === 0 && secrets.length === 0;
 
-  if (secretsQuery.isLoading) {
-    return <Spinner size="lg" className="mx-auto" />;
-  }
-
   const handleCopyKey = async (path: string, kind: "public" | "private") => {
     setSshKeyError(null);
     setSshKeyAction({ path, kind });
@@ -836,6 +910,10 @@ function SecretsSection() {
       }
     };
   }, []);
+
+  if (secretsQuery.isLoading) {
+    return <Spinner size="lg" className="mx-auto" />;
+  }
 
   return (
     <div className="space-y-4">

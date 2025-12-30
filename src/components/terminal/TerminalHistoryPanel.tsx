@@ -178,7 +178,7 @@ export function TerminalHistoryPanel() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 16 }}
       transition={{ duration: 0.15 }}
-      className="absolute inset-3 z-20 bg-content1/95 border border-divider/60 rounded-2xl shadow-xl backdrop-blur-xl flex flex-col overflow-hidden"
+      className="absolute inset-3 z-20 bg-[var(--term-card)] border border-[var(--term-border)] rounded-2xl shadow-[var(--term-shadow-strong)] backdrop-blur-xl flex flex-col overflow-hidden"
     >
       <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-divider/60">
         <div className="flex items-center gap-2">
@@ -210,7 +210,7 @@ export function TerminalHistoryPanel() {
           </Button>
         </div>
       </div>
-      <div className="flex-1 min-h-0 bg-content2/50">
+      <div className="flex-1 min-h-0 bg-[var(--term-card-muted)]">
         <div
           ref={scrollRef}
           onScroll={handleScroll}

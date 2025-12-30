@@ -218,7 +218,9 @@ impl StorageStore {
         let storage = Storage {
             id: uuid::Uuid::new_v4().to_string(),
             name: input.name,
-            icon: input.icon.or_else(|| Some(input.backend.default_icon().to_string())),
+            icon: input
+                .icon
+                .or_else(|| Some(input.backend.default_icon().to_string())),
             backend: input.backend,
             readonly: input.readonly.unwrap_or(false),
             created_at: chrono::Utc::now().to_rfc3339(),
@@ -289,7 +291,7 @@ fn build_sftp_config(ssh: &SshSpec) -> serde_json::Value {
     // 1. ssh-agent support (rclone's built-in SSH has issues with it)
     // 2. Proper host key handling with StrictHostKeyChecking=no
     // 3. ProxyCommand support for cloudflared tunnels
-    
+
     let mut ssh_cmd_parts = vec![
         "ssh".to_string(),
         "-o".to_string(),
@@ -333,11 +335,9 @@ fn build_sftp_config(ssh: &SshSpec) -> serde_json::Value {
 /// Build rclone remote config from StorageBackend (for non-SSH backends)
 fn build_rclone_config(backend: &StorageBackend) -> Result<serde_json::Value, AppError> {
     match backend {
-        StorageBackend::Local { root_path: _ } => {
-            Ok(serde_json::json!({
-                "type": "local",
-            }))
-        }
+        StorageBackend::Local { root_path: _ } => Ok(serde_json::json!({
+            "type": "local",
+        })),
         StorageBackend::SshRemote { host_id, .. } => {
             // SSH remotes should use build_sftp_config_for_host instead
             Err(AppError::invalid_input(format!(
@@ -345,7 +345,12 @@ fn build_rclone_config(backend: &StorageBackend) -> Result<serde_json::Value, Ap
                 host_id
             )))
         }
-        StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id } => {
+        StorageBackend::GoogleDrive {
+            client_id,
+            client_secret,
+            token,
+            root_folder_id,
+        } => {
             let mut config = serde_json::json!({
                 "type": "drive",
                 "scope": "drive",
@@ -361,7 +366,7 @@ fn build_rclone_config(backend: &StorageBackend) -> Result<serde_json::Value, Ap
                 config["token"] = serde_json::json!(token);
             }
             eprintln!("GDrive config: using OAuth, has_token={}", token.is_some());
-            
+
             if let Some(folder_id) = root_folder_id {
                 config["root_folder_id"] = serde_json::json!(folder_id);
             }
@@ -374,9 +379,9 @@ fn build_rclone_config(backend: &StorageBackend) -> Result<serde_json::Value, Ap
             bucket: _,
             endpoint,
         } => {
-            let endpoint = endpoint.clone().unwrap_or_else(|| {
-                format!("https://{}.r2.cloudflarestorage.com", account_id)
-            });
+            let endpoint = endpoint
+                .clone()
+                .unwrap_or_else(|| format!("https://{}.r2.cloudflarestorage.com", account_id));
             Ok(serde_json::json!({
                 "type": "s3",
                 "provider": "Cloudflare",
@@ -438,13 +443,16 @@ async fn get_sftp_config_for_host(host_id: &str) -> Result<(serde_json::Value, S
 /// Create a temporary rclone remote and return its name
 fn create_temp_remote(name_prefix: &str, config: &serde_json::Value) -> Result<String, AppError> {
     let remote_name = format!(
-        "{}_{}", 
-        name_prefix, 
+        "{}_{}",
+        name_prefix,
         uuid::Uuid::new_v4().to_string().replace("-", "")[..8].to_string()
     );
 
-    let remote_type = config.get("type").and_then(|v| v.as_str()).unwrap_or("local");
-    
+    let remote_type = config
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("local");
+
     // For Google Drive, use two-step process to avoid OAuth trigger
     if remote_type == "drive" {
         // Step 1: Create empty drive remote with nonInteractive
@@ -458,49 +466,69 @@ fn create_temp_remote(name_prefix: &str, config: &serde_json::Value) -> Result<S
                 "noAutocomplete": true,
             }
         });
-        
+
         librclone::rpc("config/create", &create_params.to_string())
             .map_err(|e| AppError::command(format!("Failed to create drive remote: {}", e)))?;
-        
+
         // Step 2: Set parameters one by one using config/update
         if let Some(client_id) = config.get("client_id").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "client_id": client_id },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "client_id": client_id },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
         if let Some(client_secret) = config.get("client_secret").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "client_secret": client_secret },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "client_secret": client_secret },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
         if let Some(token) = config.get("token").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "token": token },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "token": token },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
         if let Some(root_folder_id) = config.get("root_folder_id").and_then(|v| v.as_str()) {
-            let _ = librclone::rpc("config/update", &serde_json::json!({
-                "name": remote_name,
-                "parameters": { "root_folder_id": root_folder_id },
-                "opt": { "nonInteractive": true }
-            }).to_string());
+            let _ = librclone::rpc(
+                "config/update",
+                &serde_json::json!({
+                    "name": remote_name,
+                    "parameters": { "root_folder_id": root_folder_id },
+                    "opt": { "nonInteractive": true }
+                })
+                .to_string(),
+            );
         }
         // Always set scope
-        let _ = librclone::rpc("config/update", &serde_json::json!({
-            "name": remote_name,
-            "parameters": { "scope": "drive" },
-            "opt": { "nonInteractive": true }
-        }).to_string());
-        
+        let _ = librclone::rpc(
+            "config/update",
+            &serde_json::json!({
+                "name": remote_name,
+                "parameters": { "scope": "drive" },
+                "opt": { "nonInteractive": true }
+            })
+            .to_string(),
+        );
+
         return Ok(remote_name);
     }
-    
+
     // For other storage types, use standard create with nonInteractive
     let create_params = serde_json::json!({
         "name": remote_name,
@@ -529,14 +557,9 @@ fn delete_temp_remote(remote_name: &str) {
 // ============================================================
 
 /// List files in a storage at given path
-pub async fn list_files(
-    storage: &Storage,
-    path: &str,
-) -> Result<Vec<FileEntry>, AppError> {
+pub async fn list_files(storage: &Storage, path: &str) -> Result<Vec<FileEntry>, AppError> {
     match &storage.backend {
-        StorageBackend::Local { root_path } => {
-            list_local_files(root_path, path).await
-        }
+        StorageBackend::Local { root_path } => list_local_files(root_path, path).await,
         StorageBackend::SshRemote { host_id, root_path } => {
             list_ssh_files(host_id, root_path, path).await
         }
@@ -548,7 +571,11 @@ pub async fn list_files(
 }
 
 /// List files on SSH remote using rclone SFTP
-async fn list_ssh_files(host_id: &str, root_path: &str, sub_path: &str) -> Result<Vec<FileEntry>, AppError> {
+async fn list_ssh_files(
+    host_id: &str,
+    root_path: &str,
+    sub_path: &str,
+) -> Result<Vec<FileEntry>, AppError> {
     let (config, _ssh) = get_sftp_config_for_host(host_id).await?;
     let remote_name = create_temp_remote("sftp", &config)?;
 
@@ -556,7 +583,11 @@ async fn list_ssh_files(host_id: &str, root_path: &str, sub_path: &str) -> Resul
     let full_path = if sub_path.is_empty() || sub_path == "/" {
         root_path.to_string()
     } else {
-        format!("{}/{}", root_path.trim_end_matches('/'), sub_path.trim_start_matches('/'))
+        format!(
+            "{}/{}",
+            root_path.trim_end_matches('/'),
+            sub_path.trim_start_matches('/')
+        )
     };
 
     let list_opts = serde_json::json!({
@@ -578,11 +609,22 @@ async fn list_ssh_files(host_id: &str, root_path: &str, sub_path: &str) -> Resul
             let mut entries = Vec::new();
             if let Some(list) = parsed.get("list").and_then(|l| l.as_array()) {
                 for item in list {
-                    let name = item.get("Name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                    let item_path = item.get("Path").and_then(|p| p.as_str()).unwrap_or(&name).to_string();
+                    let name = item
+                        .get("Name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let item_path = item
+                        .get("Path")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or(&name)
+                        .to_string();
                     let is_dir = item.get("IsDir").and_then(|d| d.as_bool()).unwrap_or(false);
                     let size = item.get("Size").and_then(|s| s.as_u64()).unwrap_or(0);
-                    let modified_at = item.get("ModTime").and_then(|m| m.as_str()).map(|s| s.to_string());
+                    let modified_at = item
+                        .get("ModTime")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string());
 
                     // Skip hidden files
                     if name.starts_with('.') {
@@ -605,17 +647,18 @@ async fn list_ssh_files(host_id: &str, root_path: &str, sub_path: &str) -> Resul
             }
 
             // Sort: directories first, then alphabetically
-            entries.sort_by(|a, b| {
-                match (a.is_dir, b.is_dir) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                }
+            entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             });
 
             Ok(entries)
         }
-        Err(e) => Err(AppError::command(format!("Failed to list SSH files: {}", e))),
+        Err(e) => Err(AppError::command(format!(
+            "Failed to list SSH files: {}",
+            e
+        ))),
     }
 }
 
@@ -634,7 +677,7 @@ async fn list_local_files(root_path: &str, sub_path: &str) -> Result<Vec<FileEnt
     while let Some(entry) = dir.next_entry().await? {
         let metadata = entry.metadata().await?;
         let name = entry.file_name().to_string_lossy().to_string();
-        
+
         // Skip hidden files
         if name.starts_with('.') {
             continue;
@@ -646,9 +689,10 @@ async fn list_local_files(root_path: &str, sub_path: &str) -> Result<Vec<FileEnt
             format!("{}/{}", sub_path.trim_end_matches('/'), name)
         };
 
-        let modified_at = metadata.modified().ok().map(|t| {
-            chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
-        });
+        let modified_at = metadata
+            .modified()
+            .ok()
+            .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
 
         entries.push(FileEntry {
             name,
@@ -661,12 +705,10 @@ async fn list_local_files(root_path: &str, sub_path: &str) -> Result<Vec<FileEnt
     }
 
     // Sort: directories first, then alphabetically
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     Ok(entries)
@@ -677,8 +719,18 @@ async fn list_rclone_files(storage: &Storage, path: &str) -> Result<Vec<FileEntr
     let remote_name = create_temp_remote("storage", &config)?;
 
     let remote_path = match &storage.backend {
-        StorageBackend::CloudflareR2 { bucket, .. } => format!("{}:{}/{}", remote_name, bucket, path.trim_start_matches('/')),
-        StorageBackend::GoogleCloudStorage { bucket, .. } => format!("{}:{}/{}", remote_name, bucket, path.trim_start_matches('/')),
+        StorageBackend::CloudflareR2 { bucket, .. } => format!(
+            "{}:{}/{}",
+            remote_name,
+            bucket,
+            path.trim_start_matches('/')
+        ),
+        StorageBackend::GoogleCloudStorage { bucket, .. } => format!(
+            "{}:{}/{}",
+            remote_name,
+            bucket,
+            path.trim_start_matches('/')
+        ),
         StorageBackend::Smb { share, .. } => {
             if share.is_empty() {
                 // No share specified, list at root (shows available shares)
@@ -710,11 +762,22 @@ async fn list_rclone_files(storage: &Storage, path: &str) -> Result<Vec<FileEntr
             let mut entries = Vec::new();
             if let Some(list) = parsed.get("list").and_then(|l| l.as_array()) {
                 for item in list {
-                    let name = item.get("Name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                    let item_path = item.get("Path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+                    let name = item
+                        .get("Name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let item_path = item
+                        .get("Path")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let is_dir = item.get("IsDir").and_then(|d| d.as_bool()).unwrap_or(false);
                     let size = item.get("Size").and_then(|s| s.as_u64()).unwrap_or(0);
-                    let modified_at = item.get("ModTime").and_then(|m| m.as_str()).map(|s| s.to_string());
+                    let modified_at = item
+                        .get("ModTime")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string());
 
                     entries.push(FileEntry {
                         name,
@@ -732,12 +795,10 @@ async fn list_rclone_files(storage: &Storage, path: &str) -> Result<Vec<FileEntr
             }
 
             // Sort: directories first, then alphabetically
-            entries.sort_by(|a, b| {
-                match (a.is_dir, b.is_dir) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                }
+            entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             });
 
             Ok(entries)
@@ -793,11 +854,14 @@ pub async fn test_storage(storage: &Storage) -> StorageTestResult {
 /// This is useful for recipe execution where AppHandle is not available.
 pub async fn get_storage(storage_id: &str) -> Result<Storage, AppError> {
     let data_path = crate::config::doppio_data_dir().join("storages.json");
-    let content = tokio::fs::read_to_string(&data_path).await
+    let content = tokio::fs::read_to_string(&data_path)
+        .await
         .map_err(|e| AppError::io(format!("Failed to read storages file: {}", e)))?;
     let storages: HashMap<String, Storage> = serde_json::from_str(&content)
         .map_err(|e| AppError::invalid_input(format!("Failed to parse storages: {}", e)))?;
-    storages.get(storage_id).cloned()
+    storages
+        .get(storage_id)
+        .cloned()
         .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", storage_id)))
 }
 
@@ -814,17 +878,27 @@ pub async fn storage_list(app: AppHandle) -> Result<Vec<Storage>, AppError> {
 #[tauri::command]
 pub async fn storage_get(app: AppHandle, id: String) -> Result<Storage, AppError> {
     let store = app.state::<Arc<StorageStore>>();
-    store.get(&id).await.ok_or_else(|| AppError::not_found(format!("Storage not found: {}", id)))
+    store
+        .get(&id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", id)))
 }
 
 #[tauri::command]
-pub async fn storage_create(app: AppHandle, config: StorageCreateInput) -> Result<Storage, AppError> {
+pub async fn storage_create(
+    app: AppHandle,
+    config: StorageCreateInput,
+) -> Result<Storage, AppError> {
     let store = app.state::<Arc<StorageStore>>();
     store.create(config).await
 }
 
 #[tauri::command]
-pub async fn storage_update(app: AppHandle, id: String, config: StorageUpdateInput) -> Result<Storage, AppError> {
+pub async fn storage_update(
+    app: AppHandle,
+    id: String,
+    config: StorageUpdateInput,
+) -> Result<Storage, AppError> {
     let store = app.state::<Arc<StorageStore>>();
     store.update(&id, config).await
 }
@@ -838,11 +912,22 @@ pub async fn storage_delete(app: AppHandle, id: String) -> Result<(), AppError> 
 #[tauri::command]
 pub async fn storage_test(app: AppHandle, id: String) -> Result<StorageTestResult, AppError> {
     let store = app.state::<Arc<StorageStore>>();
-    let mut storage = store.get(&id).await.ok_or_else(|| AppError::not_found(format!("Storage not found: {}", id)))?;
-    
+    let mut storage = store
+        .get(&id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", id)))?;
+
     // For Google Drive, refresh token before use
-    if let StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id } = &storage.backend {
-        if let (Some(cid), Some(csec), Some(tok)) = (client_id.as_ref(), client_secret.as_ref(), token.as_ref()) {
+    if let StorageBackend::GoogleDrive {
+        client_id,
+        client_secret,
+        token,
+        root_folder_id,
+    } = &storage.backend
+    {
+        if let (Some(cid), Some(csec), Some(tok)) =
+            (client_id.as_ref(), client_secret.as_ref(), token.as_ref())
+        {
             eprintln!("Google Drive: refreshing token before test...");
             match crate::google_drive::refresh_token(cid, csec, tok).await {
                 Ok(new_token) => {
@@ -865,7 +950,10 @@ pub async fn storage_test(app: AppHandle, id: String) -> Result<StorageTestResul
                 Err(e) => {
                     return Ok(StorageTestResult {
                         success: false,
-                        message: format!("Token refresh failed: {}. Please re-authorize in Storage settings.", e),
+                        message: format!(
+                            "Token refresh failed: {}. Please re-authorize in Storage settings.",
+                            e
+                        ),
                         latency_ms: None,
                     });
                 }
@@ -878,7 +966,7 @@ pub async fn storage_test(app: AppHandle, id: String) -> Result<StorageTestResul
             });
         }
     }
-    
+
     Ok(test_storage(&storage).await)
 }
 
@@ -889,13 +977,22 @@ pub async fn storage_list_files(
     path: String,
 ) -> Result<Vec<FileEntry>, AppError> {
     let store = app.state::<Arc<StorageStore>>();
-    let mut storage = store.get(&storage_id).await.ok_or_else(|| {
-        AppError::not_found(format!("Storage not found: {}", storage_id))
-    })?;
-    
+    let mut storage = store
+        .get(&storage_id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", storage_id)))?;
+
     // For Google Drive OAuth mode, refresh token if expired
-    if let StorageBackend::GoogleDrive { client_id, client_secret, token, root_folder_id } = &storage.backend {
-        if let (Some(cid), Some(csec), Some(tok)) = (client_id.as_ref(), client_secret.as_ref(), token.as_ref()) {
+    if let StorageBackend::GoogleDrive {
+        client_id,
+        client_secret,
+        token,
+        root_folder_id,
+    } = &storage.backend
+    {
+        if let (Some(cid), Some(csec), Some(tok)) =
+            (client_id.as_ref(), client_secret.as_ref(), token.as_ref())
+        {
             if crate::google_drive::is_token_expired(tok) {
                 eprintln!("Google Drive token expired, refreshing...");
                 match crate::google_drive::refresh_token(cid, csec, tok).await {
@@ -925,14 +1022,14 @@ pub async fn storage_list_files(
             }
         } else {
             return Err(AppError::command(
-                "Google Drive not properly configured. Please set up OAuth.".to_string()
+                "Google Drive not properly configured. Please set up OAuth.".to_string(),
             ));
         }
     }
-    
+
     // Update last accessed
     let _ = store.update_last_accessed(&storage_id).await;
-    
+
     list_files(&storage, &path).await
 }
 
@@ -943,9 +1040,10 @@ pub async fn storage_mkdir(
     path: String,
 ) -> Result<(), AppError> {
     let store = app.state::<Arc<StorageStore>>();
-    let storage = store.get(&storage_id).await.ok_or_else(|| {
-        AppError::not_found(format!("Storage not found: {}", storage_id))
-    })?;
+    let storage = store
+        .get(&storage_id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", storage_id)))?;
 
     if storage.readonly {
         return Err(AppError::permission_denied("Storage is read-only"));
@@ -960,8 +1058,12 @@ pub async fn storage_mkdir(
         StorageBackend::SshRemote { host_id, root_path } => {
             let (config, _) = get_sftp_config_for_host(host_id).await?;
             let remote_name = create_temp_remote("sftp", &config)?;
-            
-            let full_path = format!("{}/{}", root_path.trim_end_matches('/'), path.trim_start_matches('/'));
+
+            let full_path = format!(
+                "{}/{}",
+                root_path.trim_end_matches('/'),
+                path.trim_start_matches('/')
+            );
             let mkdir_opts = serde_json::json!({
                 "fs": format!("{}:{}", remote_name, full_path),
                 "remote": "",
@@ -969,20 +1071,20 @@ pub async fn storage_mkdir(
 
             let result = librclone::rpc("operations/mkdir", &mkdir_opts.to_string());
             delete_temp_remote(&remote_name);
-            
+
             result.map_err(|e| AppError::command(format!("Failed to create directory: {}", e)))?;
             Ok(())
         }
         StorageBackend::Smb { share, .. } => {
             let config = build_rclone_config(&storage.backend)?;
             let remote_name = create_temp_remote("storage", &config)?;
-            
+
             let full_path = if share.is_empty() {
                 path.trim_start_matches('/').to_string()
             } else {
                 format!("{}/{}", share, path.trim_start_matches('/'))
             };
-            
+
             let mkdir_opts = serde_json::json!({
                 "fs": format!("{}:{}", remote_name, full_path),
                 "remote": "",
@@ -990,14 +1092,14 @@ pub async fn storage_mkdir(
 
             let result = librclone::rpc("operations/mkdir", &mkdir_opts.to_string());
             delete_temp_remote(&remote_name);
-            
+
             result.map_err(|e| AppError::command(format!("Failed to create directory: {}", e)))?;
             Ok(())
         }
         _ => {
             let config = build_rclone_config(&storage.backend)?;
             let remote_name = create_temp_remote("storage", &config)?;
-            
+
             let mkdir_opts = serde_json::json!({
                 "fs": format!("{}:", remote_name),
                 "remote": path.trim_start_matches('/'),
@@ -1005,7 +1107,7 @@ pub async fn storage_mkdir(
 
             let result = librclone::rpc("operations/mkdir", &mkdir_opts.to_string());
             delete_temp_remote(&remote_name);
-            
+
             result.map_err(|e| AppError::command(format!("Failed to create directory: {}", e)))?;
             Ok(())
         }
@@ -1019,9 +1121,10 @@ pub async fn storage_delete_file(
     path: String,
 ) -> Result<(), AppError> {
     let store = app.state::<Arc<StorageStore>>();
-    let storage = store.get(&storage_id).await.ok_or_else(|| {
-        AppError::not_found(format!("Storage not found: {}", storage_id))
-    })?;
+    let storage = store
+        .get(&storage_id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", storage_id)))?;
 
     if storage.readonly {
         return Err(AppError::permission_denied("Storage is read-only"));
@@ -1040,8 +1143,12 @@ pub async fn storage_delete_file(
         StorageBackend::SshRemote { host_id, root_path } => {
             let (config, _) = get_sftp_config_for_host(host_id).await?;
             let remote_name = create_temp_remote("sftp", &config)?;
-            
-            let full_path = format!("{}/{}", root_path.trim_end_matches('/'), path.trim_start_matches('/'));
+
+            let full_path = format!(
+                "{}/{}",
+                root_path.trim_end_matches('/'),
+                path.trim_start_matches('/')
+            );
             let delete_opts = serde_json::json!({
                 "fs": format!("{}:{}", remote_name, full_path),
                 "remote": "",
@@ -1052,20 +1159,20 @@ pub async fn storage_delete_file(
             if result.is_err() {
                 let _ = librclone::rpc("operations/purge", &delete_opts.to_string());
             }
-            
+
             delete_temp_remote(&remote_name);
             Ok(())
         }
         StorageBackend::Smb { share, .. } => {
             let config = build_rclone_config(&storage.backend)?;
             let remote_name = create_temp_remote("storage", &config)?;
-            
+
             let full_path = if share.is_empty() {
                 path.trim_start_matches('/').to_string()
             } else {
                 format!("{}/{}", share, path.trim_start_matches('/'))
             };
-            
+
             let delete_opts = serde_json::json!({
                 "fs": format!("{}:{}", remote_name, full_path),
                 "remote": "",
@@ -1076,14 +1183,14 @@ pub async fn storage_delete_file(
             if result.is_err() {
                 let _ = librclone::rpc("operations/purge", &delete_opts.to_string());
             }
-            
+
             delete_temp_remote(&remote_name);
             Ok(())
         }
         _ => {
             let config = build_rclone_config(&storage.backend)?;
             let remote_name = create_temp_remote("storage", &config)?;
-            
+
             let delete_opts = serde_json::json!({
                 "fs": format!("{}:", remote_name),
                 "remote": path.trim_start_matches('/'),
@@ -1094,7 +1201,7 @@ pub async fn storage_delete_file(
             if result.is_err() {
                 let _ = librclone::rpc("operations/purge", &delete_opts.to_string());
             }
-            
+
             delete_temp_remote(&remote_name);
             Ok(())
         }
@@ -1137,9 +1244,10 @@ pub async fn storage_get_usage(
     storage_id: String,
 ) -> Result<StorageUsage, AppError> {
     let store = app.state::<Arc<StorageStore>>();
-    let storage = store.get(&storage_id).await.ok_or_else(|| {
-        AppError::not_found(format!("Storage not found: {}", storage_id))
-    })?;
+    let storage = store
+        .get(&storage_id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", storage_id)))?;
 
     let bucket_name = match &storage.backend {
         StorageBackend::CloudflareR2 { bucket, .. } => Some(bucket.clone()),
@@ -1153,14 +1261,14 @@ pub async fn storage_get_usage(
             // Google Drive supports operations/about for quota info
             let config = build_rclone_config(&storage.backend)?;
             let remote_name = create_temp_remote("gdrive_usage", &config)?;
-            
+
             let about_opts = serde_json::json!({
                 "fs": format!("{}:", remote_name),
             });
-            
+
             let result = librclone::rpc("operations/about", &about_opts.to_string());
             delete_temp_remote(&remote_name);
-            
+
             match result {
                 Ok(result_str) => {
                     // Parse result: {"total": N, "used": N, "free": N, "trashed": N}
@@ -1168,7 +1276,7 @@ pub async fn storage_get_usage(
                     let total = parsed.get("total").and_then(|v| v.as_u64());
                     let used = parsed.get("used").and_then(|v| v.as_u64()).unwrap_or(0);
                     let free = parsed.get("free").and_then(|v| v.as_u64());
-                    
+
                     Ok(StorageUsage {
                         storage_id: storage.id,
                         storage_name: storage.name,
@@ -1203,35 +1311,33 @@ pub async fn storage_get_usage(
                 }
             }
         }
-        StorageBackend::CloudflareR2 { .. } | 
-        StorageBackend::GoogleCloudStorage { .. } => {
+        StorageBackend::CloudflareR2 { .. } | StorageBackend::GoogleCloudStorage { .. } => {
             let config = build_rclone_config(&storage.backend)?;
             let remote_name = create_temp_remote("usage", &config)?;
-            
+
             // Get bucket path
             let bucket_path = match &storage.backend {
                 StorageBackend::CloudflareR2 { bucket, .. } => bucket.clone(),
                 StorageBackend::GoogleCloudStorage { bucket, .. } => bucket.clone(),
                 _ => String::new(),
             };
-            
+
             // Use operations/size to get accurate count
             let size_opts = serde_json::json!({
                 "fs": format!("{}:{}", remote_name, bucket_path),
             });
-            
+
             let result = librclone::rpc("operations/size", &size_opts.to_string());
             delete_temp_remote(&remote_name);
-            
-            let result_str = result.map_err(|e| {
-                AppError::command(format!("Failed to get storage size: {}", e))
-            })?;
-            
+
+            let result_str = result
+                .map_err(|e| AppError::command(format!("Failed to get storage size: {}", e)))?;
+
             // Parse result: {"count": N, "bytes": N}
             let parsed: serde_json::Value = serde_json::from_str(&result_str)?;
             let bytes = parsed.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
             let count = parsed.get("count").and_then(|v| v.as_u64());
-            
+
             Ok(StorageUsage {
                 storage_id: storage.id,
                 storage_name: storage.name,
@@ -1268,14 +1374,14 @@ pub async fn storage_get_usage(
             // Use operations/about to get disk space info for SSH remotes
             let (config, _ssh) = get_sftp_config_for_host(host_id).await?;
             let remote_name = create_temp_remote("sftp_usage", &config)?;
-            
+
             let about_opts = serde_json::json!({
                 "fs": format!("{}:{}", remote_name, root_path),
             });
-            
+
             let result = librclone::rpc("operations/about", &about_opts.to_string());
             delete_temp_remote(&remote_name);
-            
+
             match result {
                 Ok(result_str) => {
                     // Parse result: {"total": N, "used": N, "free": N, "objects": N}
@@ -1283,7 +1389,7 @@ pub async fn storage_get_usage(
                     let total = parsed.get("total").and_then(|v| v.as_u64());
                     let used = parsed.get("used").and_then(|v| v.as_u64()).unwrap_or(0);
                     let free = parsed.get("free").and_then(|v| v.as_u64());
-                    
+
                     Ok(StorageUsage {
                         storage_id: storage.id,
                         storage_name: storage.name,
@@ -1323,7 +1429,7 @@ pub async fn storage_get_usage(
             // Use operations/about to get disk space info for SMB
             let config = build_rclone_config(&storage.backend)?;
             let remote_name = create_temp_remote("smb_usage", &config)?;
-            
+
             // For SMB, we need to specify the share name as the path
             // Format: remote:share/ to get disk usage of that share
             let smb_path = if share.is_empty() {
@@ -1347,15 +1453,15 @@ pub async fn storage_get_usage(
                 // Use share/ as the path (trailing slash is important)
                 format!("{}:{}/", remote_name, share)
             };
-            
+
             let about_opts = serde_json::json!({
                 "fs": smb_path,
             });
-            
+
             eprintln!("SMB about request: fs={}", smb_path);
             let result = librclone::rpc("operations/about", &about_opts.to_string());
             delete_temp_remote(&remote_name);
-            
+
             match result {
                 Ok(result_str) => {
                     eprintln!("SMB about response: {}", result_str);
@@ -1364,7 +1470,7 @@ pub async fn storage_get_usage(
                     let total = parsed.get("total").and_then(|v| v.as_u64());
                     let used = parsed.get("used").and_then(|v| v.as_u64()).unwrap_or(0);
                     let free = parsed.get("free").and_then(|v| v.as_u64());
-                    
+
                     Ok(StorageUsage {
                         storage_id: storage.id,
                         storage_name: storage.name,
@@ -1405,12 +1511,10 @@ pub async fn storage_get_usage(
 
 /// Get usage for all R2 storages
 #[tauri::command]
-pub async fn storage_get_r2_usages(
-    app: AppHandle,
-) -> Result<Vec<StorageUsage>, AppError> {
+pub async fn storage_get_r2_usages(app: AppHandle) -> Result<Vec<StorageUsage>, AppError> {
     let store = app.state::<Arc<StorageStore>>();
     let storages = store.list().await;
-    
+
     let mut usages = Vec::new();
     for storage in storages {
         if matches!(storage.backend, StorageBackend::CloudflareR2 { .. }) {
@@ -1423,6 +1527,6 @@ pub async fn storage_get_r2_usages(
             }
         }
     }
-    
+
     Ok(usages)
 }

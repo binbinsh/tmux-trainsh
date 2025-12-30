@@ -9,12 +9,13 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::time::Duration;
 
+use super::ssh as ssh_ops;
 use crate::error::AppError;
 use crate::host;
 use crate::recipe::types::{TransferEndpoint, TransferOp};
 use crate::storage::{get_storage, Storage, StorageBackend};
-use super::ssh as ssh_ops;
 
 /// Execute a transfer operation
 pub async fn execute(
@@ -23,15 +24,21 @@ pub async fn execute(
 ) -> Result<Option<String>, AppError> {
     // Resolve the target host if needed
     let target_host = variables.get("target").cloned();
-    
+
     // Determine transfer type and execute
     match (&op.source, &op.destination) {
         // Local → Host
-        (TransferEndpoint::Local { path: local_path }, TransferEndpoint::Host { host_id, path: remote_path }) => {
+        (
+            TransferEndpoint::Local { path: local_path },
+            TransferEndpoint::Host {
+                host_id,
+                path: remote_path,
+            },
+        ) => {
             let host_id = resolve_host_id(host_id.as_deref(), target_host.as_deref())?;
             let local_path = interpolate(local_path, variables);
             let remote_path = interpolate(remote_path, variables);
-            
+
             if is_local_target(&host_id) {
                 // Local target - just do a local copy
                 let status = tokio::process::Command::new("rsync")
@@ -39,23 +46,39 @@ pub async fn execute(
                     .status()
                     .await
                     .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-                
+
                 if !status.success() {
                     return Err(AppError::command("Local copy failed"));
                 }
                 Ok(Some(format!("Copied {} to {}", local_path, remote_path)))
             } else {
-                upload_to_host(&host_id, &local_path, &remote_path, &op.exclude_patterns, op.delete).await?;
-                Ok(Some(format!("Uploaded {} to {}:{}", local_path, host_id, remote_path)))
+                upload_to_host(
+                    &host_id,
+                    &local_path,
+                    &remote_path,
+                    &op.exclude_patterns,
+                    op.delete,
+                )
+                .await?;
+                Ok(Some(format!(
+                    "Uploaded {} to {}:{}",
+                    local_path, host_id, remote_path
+                )))
             }
         }
-        
+
         // Host → Local
-        (TransferEndpoint::Host { host_id, path: remote_path }, TransferEndpoint::Local { path: local_path }) => {
+        (
+            TransferEndpoint::Host {
+                host_id,
+                path: remote_path,
+            },
+            TransferEndpoint::Local { path: local_path },
+        ) => {
             let host_id = resolve_host_id(host_id.as_deref(), target_host.as_deref())?;
             let remote_path = interpolate(remote_path, variables);
             let local_path = interpolate(local_path, variables);
-            
+
             if is_local_target(&host_id) {
                 // Local target - just do a local copy
                 let status = tokio::process::Command::new("rsync")
@@ -63,28 +86,41 @@ pub async fn execute(
                     .status()
                     .await
                     .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-                
+
                 if !status.success() {
                     return Err(AppError::command("Local copy failed"));
                 }
                 Ok(Some(format!("Copied {} to {}", remote_path, local_path)))
             } else {
-                download_from_host(&host_id, &remote_path, &local_path, &op.exclude_patterns).await?;
-                Ok(Some(format!("Downloaded {}:{} to {}", host_id, remote_path, local_path)))
+                download_from_host(&host_id, &remote_path, &local_path, &op.exclude_patterns)
+                    .await?;
+                Ok(Some(format!(
+                    "Downloaded {}:{} to {}",
+                    host_id, remote_path, local_path
+                )))
             }
         }
-        
+
         // Host → Host (same or different hosts)
-        (TransferEndpoint::Host { host_id: src_host, path: src_path }, TransferEndpoint::Host { host_id: dst_host, path: dst_path }) => {
+        (
+            TransferEndpoint::Host {
+                host_id: src_host,
+                path: src_path,
+            },
+            TransferEndpoint::Host {
+                host_id: dst_host,
+                path: dst_path,
+            },
+        ) => {
             let src_host_id = resolve_host_id(src_host.as_deref(), target_host.as_deref())?;
             let dst_host_id = resolve_host_id(dst_host.as_deref(), target_host.as_deref())?;
             let src_path = interpolate(src_path, variables);
             let dst_path = interpolate(dst_path, variables);
-            
+
             // Check if both are local
             let src_is_local = is_local_target(&src_host_id);
             let dst_is_local = is_local_target(&dst_host_id);
-            
+
             if src_is_local && dst_is_local {
                 // Both local - just do a local copy
                 let status = tokio::process::Command::new("rsync")
@@ -92,23 +128,40 @@ pub async fn execute(
                     .status()
                     .await
                     .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-                
+
                 if !status.success() {
                     return Err(AppError::command("Local copy failed"));
                 }
                 Ok(Some(format!("Copied {} to {}", src_path, dst_path)))
             } else if src_is_local {
                 // Source is local, dest is remote - upload
-                upload_to_host(&dst_host_id, &src_path, &dst_path, &op.exclude_patterns, op.delete).await?;
-                Ok(Some(format!("Uploaded {} to {}:{}", src_path, dst_host_id, dst_path)))
+                upload_to_host(
+                    &dst_host_id,
+                    &src_path,
+                    &dst_path,
+                    &op.exclude_patterns,
+                    op.delete,
+                )
+                .await?;
+                Ok(Some(format!(
+                    "Uploaded {} to {}:{}",
+                    src_path, dst_host_id, dst_path
+                )))
             } else if dst_is_local {
                 // Source is remote, dest is local - download
-                download_from_host(&src_host_id, &src_path, &dst_path, &op.exclude_patterns).await?;
-                Ok(Some(format!("Downloaded {}:{} to {}", src_host_id, src_path, dst_path)))
+                download_from_host(&src_host_id, &src_path, &dst_path, &op.exclude_patterns)
+                    .await?;
+                Ok(Some(format!(
+                    "Downloaded {}:{} to {}",
+                    src_host_id, src_path, dst_path
+                )))
             } else if src_host_id == dst_host_id {
                 // Same host - just use cp/rsync locally on the host
                 copy_on_host(&src_host_id, &src_path, &dst_path).await?;
-                Ok(Some(format!("Transferred {}:{} to {}:{}", src_host_id, src_path, dst_host_id, dst_path)))
+                Ok(Some(format!(
+                    "Transferred {}:{} to {}:{}",
+                    src_host_id, src_path, dst_host_id, dst_path
+                )))
             } else {
                 // Different hosts - download to local temp, then upload (rsync)
                 transfer_between_hosts_rsync(
@@ -120,87 +173,164 @@ pub async fn execute(
                     op.delete,
                 )
                 .await?;
-                Ok(Some(format!("Transferred {}:{} to {}:{}", src_host_id, src_path, dst_host_id, dst_path)))
+                Ok(Some(format!(
+                    "Transferred {}:{} to {}:{}",
+                    src_host_id, src_path, dst_host_id, dst_path
+                )))
             }
         }
-        
+
         // Local → Storage
-        (TransferEndpoint::Local { path: local_path }, TransferEndpoint::Storage { storage_id, path: storage_path }) => {
+        (
+            TransferEndpoint::Local { path: local_path },
+            TransferEndpoint::Storage {
+                storage_id,
+                path: storage_path,
+            },
+        ) => {
             let local_path = interpolate(local_path, variables);
             let storage_id = interpolate(storage_id, variables);
             let storage_path = interpolate(storage_path, variables);
-            
-            upload_to_storage(&local_path, &storage_id, &storage_path, &op.exclude_patterns).await?;
-            Ok(Some(format!("Uploaded {} to storage {}:{}", local_path, storage_id, storage_path)))
+
+            upload_to_storage(
+                &local_path,
+                &storage_id,
+                &storage_path,
+                &op.exclude_patterns,
+            )
+            .await?;
+            Ok(Some(format!(
+                "Uploaded {} to storage {}:{}",
+                local_path, storage_id, storage_path
+            )))
         }
-        
+
         // Storage → Local
-        (TransferEndpoint::Storage { storage_id, path: storage_path }, TransferEndpoint::Local { path: local_path }) => {
+        (
+            TransferEndpoint::Storage {
+                storage_id,
+                path: storage_path,
+            },
+            TransferEndpoint::Local { path: local_path },
+        ) => {
             let storage_id = interpolate(storage_id, variables);
             let storage_path = interpolate(storage_path, variables);
             let local_path = interpolate(local_path, variables);
-            
+
             download_from_storage(&storage_id, &storage_path, &local_path).await?;
-            Ok(Some(format!("Downloaded storage {}:{} to {}", storage_id, storage_path, local_path)))
+            Ok(Some(format!(
+                "Downloaded storage {}:{} to {}",
+                storage_id, storage_path, local_path
+            )))
         }
-        
+
         // Host → Storage
-        (TransferEndpoint::Host { host_id, path: remote_path }, TransferEndpoint::Storage { storage_id, path: storage_path }) => {
+        (
+            TransferEndpoint::Host {
+                host_id,
+                path: remote_path,
+            },
+            TransferEndpoint::Storage {
+                storage_id,
+                path: storage_path,
+            },
+        ) => {
             let host_id = resolve_host_id(host_id.as_deref(), target_host.as_deref())?;
             let remote_path = interpolate(remote_path, variables);
             let storage_id = interpolate(storage_id, variables);
             let storage_path = interpolate(storage_path, variables);
-            
+
             if is_local_target(&host_id) {
                 // Local to storage - upload from local path
-                upload_to_storage(&remote_path, &storage_id, &storage_path, &op.exclude_patterns).await?;
-                Ok(Some(format!("Uploaded {} to storage {}:{}", remote_path, storage_id, storage_path)))
+                upload_to_storage(
+                    &remote_path,
+                    &storage_id,
+                    &storage_path,
+                    &op.exclude_patterns,
+                )
+                .await?;
+                Ok(Some(format!(
+                    "Uploaded {} to storage {}:{}",
+                    remote_path, storage_id, storage_path
+                )))
             } else {
-                transfer_host_to_storage(&host_id, &remote_path, &storage_id, &storage_path).await?;
-                Ok(Some(format!("Transferred {}:{} to storage {}:{}", host_id, remote_path, storage_id, storage_path)))
+                transfer_host_to_storage(&host_id, &remote_path, &storage_id, &storage_path)
+                    .await?;
+                Ok(Some(format!(
+                    "Transferred {}:{} to storage {}:{}",
+                    host_id, remote_path, storage_id, storage_path
+                )))
             }
         }
-        
+
         // Storage → Host
-        (TransferEndpoint::Storage { storage_id, path: storage_path }, TransferEndpoint::Host { host_id, path: remote_path }) => {
+        (
+            TransferEndpoint::Storage {
+                storage_id,
+                path: storage_path,
+            },
+            TransferEndpoint::Host {
+                host_id,
+                path: remote_path,
+            },
+        ) => {
             let storage_id = interpolate(storage_id, variables);
             let storage_path = interpolate(storage_path, variables);
             let host_id = resolve_host_id(host_id.as_deref(), target_host.as_deref())?;
             let remote_path = interpolate(remote_path, variables);
-            
+
             if is_local_target(&host_id) {
                 // Storage to local - download to local path
                 download_from_storage(&storage_id, &storage_path, &remote_path).await?;
-                Ok(Some(format!("Downloaded storage {}:{} to {}", storage_id, storage_path, remote_path)))
+                Ok(Some(format!(
+                    "Downloaded storage {}:{} to {}",
+                    storage_id, storage_path, remote_path
+                )))
             } else {
-                transfer_storage_to_host(&storage_id, &storage_path, &host_id, &remote_path).await?;
-                Ok(Some(format!("Transferred storage {}:{} to {}:{}", storage_id, storage_path, host_id, remote_path)))
+                transfer_storage_to_host(&storage_id, &storage_path, &host_id, &remote_path)
+                    .await?;
+                Ok(Some(format!(
+                    "Transferred storage {}:{} to {}:{}",
+                    storage_id, storage_path, host_id, remote_path
+                )))
             }
         }
-        
+
         // Storage → Storage
-        (TransferEndpoint::Storage { storage_id: src_id, path: src_path }, TransferEndpoint::Storage { storage_id: dst_id, path: dst_path }) => {
+        (
+            TransferEndpoint::Storage {
+                storage_id: src_id,
+                path: src_path,
+            },
+            TransferEndpoint::Storage {
+                storage_id: dst_id,
+                path: dst_path,
+            },
+        ) => {
             let src_id = interpolate(src_id, variables);
             let src_path = interpolate(src_path, variables);
             let dst_id = interpolate(dst_id, variables);
             let dst_path = interpolate(dst_path, variables);
-            
+
             transfer_storage_to_storage(&src_id, &src_path, &dst_id, &dst_path).await?;
-            Ok(Some(format!("Transferred storage {}:{} to storage {}:{}", src_id, src_path, dst_id, dst_path)))
+            Ok(Some(format!(
+                "Transferred storage {}:{} to storage {}:{}",
+                src_id, src_path, dst_id, dst_path
+            )))
         }
-        
+
         // Local → Local (just use cp)
         (TransferEndpoint::Local { path: src }, TransferEndpoint::Local { path: dst }) => {
             let src = interpolate(src, variables);
             let dst = interpolate(dst, variables);
-            
+
             // Use rsync for local copy
             let status = tokio::process::Command::new("rsync")
                 .args(["-av", "--progress", &src, &dst])
                 .status()
                 .await
                 .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-            
+
             if !status.success() {
                 return Err(AppError::command("Local copy failed"));
             }
@@ -240,17 +370,15 @@ async fn upload_to_host(
     excludes: &[String],
     delete: bool,
 ) -> Result<(), AppError> {
-    let host = host::get_host(host_id).await?;
-    let ssh = host.ssh.as_ref()
-        .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
-    
-    let ssh_wrapper = build_rsync_ssh_wrapper(ssh)?;
+    let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
+
+    let ssh_wrapper = build_rsync_ssh_wrapper(&ssh)?;
     let remote = format!("{}@{}:{}", ssh.user, ssh.host, remote_path);
 
     // Ensure destination directory exists before rsync
     let mkdir_cmd = format!(r#"mkdir -p "{}""#, remote_path.replace('"', "\\\""));
     ssh_ops::execute_command(host_id, &mkdir_cmd, None, &HashMap::new()).await?;
-    
+
     let mut rsync = tokio::process::Command::new("rsync");
     rsync.args(["-avz", "--progress"]);
     rsync.args(["-e", ssh_wrapper.to_string_lossy().as_ref()]);
@@ -262,7 +390,7 @@ async fn upload_to_host(
     }
     rsync.arg(local_path);
     rsync.arg(&remote);
-    
+
     let output = rsync.output().await;
     let _ = std::fs::remove_file(&ssh_wrapper);
     let output = output.map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
@@ -275,7 +403,7 @@ async fn upload_to_host(
             format_command_output(&stdout, &stderr)
         )));
     }
-    
+
     Ok(())
 }
 
@@ -286,19 +414,18 @@ async fn download_from_host(
     local_path: &str,
     excludes: &[String],
 ) -> Result<(), AppError> {
-    let host = host::get_host(host_id).await?;
-    let ssh = host.ssh.as_ref()
-        .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
-    
+    let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
+
     // Create local directory if needed
     if let Some(parent) = std::path::Path::new(local_path).parent() {
-        tokio::fs::create_dir_all(parent).await
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|e| AppError::io(format!("Failed to create directory: {}", e)))?;
     }
-    
-    let ssh_wrapper = build_rsync_ssh_wrapper(ssh)?;
+
+    let ssh_wrapper = build_rsync_ssh_wrapper(&ssh)?;
     let remote = format!("{}@{}:{}", ssh.user, ssh.host, remote_path);
-    
+
     let mut rsync = tokio::process::Command::new("rsync");
     rsync.args(["-avz", "--progress"]);
     rsync.args(["-e", ssh_wrapper.to_string_lossy().as_ref()]);
@@ -307,7 +434,7 @@ async fn download_from_host(
     }
     rsync.arg(&remote);
     rsync.arg(local_path);
-    
+
     let output = rsync.output().await;
     let _ = std::fs::remove_file(&ssh_wrapper);
     let output = output.map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
@@ -320,18 +447,17 @@ async fn download_from_host(
             format_command_output(&stdout, &stderr)
         )));
     }
-    
+
     Ok(())
 }
 
 /// Copy files within the same host
-async fn copy_on_host(
-    host_id: &str,
-    src_path: &str,
-    dst_path: &str,
-) -> Result<(), AppError> {
+async fn copy_on_host(host_id: &str, src_path: &str, dst_path: &str) -> Result<(), AppError> {
     // Create destination directory and copy
-    let cmd = format!("mkdir -p $(dirname {}) && cp -r {} {}", dst_path, src_path, dst_path);
+    let cmd = format!(
+        "mkdir -p $(dirname {}) && cp -r {} {}",
+        dst_path, src_path, dst_path
+    );
     ssh_ops::execute_command(host_id, &cmd, None, &HashMap::new()).await?;
     Ok(())
 }
@@ -404,13 +530,19 @@ fn build_rsync_ssh_wrapper(ssh: &crate::ssh::SshSpec) -> Result<PathBuf, AppErro
 
     lines.push(r#"exec "${cmd[@]}" "$@""#.to_string());
 
-    let script_path = std::env::temp_dir()
-        .join(format!("doppio_rsync_ssh_{}.sh", uuid::Uuid::new_v4()));
+    let script_path =
+        std::env::temp_dir().join(format!("doppio_rsync_ssh_{}.sh", uuid::Uuid::new_v4()));
     std::fs::write(&script_path, format!("{}\n", lines.join("\n")))
         .map_err(|e| AppError::io(format!("Failed to write rsync ssh wrapper: {}", e)))?;
     #[cfg(unix)]
-    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| AppError::io(format!("Failed to set rsync ssh wrapper permissions: {}", e)))?;
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).map_err(
+        |e| {
+            AppError::io(format!(
+                "Failed to set rsync ssh wrapper permissions: {}",
+                e
+            ))
+        },
+    )?;
 
     Ok(script_path)
 }
@@ -439,20 +571,24 @@ async fn upload_to_storage(
     _excludes: &[String],
 ) -> Result<(), AppError> {
     let storage = get_storage(storage_id).await?;
-    
+
     let (remote_config, full_path) = build_rclone_remote(&storage, storage_path)?;
-    
+
     if let Some(config) = remote_config {
         // Create temp remote and sync
         let remote_name = create_temp_rclone_remote("dst", &config)?;
         let dst_fs = format!("{}:{}", remote_name, full_path);
-        
-        let result = librclone::rpc("sync/copy", &serde_json::json!({
-            "srcFs": local_path,
-            "dstFs": dst_fs,
-            "_async": false,
-        }).to_string());
-        
+
+        let result = librclone::rpc(
+            "sync/copy",
+            &serde_json::json!({
+                "srcFs": local_path,
+                "dstFs": dst_fs,
+                "_async": false,
+            })
+            .to_string(),
+        );
+
         delete_temp_rclone_remote(&remote_name);
         result.map_err(|e| AppError::command(format!("Upload to storage failed: {}", e)))?;
     } else {
@@ -462,12 +598,12 @@ async fn upload_to_storage(
             .status()
             .await
             .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-        
+
         if !status.success() {
             return Err(AppError::command("Upload to local storage failed"));
         }
     }
-    
+
     Ok(())
 }
 
@@ -478,25 +614,30 @@ async fn download_from_storage(
     local_path: &str,
 ) -> Result<(), AppError> {
     let storage = get_storage(storage_id).await?;
-    
+
     let (remote_config, full_path) = build_rclone_remote(&storage, storage_path)?;
-    
+
     // Create local directory
     if let Some(parent) = PathBuf::from(local_path).parent() {
-        tokio::fs::create_dir_all(parent).await
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|e| AppError::io(format!("Failed to create directory: {}", e)))?;
     }
-    
+
     if let Some(config) = remote_config {
         let remote_name = create_temp_rclone_remote("src", &config)?;
         let src_fs = format!("{}:{}", remote_name, full_path);
-        
-        let result = librclone::rpc("sync/copy", &serde_json::json!({
-            "srcFs": src_fs,
-            "dstFs": local_path,
-            "_async": false,
-        }).to_string());
-        
+
+        let result = librclone::rpc(
+            "sync/copy",
+            &serde_json::json!({
+                "srcFs": src_fs,
+                "dstFs": local_path,
+                "_async": false,
+            })
+            .to_string(),
+        );
+
         delete_temp_rclone_remote(&remote_name);
         result.map_err(|e| AppError::command(format!("Download from storage failed: {}", e)))?;
     } else {
@@ -506,12 +647,12 @@ async fn download_from_storage(
             .status()
             .await
             .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
-        
+
         if !status.success() {
             return Err(AppError::command("Download from local storage failed"));
         }
     }
-    
+
     Ok(())
 }
 
@@ -523,18 +664,19 @@ async fn transfer_host_to_storage(
     storage_path: &str,
 ) -> Result<(), AppError> {
     let temp_dir = std::env::temp_dir().join(format!("transfer-{}", uuid::Uuid::new_v4()));
-    tokio::fs::create_dir_all(&temp_dir).await
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
         .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
-    
+
     // Download from host to temp
     download_from_host(host_id, remote_path, temp_dir.to_str().unwrap(), &[]).await?;
-    
+
     // Upload from temp to storage
     upload_to_storage(temp_dir.to_str().unwrap(), storage_id, storage_path, &[]).await?;
-    
+
     // Cleanup
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    
+
     Ok(())
 }
 
@@ -546,18 +688,19 @@ async fn transfer_storage_to_host(
     remote_path: &str,
 ) -> Result<(), AppError> {
     let temp_dir = std::env::temp_dir().join(format!("transfer-{}", uuid::Uuid::new_v4()));
-    tokio::fs::create_dir_all(&temp_dir).await
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
         .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
-    
+
     // Download from storage to temp
     download_from_storage(storage_id, storage_path, temp_dir.to_str().unwrap()).await?;
-    
+
     // Upload from temp to host
     upload_to_host(host_id, temp_dir.to_str().unwrap(), remote_path, &[], false).await?;
-    
+
     // Cleanup
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    
+
     Ok(())
 }
 
@@ -570,29 +713,39 @@ async fn transfer_storage_to_storage(
 ) -> Result<(), AppError> {
     let src_storage = get_storage(src_storage_id).await?;
     let dst_storage = get_storage(dst_storage_id).await?;
-    
+
     let (src_config, src_full_path) = build_rclone_remote(&src_storage, src_path)?;
     let (dst_config, dst_full_path) = build_rclone_remote(&dst_storage, dst_path)?;
-    
-    let src_remote_name = src_config.as_ref().map(|c| create_temp_rclone_remote("src", c)).transpose()?;
-    let dst_remote_name = dst_config.as_ref().map(|c| create_temp_rclone_remote("dst", c)).transpose()?;
-    
+
+    let src_remote_name = src_config
+        .as_ref()
+        .map(|c| create_temp_rclone_remote("src", c))
+        .transpose()?;
+    let dst_remote_name = dst_config
+        .as_ref()
+        .map(|c| create_temp_rclone_remote("dst", c))
+        .transpose()?;
+
     let src_fs = match &src_remote_name {
         Some(name) => format!("{}:{}", name, src_full_path),
         None => src_full_path.clone(),
     };
-    
+
     let dst_fs = match &dst_remote_name {
         Some(name) => format!("{}:{}", name, dst_full_path),
         None => dst_full_path.clone(),
     };
-    
-    let result = librclone::rpc("sync/copy", &serde_json::json!({
-        "srcFs": src_fs,
-        "dstFs": dst_fs,
-        "_async": false,
-    }).to_string());
-    
+
+    let result = librclone::rpc(
+        "sync/copy",
+        &serde_json::json!({
+            "srcFs": src_fs,
+            "dstFs": dst_fs,
+            "_async": false,
+        })
+        .to_string(),
+    );
+
     // Cleanup
     if let Some(name) = src_remote_name {
         delete_temp_rclone_remote(&name);
@@ -600,13 +753,16 @@ async fn transfer_storage_to_storage(
     if let Some(name) = dst_remote_name {
         delete_temp_rclone_remote(&name);
     }
-    
+
     result.map_err(|e| AppError::command(format!("Storage to storage transfer failed: {}", e)))?;
     Ok(())
 }
 
 /// Build rclone remote configuration for a storage
-fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_json::Value>, String), AppError> {
+fn build_rclone_remote(
+    storage: &Storage,
+    path: &str,
+) -> Result<(Option<serde_json::Value>, String), AppError> {
     match &storage.backend {
         StorageBackend::Local { root_path } => {
             let full_path = PathBuf::from(root_path)
@@ -615,10 +771,16 @@ fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_js
                 .to_string();
             Ok((None, full_path))
         }
-        StorageBackend::CloudflareR2 { account_id, access_key_id, secret_access_key, bucket, endpoint } => {
-            let endpoint = endpoint.clone().unwrap_or_else(|| {
-                format!("https://{}.r2.cloudflarestorage.com", account_id)
-            });
+        StorageBackend::CloudflareR2 {
+            account_id,
+            access_key_id,
+            secret_access_key,
+            bucket,
+            endpoint,
+        } => {
+            let endpoint = endpoint
+                .clone()
+                .unwrap_or_else(|| format!("https://{}.r2.cloudflarestorage.com", account_id));
             let config = serde_json::json!({
                 "type": "s3",
                 "provider": "Cloudflare",
@@ -630,7 +792,11 @@ fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_js
             let full_path = format!("{}/{}", bucket, path.trim_start_matches('/'));
             Ok((Some(config), full_path))
         }
-        StorageBackend::GoogleDrive { token, root_folder_id, .. } => {
+        StorageBackend::GoogleDrive {
+            token,
+            root_folder_id,
+            ..
+        } => {
             let mut config = serde_json::json!({
                 "type": "drive",
                 "scope": "drive",
@@ -643,7 +809,11 @@ fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_js
             }
             Ok((Some(config), path.to_string()))
         }
-        StorageBackend::GoogleCloudStorage { project_id, service_account_json, bucket } => {
+        StorageBackend::GoogleCloudStorage {
+            project_id,
+            service_account_json,
+            bucket,
+        } => {
             let mut config = serde_json::json!({
                 "type": "gcs",
                 "project_number": project_id,
@@ -654,7 +824,10 @@ fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_js
             let full_path = format!("{}/{}", bucket, path.trim_start_matches('/'));
             Ok((Some(config), full_path))
         }
-        StorageBackend::SshRemote { host_id, root_path: _ } => {
+        StorageBackend::SshRemote {
+            host_id,
+            root_path: _,
+        } => {
             // For SSH remote, we need to get the host's SSH config
             // This is handled separately in async context
             Err(AppError::command(format!(
@@ -662,7 +835,13 @@ fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_js
                 storage.id, host_id
             )))
         }
-        StorageBackend::Smb { host, share, user, password, domain } => {
+        StorageBackend::Smb {
+            host,
+            share,
+            user,
+            password,
+            domain,
+        } => {
             let mut config = serde_json::json!({
                 "type": "smb",
                 "host": host,
@@ -685,16 +864,16 @@ fn build_rclone_remote(storage: &Storage, path: &str) -> Result<(Option<serde_js
 /// Create a temporary rclone remote
 fn create_temp_rclone_remote(prefix: &str, config: &serde_json::Value) -> Result<String, AppError> {
     let name = format!("temp_{}_{}", prefix, uuid::Uuid::new_v4().simple());
-    
+
     let params = serde_json::json!({
         "name": name,
         "parameters": config,
         "type": config.get("type").and_then(|v| v.as_str()).unwrap_or(""),
     });
-    
+
     librclone::rpc("config/create", &params.to_string())
         .map_err(|e| AppError::command(format!("Failed to create rclone remote: {}", e)))?;
-    
+
     Ok(name)
 }
 

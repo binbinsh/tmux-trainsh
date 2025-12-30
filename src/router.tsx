@@ -2,7 +2,6 @@ import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/
 import { RootLayout } from "./components/layout/RootLayout";
 
 // Pages
-import { DashboardPage } from "./pages/dashboard";
 import { HostListPage } from "./pages/hosts";
 import { SavedHostDetailPage, VastHostDetailPage } from "./pages/host-detail";
 import { SettingsPage } from "./pages/settings";
@@ -13,7 +12,6 @@ import { StoragePage } from "./pages/storage";
 import { FileBrowserPage } from "./pages/file-browser";
 import { RecipesPage } from "./pages/recipes";
 import { RecipeEditorPage } from "./pages/recipe-editor";
-import { RecipeExecutionPage } from "./pages/recipe-execution";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -23,14 +21,8 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   beforeLoad: () => {
-    throw redirect({ to: "/dashboard" });
+    throw redirect({ to: "/terminal" });
   },
-});
-
-const dashboardRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/dashboard",
-  component: DashboardPage,
 });
 
 // Host routes
@@ -94,6 +86,12 @@ const jobRoute = createRoute({
 const terminalRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/terminal",
+  validateSearch: (search: Record<string, unknown>) => ({
+    connectHostId: typeof search.connectHostId === "string" ? search.connectHostId : undefined,
+    connectVastInstanceId:
+      typeof search.connectVastInstanceId === "string" ? search.connectVastInstanceId : undefined,
+    connectLabel: typeof search.connectLabel === "string" ? search.connectLabel : undefined,
+  }),
   component: TerminalPage,
 });
 
@@ -129,15 +127,8 @@ const recipeEditorRoute = createRoute({
   component: RecipeEditorPage,
 });
 
-const recipeExecutionRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/recipes/executions/$id",
-  component: RecipeExecutionPage,
-});
-
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  dashboardRoute,
   // Host routes
   hostsRoute,
   hostNewRoute,
@@ -145,7 +136,6 @@ const routeTree = rootRoute.addChildren([
   vastHostDetailRoute,
   // Recipe routes
   recipesRoute,
-  recipeExecutionRoute,  // Must be before recipeEditorRoute to match /recipes/executions/$id first
   recipeEditorRoute,
   // Storage routes
   storageRoute,

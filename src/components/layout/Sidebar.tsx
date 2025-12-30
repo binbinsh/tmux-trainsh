@@ -3,17 +3,11 @@ import { Button } from "../ui";
 import { Link, useLocation } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { useMemo } from "react";
-import type { ExecutionSummary, Host, RecipeSummary } from "../../lib/types";
+import type { Host, InteractiveExecution, RecipeSummary } from "../../lib/types";
+import { useTerminalOptional } from "../../contexts/TerminalContext";
+import appLogo from "../../assets/icons/app-logo.png";
 
 // Icons
-function IconDashboard() {
-  return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-    </svg>
-  );
-}
-
 function IconServer() {
   return (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -66,16 +60,16 @@ function IconRecipe() {
 type SidebarProps = {
   hosts: Host[];
   recipes: RecipeSummary[];
-  executions: ExecutionSummary[];
+  executions: InteractiveExecution[];
   isLoadingHosts?: boolean;
   isLoadingRecipes?: boolean;
   isCollapsed?: boolean;
-  onToggle?: () => void;
 };
 
-export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingRecipes, isCollapsed = false, onToggle }: SidebarProps) {
+export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingRecipes, isCollapsed = false }: SidebarProps) {
   const location = useLocation();
   const currentPath = location.pathname;
+  const terminal = useTerminalOptional();
 
   const activeHosts = useMemo(
     () => hosts.filter((h) => h.status === "online"),
@@ -83,7 +77,15 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
   );
 
   const activeExecutions = useMemo(
-    () => executions.filter((e) => e.status === "running" || e.status === "paused"),
+    () =>
+      executions.filter(
+        (e) =>
+          !!e.terminal_id &&
+          (e.status === "running" ||
+            e.status === "paused" ||
+            e.status === "waiting_for_input" ||
+            e.status === "connecting")
+      ),
     [executions]
   );
 
@@ -91,26 +93,22 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
     return currentPath === path || currentPath.startsWith(path + "/");
   }
 
-  // Collapsed sidebar - just icons
   if (isCollapsed) {
     return (
-      <aside className="w-14 h-full flex flex-col border-r border-divider bg-content1 transition-all duration-200">
+      <aside className="doppio-sidebar w-14">
         {/* Logo */}
         <div className="p-2 border-b border-divider flex flex-col items-center">
-          <Link to="/dashboard" className="flex items-center justify-center">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
-              <span className="text-white font-bold text-sm">D</span>
-            </div>
+          <Link to="/terminal" className="flex items-center justify-center">
+            <img src={appLogo} alt="Doppio" className="w-8 h-8 rounded-lg" />
           </Link>
         </div>
 
         {/* Collapsed Navigation */}
         <nav className="p-1 flex flex-col items-center gap-1">
-          <CollapsedNavItem to="/dashboard" icon={<IconDashboard />} label="Dashboard" isActive={isActive("/dashboard")} />
-          <CollapsedNavItem to="/hosts" icon={<IconServer />} label="Hosts" isActive={isActive("/hosts")} badge={activeHosts.length > 0 ? String(activeHosts.length) : undefined} />
-          <CollapsedNavItem to="/storage" icon={<IconStorage />} label="Storage" isActive={isActive("/storage")} />
-          <CollapsedNavItem to="/recipes" icon={<IconRecipe />} label="Recipes" isActive={isActive("/recipes")} badge={activeExecutions.length > 0 ? String(activeExecutions.length) : undefined} />
           <CollapsedNavItem to="/terminal" icon={<IconTerminal />} label="Terminal" isActive={isActive("/terminal")} />
+          <CollapsedNavItem to="/hosts" icon={<IconServer />} label="Hosts" isActive={isActive("/hosts")} badge={activeHosts.length > 0 ? String(activeHosts.length) : undefined} />
+          <CollapsedNavItem to="/recipes" icon={<IconRecipe />} label="Recipes" isActive={isActive("/recipes")} badge={activeExecutions.length > 0 ? String(activeExecutions.length) : undefined} />
+          <CollapsedNavItem to="/storage" icon={<IconStorage />} label="Storage" isActive={isActive("/storage")} />
         </nav>
 
         <div className="flex-1" />
@@ -124,13 +122,11 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
   }
 
   return (
-    <aside className="w-64 h-full flex flex-col border-r border-divider bg-content1 transition-all duration-200">
+    <aside className="doppio-sidebar w-64">
       {/* Logo */}
       <div className="p-4 border-b border-divider">
-        <Link to="/dashboard" className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
-            <span className="text-white font-bold text-sm">D</span>
-          </div>
+        <Link to="/terminal" className="flex items-center gap-2">
+          <img src={appLogo} alt="Doppio" className="w-8 h-8 rounded-lg" />
           <span className="font-semibold text-lg">Doppio</span>
         </Link>
       </div>
@@ -138,10 +134,10 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
       {/* Navigation */}
       <nav className="p-2">
         <NavItem
-          to="/dashboard"
-          icon={<IconDashboard />}
-          label="Dashboard"
-          isActive={isActive("/dashboard")}
+          to="/terminal"
+          icon={<IconTerminal />}
+          label="Terminal"
+          isActive={isActive("/terminal")}
         />
         <NavItem
           to="/hosts"
@@ -151,12 +147,6 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
           badge={activeHosts.length > 0 ? String(activeHosts.length) : undefined}
         />
         <NavItem
-          to="/storage"
-          icon={<IconStorage />}
-          label="Storage"
-          isActive={isActive("/storage")}
-        />
-        <NavItem
           to="/recipes"
           icon={<IconRecipe />}
           label="Recipes"
@@ -164,10 +154,10 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
           badge={activeExecutions.length > 0 ? String(activeExecutions.length) : undefined}
         />
         <NavItem
-          to="/terminal"
-          icon={<IconTerminal />}
-          label="Terminal"
-          isActive={isActive("/terminal")}
+          to="/storage"
+          icon={<IconStorage />}
+          label="Storage"
+          isActive={isActive("/storage")}
         />
       </nav>
 
@@ -176,7 +166,7 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
       {/* Hosts list */}
       <div className="flex-1 overflow-hidden flex flex-col">
         <div className="px-4 py-2 flex items-center justify-between">
-          <span className="text-xs font-semibold text-foreground/60 uppercase tracking-wider">
+          <span className="doppio-sidebar-section-header">
             Hosts
           </span>
           <Tooltip content="Add Host">
@@ -210,7 +200,7 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
         {activeExecutions.length > 0 && (
           <>
             <div className="px-4 py-2 flex items-center justify-between">
-              <span className="text-xs font-semibold text-foreground/60 uppercase tracking-wider">
+              <span className="doppio-sidebar-section-header">
                 Running
               </span>
               <span className="text-xs text-primary font-medium">{activeExecutions.length}</span>
@@ -220,7 +210,7 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
                 <ExecutionItem
                   key={exec.id}
                   execution={exec}
-                  isActive={currentPath === `/recipes/executions/${exec.id}`}
+                  isActive={currentPath === "/terminal" && exec.terminal_id === terminal?.activeId}
                 />
               ))}
             </ScrollShadow>
@@ -267,11 +257,15 @@ function NavItem({ to, icon, label, isActive, badge }: NavItemProps) {
         </span>
       )}
       {isActive && (
-        <motion.div
-          layoutId="sidebar-indicator"
-          className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-primary rounded-r-full"
-          transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
-        />
+        <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2">
+          <motion.div
+            aria-hidden="true"
+            className="w-1 h-5 bg-primary rounded-r-full"
+            initial={{ opacity: 0, scaleY: 0.6 }}
+            animate={{ opacity: 1, scaleY: 1 }}
+            transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
+          />
+        </span>
       )}
     </Link>
   );
@@ -318,19 +312,29 @@ function RecipeItem({ recipe, isActive }: { recipe: RecipeSummary; isActive: boo
 }
 
 // Execution Item Component
-function ExecutionItem({ execution, isActive }: { execution: ExecutionSummary; isActive: boolean }) {
-  const statusColor = execution.status === "running"
-    ? "bg-success animate-pulse"
-    : execution.status === "paused"
-    ? "bg-warning"
-    : execution.status === "failed"
-    ? "bg-danger"
-    : "bg-default";
+function ExecutionItem({ execution, isActive }: { execution: InteractiveExecution; isActive: boolean }) {
+  const terminal = useTerminalOptional();
+  const stepsCompleted = execution.steps.filter((s) => s.status === "success").length;
+  const stepsTotal = execution.steps.length;
+  const statusColor =
+    execution.status === "running" || execution.status === "waiting_for_input"
+      ? "bg-success animate-pulse"
+      : execution.status === "connecting"
+      ? "bg-warning animate-pulse"
+      : execution.status === "paused"
+      ? "bg-warning"
+      : execution.status === "failed"
+      ? "bg-danger"
+      : "bg-default";
 
   return (
     <Link
-      to="/recipes/executions/$id"
-      params={{ id: execution.id }}
+      to="/terminal"
+      onClick={() => {
+        if (terminal && execution.terminal_id) {
+          terminal.setActiveId(execution.terminal_id);
+        }
+      }}
       className={`
         flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors text-sm
         ${isActive ? "bg-primary/10 text-primary" : "text-foreground/70 hover:bg-default/40"}
@@ -339,13 +343,12 @@ function ExecutionItem({ execution, isActive }: { execution: ExecutionSummary; i
       <span className={`w-2 h-2 rounded-full ${statusColor}`} />
       <span className="truncate flex-1">{execution.recipe_name}</span>
       <span className="text-xs text-foreground/50">
-        {execution.steps_completed}/{execution.steps_total}
+        {stepsCompleted}/{stepsTotal}
       </span>
     </Link>
   );
 }
 
-// Collapsed Nav Item Component (icon only with tooltip)
 type CollapsedNavItemProps = {
   to: string;
   icon: React.ReactNode;
@@ -371,11 +374,15 @@ function CollapsedNavItem({ to, icon, label, isActive, badge }: CollapsedNavItem
           </span>
         )}
         {isActive && (
-          <motion.div
-            layoutId="sidebar-indicator-collapsed"
-            className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-primary rounded-r-full"
-            transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
-          />
+          <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2">
+            <motion.div
+              aria-hidden="true"
+              className="w-1 h-5 bg-primary rounded-r-full"
+              initial={{ opacity: 0, scaleY: 0.6 }}
+              animate={{ opacity: 1, scaleY: 1 }}
+              transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
+            />
+          </span>
         )}
       </Link>
     </Tooltip>

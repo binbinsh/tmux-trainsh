@@ -22,19 +22,18 @@ pub async fn send(
             title.replace('"', r#"\""#)
         )
     };
-    
+
     let output = tokio::process::Command::new("osascript")
         .arg("-e")
         .arg(&script)
         .output()
         .await
         .map_err(|e| AppError::command(format!("Failed to send notification: {e}")))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(AppError::command(format!("Notification failed: {stderr}")));
     }
-    
+
     Ok(())
 }
-
