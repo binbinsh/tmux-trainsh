@@ -58,70 +58,42 @@ if [[ -n "${APPLE_PASSWORD:-}" && -z "${APPLE_ID_PASSWORD:-}" ]]; then
 fi
 
 TMP_DIR="$(mktemp -d)"
-KEYCHAIN_PASSWORD="$(uuidgen | tr -d '-')"
-KEYCHAIN_PATH="$TMP_DIR/doppio-build.keychain-db"
-DEFAULT_KEYCHAIN=""
-if DEFAULT_OUTPUT="$(security default-keychain -d user 2>/dev/null)"; then
-  DEFAULT_KEYCHAIN="$(printf "%s" "$DEFAULT_OUTPUT" | tr -d '\"')"
-fi
-declare -a ORIGINAL_KEYCHAIN_LIST
-ORIGINAL_KEYCHAIN_LIST=()
-if KEYCHAIN_LIST_OUTPUT="$(security list-keychains -d user 2>/dev/null)"; then
-  while IFS= read -r line; do
-    ORIGINAL_KEYCHAIN_LIST+=("${line//\"/}")
-  done < <(printf "%s" "$KEYCHAIN_LIST_OUTPUT")
-fi
+KEYCHAIN_PATH="$HOME/Library/Keychains/login.keychain-db"
 
 cleanup() {
   local exit_code=$?
-  if [[ -n "${DEFAULT_KEYCHAIN:-}" ]]; then
-    security default-keychain -s "$DEFAULT_KEYCHAIN" >/dev/null 2>&1 || true
-  fi
-  if [[ ${#ORIGINAL_KEYCHAIN_LIST[@]} -gt 0 ]]; then
-    security list-keychains -d user -s "${ORIGINAL_KEYCHAIN_LIST[@]}" >/dev/null 2>&1 || true
-  fi
-  security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
   exit "$exit_code"
 }
 trap cleanup EXIT
 
-umask 077
-
-echo "Preparing signing keychain..."
-security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-security default-keychain -s "$KEYCHAIN_PATH"
-security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
-# Include system root certificates for chain validation
-SYSTEM_ROOTS="/System/Library/Keychains/SystemRootCertificates.keychain"
-if [[ ${#ORIGINAL_KEYCHAIN_LIST[@]} -gt 0 ]]; then
-  security list-keychains -d user -s "$KEYCHAIN_PATH" "$SYSTEM_ROOTS" "${ORIGINAL_KEYCHAIN_LIST[@]}"
-else
-  security list-keychains -d user -s "$KEYCHAIN_PATH" "$SYSTEM_ROOTS"
+# Check if signing identity already exists in login keychain
+IDENTITY_EXISTS=""
+if security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null | grep -Fq "$APPLE_SIGNING_IDENTITY"; then
+  IDENTITY_EXISTS="1"
+  echo "Signing identity already exists in login keychain."
 fi
 
-# Download and import Apple Developer ID G2 intermediate certificate
-# This is required for certificates signed by the G2 intermediate CA
-echo "Downloading Apple Developer ID G2 intermediate certificate..."
-INTERMEDIATE_CERT_URL="https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer"
-INTERMEDIATE_CERT_PATH="$TMP_DIR/DeveloperIDG2CA.cer"
-if ! curl -sL "$INTERMEDIATE_CERT_URL" -o "$INTERMEDIATE_CERT_PATH"; then
-  echo "Warning: Failed to download intermediate certificate" >&2
-fi
-if [[ -f "$INTERMEDIATE_CERT_PATH" ]]; then
-  security import "$INTERMEDIATE_CERT_PATH" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign >/dev/null 2>&1
-fi
+if [[ -z "$IDENTITY_EXISTS" ]]; then
+  echo "Importing certificate to login keychain..."
 
-CERT_PATH="$TMP_DIR/certificate.p12"
-if [[ -f "$APPLE_CERTIFICATE" ]]; then
-  CERT_PATH="$APPLE_CERTIFICATE"
-else
-  printf "%s" "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
-fi
+  # Import Apple Developer ID G2 intermediate certificate if needed
+  INTERMEDIATE_CERT_URL="https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer"
+  INTERMEDIATE_CERT_PATH="$TMP_DIR/DeveloperIDG2CA.cer"
+  if curl -sL "$INTERMEDIATE_CERT_URL" -o "$INTERMEDIATE_CERT_PATH"; then
+    security import "$INTERMEDIATE_CERT_PATH" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign 2>/dev/null || true
+  fi
 
-security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -A >/dev/null 2>&1
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null 2>&1
+  # Import the developer certificate
+  CERT_PATH="$TMP_DIR/certificate.p12"
+  if [[ -f "$APPLE_CERTIFICATE" ]]; then
+    CERT_PATH="$APPLE_CERTIFICATE"
+  else
+    printf "%s" "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+  fi
+
+  security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -A
+fi
 
 IDENTITY_LIST="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null || true)"
 if ! grep -Fq "$APPLE_SIGNING_IDENTITY" <<<"$IDENTITY_LIST"; then
