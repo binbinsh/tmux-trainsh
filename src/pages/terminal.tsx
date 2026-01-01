@@ -55,10 +55,11 @@ interface TerminalPaneProps {
   onClose: () => void;
 }
 
-// Render throttle interval in ms (higher value = less flashing during fast output)
-const RENDER_THROTTLE_MS = 24;
+// Render throttle interval in ms - target ~30fps for smooth animation (1000/30 ≈ 33ms)
+// This prevents flashing during fast output like terminal animations
+const RENDER_THROTTLE_MS = 33;
 // Flush immediately when buffered data grows beyond this size
-const MAX_BUFFERED_CHARS = 64 * 1024;
+const MAX_BUFFERED_CHARS = 128 * 1024;
 
 function getErrorMessage(error: unknown): string {
   if (typeof error === "string") return error;
@@ -277,7 +278,7 @@ function TerminalPane(props: TerminalPaneProps) {
 
     const term = new Terminal({
       scrollback: 100000,
-      convertEol: true,
+      convertEol: false, // Don't convert LF to CRLF - let the PTY handle it
       cursorBlink: true,
       cursorStyle: "bar",
       fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, monospace",
@@ -290,6 +291,7 @@ function TerminalPane(props: TerminalPaneProps) {
       macOptionClickForcesSelection: true,
       allowProposedApi: true, // Required for search decorations
       minimumContrastRatio: 2,
+      overviewRulerWidth: 0, // Disable overview ruler to prevent width issues
       // Monokai Light theme
       theme: {
         background: "#FFFFFF",
@@ -367,20 +369,87 @@ function TerminalPane(props: TerminalPaneProps) {
       console.warn("[Terminal] WebGL not supported, using canvas renderer:", e);
     }
     
+    // Custom fit function that reserves extra padding to avoid edge-case jitter
+    // The standard FitAddon can cause resize loops when width is at a boundary
+    const customFit = () => {
+      if (!termRef.current || !hostRef.current) return { cols: 0, rows: 0 };
+
+      const term = termRef.current;
+      const core = (term as unknown as { _core: { _renderService: { dimensions: { css: { cell: { width: number; height: number } } } } } })._core;
+      const dims = core._renderService.dimensions;
+
+      if (!dims?.css?.cell?.width || !dims?.css?.cell?.height) {
+        return { cols: term.cols, rows: term.rows };
+      }
+
+      const cellWidth = dims.css.cell.width;
+      const cellHeight = dims.css.cell.height;
+
+      const parentElement = hostRef.current;
+      const style = window.getComputedStyle(parentElement);
+      const width = parentElement.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const height = parentElement.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+
+      // Calculate actual terminal dimensions
+      const cols = Math.max(2, Math.floor(width / cellWidth));
+      const rows = Math.max(1, Math.floor(height / cellHeight));
+
+      if (cols !== term.cols || rows !== term.rows) {
+        term.resize(cols, rows);
+      }
+
+      // IMPORTANT: Report cols-2 to PTY instead of actual cols
+      //
+      // Why? Full-screen terminal programs (like `uvx ny2026`) use os.get_terminal_size()
+      // to determine their rendering width, then output content that fills exactly
+      // that many columns. If there's any sub-pixel rounding difference between
+      // what xterm.js calculates and what the program outputs, the content can
+      // wrap to the next line, causing visible "jumping" or flickering.
+      //
+      // By telling the PTY we have 2 fewer columns than xterm.js actually renders,
+      // programs will leave a 2-character margin on the right side, preventing
+      // any edge-case wrapping issues.
+      //
+      // This was discovered while debugging `uvx ny2026` - a 60fps terminal animation
+      // that would flicker unless the window was slightly widened. Termius doesn't
+      // have this issue likely because they use a similar margin strategy.
+      return { cols: Math.max(2, cols - 2), rows };
+    };
+
     // Track last dimensions to avoid unnecessary resize calls
     let lastCols = 0;
     let lastRows = 0;
     let fitDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let stableSizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingResize: { cols: number; rows: number } | null = null;
+
+    // Send resize to PTY only after size has been stable for a period
+    const sendResizeIfStable = (cols: number, rows: number) => {
+      pendingResize = { cols, rows };
+
+      if (stableSizeTimer) {
+        clearTimeout(stableSizeTimer);
+      }
+
+      // Wait 100ms for size to stabilize before sending resize
+      stableSizeTimer = setTimeout(() => {
+        if (pendingResize && (pendingResize.cols !== lastCols || pendingResize.rows !== lastRows)) {
+          lastCols = pendingResize.cols;
+          lastRows = pendingResize.rows;
+          void termResize(props.id, pendingResize.cols, pendingResize.rows);
+        }
+        pendingResize = null;
+        stableSizeTimer = null;
+      }, 100);
+    };
 
     // Fit after a short delay to ensure container is fully rendered
     const doFit = () => {
       try {
-        fit.fit();
-        // Only send resize if dimensions actually changed
-        if (term.cols !== lastCols || term.rows !== lastRows) {
-          lastCols = term.cols;
-          lastRows = term.rows;
-          void termResize(props.id, term.cols, term.rows);
+        const { cols, rows } = customFit();
+        // Queue resize, will only be sent after size stabilizes
+        if (cols !== lastCols || rows !== lastRows) {
+          sendResizeIfStable(cols, rows);
         }
       } catch {
         // ignore
@@ -395,10 +464,39 @@ function TerminalPane(props: TerminalPaneProps) {
       fitDebounceTimer = setTimeout(doFit, 50);
     };
 
-    // Initial fit with delay
-    setTimeout(doFit, 50);
-    // Fit again after a longer delay to catch late layout changes
-    setTimeout(doFit, 200);
+    // Flag to track if initial layout is complete
+    let initialLayoutComplete = false;
+
+    // Wait for container to have valid dimensions before first fit
+    const waitForValidSize = (callback: () => void, maxAttempts = 10, attempt = 0) => {
+      const container = hostRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      // Container needs to have reasonable size (at least 100x100 pixels)
+      if (rect.width >= 100 && rect.height >= 100) {
+        callback();
+      } else if (attempt < maxAttempts) {
+        // Wait and retry
+        setTimeout(() => waitForValidSize(callback, maxAttempts, attempt + 1), 50);
+      } else {
+        // Give up waiting, just do the fit anyway
+        callback();
+      }
+    };
+
+    // Initial fit after container is ready
+    // Use longer delay to let React Strict Mode double-render settle
+    // and for any dynamic layout elements to stabilize
+    const initialFitTimer = setTimeout(() => {
+      waitForValidSize(() => {
+        doFit();
+        // Mark layout as complete after a short delay
+        setTimeout(() => {
+          initialLayoutComplete = true;
+        }, 150);
+      });
+    }, 200);
 
     const onDataDispose = term.onData((data) => {
       // Check if this is a recipe terminal with intervention locked
@@ -413,13 +511,20 @@ function TerminalPane(props: TerminalPaneProps) {
       void termWrite(props.id, data);
     });
 
+    // Disable ResizeObserver - it causes resize loops with terminal animations
+    // Only respond to explicit window resize events
+    // const parentContainer = hostRef.current.parentElement;
     const ro = new ResizeObserver(() => {
-      debouncedFit();
+      // Intentionally empty - we only use window resize event now
     });
-    ro.observe(hostRef.current);
+    // Don't observe anything
 
     // Also listen for window resize
-    const handleWindowResize = () => debouncedFit();
+    const handleWindowResize = () => {
+      if (initialLayoutComplete) {
+        debouncedFit();
+      }
+    };
     window.addEventListener("resize", handleWindowResize);
 
     termRef.current = term;
@@ -442,23 +547,25 @@ function TerminalPane(props: TerminalPaneProps) {
       rafIdRef.current = null;
     };
 
-    // Schedule a flush with throttling
+    // Schedule a flush with simple throttling using requestAnimationFrame
+    // This provides smoother animation by syncing with display refresh
     const scheduleFlush = () => {
-      const shouldFlushNow = dataBufferSizeRef.current >= MAX_BUFFERED_CHARS;
+      // If we already have a pending flush, just let it handle the accumulated data
       if (rafIdRef.current !== null) {
-        if (shouldFlushNow) {
-          cancelAnimationFrame(rafIdRef.current);
-          clearTimeout(rafIdRef.current);
-          rafIdRef.current = requestAnimationFrame(flushBuffer);
-        }
         return;
       }
-      
+
       const now = performance.now();
       const elapsed = now - lastFlushRef.current;
-      
-      if (shouldFlushNow || elapsed >= RENDER_THROTTLE_MS) {
-        // Enough time passed, flush immediately on next frame
+
+      // Force immediate flush for large buffers
+      if (dataBufferSizeRef.current >= MAX_BUFFERED_CHARS) {
+        rafIdRef.current = requestAnimationFrame(flushBuffer);
+        return;
+      }
+
+      // Throttle: wait until enough time has passed since last flush
+      if (elapsed >= RENDER_THROTTLE_MS) {
         rafIdRef.current = requestAnimationFrame(flushBuffer);
       } else {
         // Schedule flush after remaining throttle time
@@ -517,10 +624,14 @@ function TerminalPane(props: TerminalPaneProps) {
       // Mark as unmounted first to prevent new listeners from being set up
       isMounted = false;
 
-      // Cancel any pending fit debounce
+      // Cancel any pending timers
       if (fitDebounceTimer) {
         clearTimeout(fitDebounceTimer);
       }
+      if (stableSizeTimer) {
+        clearTimeout(stableSizeTimer);
+      }
+      clearTimeout(initialFitTimer);
 
       // Cancel any pending flush
       if (rafIdRef.current !== null) {
@@ -564,12 +675,10 @@ function TerminalPane(props: TerminalPaneProps) {
       if (!wasActive) {
         // Use a single RAF to batch the fit and refresh together
         requestAnimationFrame(() => {
-          if (!fitRef.current || !termRef.current) return;
+          if (!termRef.current) return;
           try {
-            fitRef.current.fit();
-            void termResize(props.id, termRef.current.cols, termRef.current.rows);
-            // Force refresh the terminal viewport to ensure content is visible
-            // This is needed because WebGL context may lose rendering when hidden
+            // Just refresh, don't resize - size should already be correct
+            // Resizing here can cause jitter with full-screen terminal apps
             termRef.current.refresh(0, termRef.current.rows - 1);
           } catch {
             // ignore
@@ -579,7 +688,7 @@ function TerminalPane(props: TerminalPaneProps) {
     }
   }, [props.active, props.id]);
 
-  return <div ref={hostRef} className="h-full w-full bg-content1" />;
+  return <div ref={hostRef} className="h-full w-full bg-content1 overflow-hidden absolute inset-0" />;
 }
 
 // Search bar icons

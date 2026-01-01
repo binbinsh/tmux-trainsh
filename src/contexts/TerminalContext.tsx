@@ -206,7 +206,9 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   const openLocalTerminal = useCallback(async () => {
     try {
-      const session = await termOpenLocal({ cols: 120, rows: 32 });
+      // Use smaller initial size - xterm.js will resize to actual size after fit()
+      // This prevents the "jump" when initial PTY size doesn't match actual terminal size
+      const session = await termOpenLocal({ cols: 80, rows: 24 });
       setSessions((prev) => {
         const next = [...prev, session];
         lastSessionCount.current = next.length;

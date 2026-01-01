@@ -123,6 +123,19 @@
     font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace;
   }
 
+  /* Always show scrollbar to prevent layout shifts when content changes */
+  /* This prevents resize loops when scrollbar appears/disappears */
+  .xterm-viewport {
+    overflow-y: scroll !important;
+    scrollbar-gutter: stable !important;
+  }
+
+  /* Hide scrollbar visually but keep the space reserved */
+  .xterm-viewport::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
+  }
+
   [data-slot="label"] {
     @apply text-xs text-foreground/60;
   }
