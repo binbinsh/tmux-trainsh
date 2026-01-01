@@ -1,4 +1,4 @@
-import { Outlet, useLocation } from "@tanstack/react-router";
+import { Outlet } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
@@ -14,11 +14,8 @@ export function RootLayout() {
 }
 
 function RootLayoutShell() {
-  const location = useLocation();
   const terminal = useTerminalOptional();
-  const isTerminalRoute = location.pathname.startsWith("/terminal");
-  const hasTerminalSessions = (terminal?.sessions.length ?? 0) > 0;
-  const isCollapsed = isTerminalRoute && hasTerminalSessions;
+  const isCollapsed = terminal?.sidebarCollapsed ?? false;
 
   const hostsQuery = useQuery({
     queryKey: ["hosts"],

@@ -19,13 +19,14 @@ export function PageLayout({ title, subtitle, actions, children }: PageLayoutPro
   return (
     <div className="doppio-page">
       <div className="doppio-page-content">
-        {/* Header */}
-        <div className="doppio-page-header">
-          <div>
-            <h1 className="doppio-page-title">{title}</h1>
-            {subtitle && <p className="doppio-page-subtitle">{subtitle}</p>}
+        <div className="termius-toolbar">
+          <div className="termius-toolbar-row justify-between">
+            <div className="min-w-0">
+              <h1 className="doppio-page-title">{title}</h1>
+              {subtitle && <p className="doppio-page-subtitle">{subtitle}</p>}
+            </div>
+            {actions && <div className="termius-quick-actions">{actions}</div>}
           </div>
-          {actions && <div className="flex gap-2">{actions}</div>}
         </div>
 
         {/* Content */}

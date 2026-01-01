@@ -643,7 +643,7 @@ async fn open_ssh_tmux_inner(
   // Build the SSH command - use shell to handle ProxyCommand with spaces correctly
   let ssh_opts = ssh.interactive_ssh_options();
   let target = ssh.target();
-  
+
   // Build environment exports and remote command
   let env_exports = if let Some(vars) = &env_vars {
     if vars.is_empty() {
@@ -657,17 +657,22 @@ async fn open_ssh_tmux_inner(
   } else {
     String::new()
   };
-  
+
+  // Enable tmux mouse mode for scroll support, and set high history limit
   let remote_cmd = format!(
-    "{}tmux start-server; tmux set-option -g history-limit {}; tmux set-option -t {} history-limit {} 2>/dev/null; tmux new-session -A -s {}",
+    "{}tmux start-server; \
+     tmux set-option -g history-limit {}; \
+     tmux set-option -g mouse on; \
+     tmux set-option -t {} history-limit {} 2>/dev/null; \
+     tmux new-session -A -s {}",
     env_exports,
     TMUX_HISTORY_LIMIT,
     session,
     TMUX_HISTORY_LIMIT,
     session
   );
-  
-  
+
+
   // Check if we have a ProxyCommand in extra_args (needs special handling)
   let has_proxy_cmd = ssh.extra_args.iter().any(|a| a.contains("ProxyCommand="));
   
@@ -1228,7 +1233,7 @@ pub async fn open_ssh_tmux_inner_static(
   // Build the SSH command - use shell to handle ProxyCommand with spaces correctly
   let ssh_opts = ssh.interactive_ssh_options();
   let target = ssh.target();
-  
+
   // Build environment exports and remote command
   let env_exports = if let Some(vars) = &env_vars {
     if vars.is_empty() {
@@ -1242,17 +1247,22 @@ pub async fn open_ssh_tmux_inner_static(
   } else {
     String::new()
   };
-  
+
+  // Enable tmux mouse mode for scroll support, and set high history limit
   let remote_cmd = format!(
-    "{}tmux start-server; tmux set-option -g history-limit {}; tmux set-option -t {} history-limit {} 2>/dev/null; tmux new-session -A -s {}",
+    "{}tmux start-server; \
+     tmux set-option -g history-limit {}; \
+     tmux set-option -g mouse on; \
+     tmux set-option -t {} history-limit {} 2>/dev/null; \
+     tmux new-session -A -s {}",
     env_exports,
     TMUX_HISTORY_LIMIT,
     session,
     TMUX_HISTORY_LIMIT,
     session
   );
-  
-  
+
+
   // Check if we have a ProxyCommand in extra_args (needs special handling)
   let has_proxy_cmd = ssh.extra_args.iter().any(|a| a.contains("ProxyCommand="));
   

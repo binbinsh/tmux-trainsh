@@ -1,7 +1,6 @@
-import { Divider, ScrollShadow, Tooltip } from "@nextui-org/react";
+import { ScrollShadow, Tooltip } from "@nextui-org/react";
 import { Button } from "../ui";
 import { Link, useLocation } from "@tanstack/react-router";
-import { motion } from "framer-motion";
 import { useMemo } from "react";
 import type { Host, InteractiveExecution, RecipeSummary } from "../../lib/types";
 import { useTerminalOptional } from "../../contexts/TerminalContext";
@@ -89,23 +88,27 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
     [executions]
   );
 
+  // Count active terminal sessions (non-placeholder)
+  const terminalSessionCount = useMemo(
+    () => terminal?.sessions.filter((s) => !s.isPlaceholder).length ?? 0,
+    [terminal?.sessions]
+  );
+
   function isActive(path: string) {
     return currentPath === path || currentPath.startsWith(path + "/");
   }
 
   if (isCollapsed) {
     return (
-      <aside className="doppio-sidebar w-14">
-        {/* Logo */}
-        <div className="p-2 border-b border-divider flex flex-col items-center">
-          <Link to="/terminal" className="flex items-center justify-center">
-            <img src={appLogo} alt="Doppio" className="w-8 h-8 rounded-lg" />
-          </Link>
+      <aside className="doppio-sidebar w-14 border-r border-black/5">
+        {/* App Icon Header */}
+        <div className="h-12 flex-shrink-0 flex items-end justify-center pb-2" data-tauri-drag-region>
+          <img src={appLogo} alt="Doppio" className="w-6 h-6 pointer-events-none" />
         </div>
 
         {/* Collapsed Navigation */}
-        <nav className="p-1 flex flex-col items-center gap-1">
-          <CollapsedNavItem to="/terminal" icon={<IconTerminal />} label="Terminal" isActive={isActive("/terminal")} />
+        <nav className="p-1.5 flex flex-col items-center gap-0.5">
+          <CollapsedNavItem to="/terminal" icon={<IconTerminal />} label="Terminal" isActive={isActive("/terminal")} badge={terminalSessionCount > 0 ? String(terminalSessionCount) : undefined} />
           <CollapsedNavItem to="/hosts" icon={<IconServer />} label="Hosts" isActive={isActive("/hosts")} badge={activeHosts.length > 0 ? String(activeHosts.length) : undefined} />
           <CollapsedNavItem to="/recipes" icon={<IconRecipe />} label="Recipes" isActive={isActive("/recipes")} badge={activeExecutions.length > 0 ? String(activeExecutions.length) : undefined} />
           <CollapsedNavItem to="/storage" icon={<IconStorage />} label="Storage" isActive={isActive("/storage")} />
@@ -114,7 +117,7 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
         <div className="flex-1" />
 
         {/* Footer */}
-        <div className="p-1 border-t border-divider flex justify-center">
+        <div className="p-1.5 flex justify-center">
           <CollapsedNavItem to="/settings" icon={<IconSettings />} label="Settings" isActive={isActive("/settings")} />
         </div>
       </aside>
@@ -122,22 +125,23 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
   }
 
   return (
-    <aside className="doppio-sidebar w-64">
-      {/* Logo */}
-      <div className="p-4 border-b border-divider">
-        <Link to="/terminal" className="flex items-center gap-2">
-          <img src={appLogo} alt="Doppio" className="w-8 h-8 rounded-lg" />
-          <span className="font-semibold text-lg">Doppio</span>
-        </Link>
+    <aside className="doppio-sidebar w-56 border-r border-black/5">
+      {/* App Header with logo and name */}
+      <div className="h-12 flex-shrink-0 flex items-end pb-2 px-2" data-tauri-drag-region>
+        <div className="flex items-center gap-2.5 px-2.5 pointer-events-none">
+          <img src={appLogo} alt="Doppio" className="w-6 h-6" />
+          <span className="text-[15px] font-semibold text-[rgb(var(--doppio-sidebar-text))]/80">Doppio</span>
+        </div>
       </div>
 
       {/* Navigation */}
-      <nav className="p-2">
+      <nav className="px-2 py-1">
         <NavItem
           to="/terminal"
           icon={<IconTerminal />}
           label="Terminal"
           isActive={isActive("/terminal")}
+          badge={terminalSessionCount > 0 ? String(terminalSessionCount) : undefined}
         />
         <NavItem
           to="/hosts"
@@ -161,11 +165,9 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
         />
       </nav>
 
-      <Divider />
-
       {/* Hosts list */}
-      <div className="flex-1 overflow-hidden flex flex-col">
-        <div className="px-4 py-2 flex items-center justify-between">
+      <div className="flex-1 overflow-hidden flex flex-col mt-2">
+        <div className="px-3 py-1.5 flex items-center justify-between">
           <span className="doppio-sidebar-section-header">
             Hosts
           </span>
@@ -176,7 +178,7 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
               isIconOnly
               size="sm"
               variant="light"
-              className="min-w-6 w-6 h-6"
+              className="min-w-5 w-5 h-5 text-[rgb(var(--doppio-sidebar-text))]/40 hover:text-[rgb(var(--doppio-sidebar-text))]"
             >
               <IconPlus />
             </Button>
@@ -184,9 +186,9 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
         </div>
         <ScrollShadow className="flex-1 px-2" hideScrollBar>
           {isLoadingHosts ? (
-            <div className="px-2 py-1 text-xs text-foreground/50">Loading...</div>
+            <div className="px-2 py-1 text-xs text-[rgb(var(--doppio-sidebar-text-muted))]">Loading...</div>
           ) : hosts.length === 0 ? (
-            <div className="px-2 py-1 text-xs text-foreground/50">No hosts yet</div>
+            <div className="px-2 py-1 text-xs text-[rgb(var(--doppio-sidebar-text-muted))]">No hosts yet</div>
           ) : (
             hosts.slice(0, 10).map((host) => (
               <HostItem key={host.id} host={host} isActive={currentPath === `/hosts/${host.id}`} />
@@ -194,16 +196,14 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
           )}
         </ScrollShadow>
 
-        <Divider />
-
         {/* Running Executions only */}
         {activeExecutions.length > 0 && (
           <>
-            <div className="px-4 py-2 flex items-center justify-between">
+            <div className="px-3 py-1.5 flex items-center justify-between mt-2">
               <span className="doppio-sidebar-section-header">
                 Running
               </span>
-              <span className="text-xs text-primary font-medium">{activeExecutions.length}</span>
+              <span className="text-[11px] text-primary/80 font-medium">{activeExecutions.length}</span>
             </div>
             <ScrollShadow className="flex-1 px-2" hideScrollBar>
               {activeExecutions.map((exec) => (
@@ -219,7 +219,7 @@ export function Sidebar({ hosts, recipes, executions, isLoadingHosts, isLoadingR
       </div>
 
       {/* Footer */}
-      <div className="p-2 border-t border-divider">
+      <div className="px-2 py-2">
         <NavItem
           to="/settings"
           icon={<IconSettings />}
@@ -245,26 +245,18 @@ function NavItem({ to, icon, label, isActive, badge }: NavItemProps) {
     <Link
       to={to}
       className={`
-        flex items-center gap-3 px-3 py-2 rounded-lg transition-colors relative
-        ${isActive ? "bg-primary/10 text-primary" : "text-foreground/70 hover:bg-default/40 hover:text-foreground"}
+        flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-all duration-150 cursor-default
+        ${isActive
+          ? "bg-[rgb(var(--doppio-sidebar-item-active))] text-[rgb(var(--doppio-sidebar-icon-active))] font-medium"
+          : "text-[rgb(var(--doppio-sidebar-text))]/70 hover:bg-[rgb(var(--doppio-sidebar-item-hover))] hover:text-[rgb(var(--doppio-sidebar-text))]"
+        }
       `}
     >
-      {icon}
-      <span className="text-sm font-medium">{label}</span>
+      <span className="w-5 h-5 flex items-center justify-center">{icon}</span>
+      <span className={`text-[13px] ${isActive ? "text-[rgb(var(--doppio-sidebar-text))]" : ""}`}>{label}</span>
       {badge && (
-        <span className="ml-auto text-xs bg-primary/20 text-primary px-1.5 py-0.5 rounded-full">
+        <span className="ml-auto text-[10px] bg-black/5 text-[rgb(var(--doppio-sidebar-text))]/60 px-1.5 py-0.5 rounded-full font-medium">
           {badge}
-        </span>
-      )}
-      {isActive && (
-        <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2">
-          <motion.div
-            aria-hidden="true"
-            className="w-1 h-5 bg-primary rounded-r-full"
-            initial={{ opacity: 0, scaleY: 0.6 }}
-            animate={{ opacity: 1, scaleY: 1 }}
-            transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
-          />
         </span>
       )}
     </Link>
@@ -278,17 +270,20 @@ function HostItem({ host, isActive }: { host: Host; isActive: boolean }) {
       to="/hosts/$id"
       params={{ id: host.id }}
       className={`
-        flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors text-sm
-        ${isActive ? "bg-primary/10 text-primary" : "text-foreground/70 hover:bg-default/40"}
+        flex items-center gap-2 px-2 py-1 rounded-md transition-all duration-150 text-[12px] cursor-default
+        ${isActive
+          ? "bg-[rgb(var(--doppio-sidebar-item-active))] text-[rgb(var(--doppio-sidebar-text))]"
+          : "text-[rgb(var(--doppio-sidebar-text))]/60 hover:bg-[rgb(var(--doppio-sidebar-item-hover))] hover:text-[rgb(var(--doppio-sidebar-text))]/80"
+        }
       `}
     >
       <span
-        className={`w-2 h-2 rounded-full ${
-          host.status === "online" ? "bg-success" : host.status === "connecting" ? "bg-warning animate-pulse" : "bg-default"
+        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+          host.status === "online" ? "bg-success" : host.status === "connecting" ? "bg-warning animate-pulse" : "bg-black/20"
         }`}
       />
       <span className="truncate flex-1">{host.name}</span>
-      <span className="text-xs text-foreground/50">{host.type}</span>
+      <span className="text-[10px] text-[rgb(var(--doppio-sidebar-text))]/40">{host.type}</span>
     </Link>
   );
 }
@@ -325,24 +320,28 @@ function ExecutionItem({ execution, isActive }: { execution: InteractiveExecutio
       ? "bg-warning"
       : execution.status === "failed"
       ? "bg-danger"
-      : "bg-default";
+      : "bg-foreground/20";
 
   return (
     <Link
       to="/terminal"
+      search={{ connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined }}
       onClick={() => {
         if (terminal && execution.terminal_id) {
           terminal.setActiveId(execution.terminal_id);
         }
       }}
       className={`
-        flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors text-sm
-        ${isActive ? "bg-primary/10 text-primary" : "text-foreground/70 hover:bg-default/40"}
+        flex items-center gap-2 px-2 py-1 rounded-md transition-all duration-150 text-[12px] cursor-default
+        ${isActive
+          ? "bg-[rgb(var(--doppio-sidebar-item-active))] text-[rgb(var(--doppio-sidebar-text))]"
+          : "text-[rgb(var(--doppio-sidebar-text))]/60 hover:bg-[rgb(var(--doppio-sidebar-item-hover))] hover:text-[rgb(var(--doppio-sidebar-text))]/80"
+        }
       `}
     >
-      <span className={`w-2 h-2 rounded-full ${statusColor}`} />
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColor}`} />
       <span className="truncate flex-1">{execution.recipe_name}</span>
-      <span className="text-xs text-foreground/50">
+      <span className="text-[10px] text-[rgb(var(--doppio-sidebar-text))]/40">
         {stepsCompleted}/{stepsTotal}
       </span>
     </Link>
@@ -363,25 +362,17 @@ function CollapsedNavItem({ to, icon, label, isActive, badge }: CollapsedNavItem
       <Link
         to={to}
         className={`
-          relative flex items-center justify-center w-10 h-10 rounded-lg transition-colors
-          ${isActive ? "bg-primary/10 text-primary" : "text-foreground/70 hover:bg-default/40 hover:text-foreground"}
+          relative flex items-center justify-center w-9 h-9 rounded-lg transition-all duration-150 cursor-default
+          ${isActive
+            ? "bg-[rgb(var(--doppio-sidebar-item-active))] text-[rgb(var(--doppio-sidebar-icon-active))]"
+            : "text-[rgb(var(--doppio-sidebar-text))]/50 hover:bg-[rgb(var(--doppio-sidebar-item-hover))] hover:text-[rgb(var(--doppio-sidebar-text))]/70"
+          }
         `}
       >
         {icon}
         {badge && (
-          <span className="absolute -top-1 -right-1 text-[10px] bg-primary text-primary-foreground w-4 h-4 rounded-full flex items-center justify-center">
+          <span className="absolute -top-0.5 -right-0.5 text-[9px] bg-primary text-primary-foreground w-3.5 h-3.5 rounded-full flex items-center justify-center font-medium">
             {badge}
-          </span>
-        )}
-        {isActive && (
-          <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2">
-            <motion.div
-              aria-hidden="true"
-              className="w-1 h-5 bg-primary rounded-r-full"
-              initial={{ opacity: 0, scaleY: 0.6 }}
-              animate={{ opacity: 1, scaleY: 1 }}
-              transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
-            />
           </span>
         )}
       </Link>

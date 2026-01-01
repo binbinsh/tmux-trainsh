@@ -2,6 +2,10 @@ import {
   Card,
   CardBody,
   Divider,
+  Dropdown,
+  DropdownItem,
+  DropdownMenu,
+  DropdownTrigger,
   Input,
   Modal,
   ModalBody,
@@ -10,15 +14,17 @@ import {
   ModalHeader,
   Select,
   SelectItem,
+  Spinner,
   Switch,
   Tab,
   Tabs,
+  Tooltip,
   useDisclosure,
 } from "@nextui-org/react";
 import { Button } from "../components/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   storageApi,
   pricingApi,
@@ -31,9 +37,7 @@ import { calculateR2BucketCost } from "../components/r2-pricing";
 import { GoogleDriveWizard } from "../components/GoogleDriveWizard";
 import { formatPriceWithRates } from "../lib/currency";
 import { AppIcon } from "../components/AppIcon";
-import { PageLayout, PageSection } from "../components/shared/PageLayout";
-import { StatsCard } from "../components/shared/StatsCard";
-import { DataTable, CellWithIcon, StatusChip, TagList, ActionButton, type ColumnDef, type RowAction, type Tag } from "../components/shared/DataTable";
+import { EmptyHostState, HostRow, HostSection } from "../components/shared/HostCard";
 
 // ============================================================
 // Icons
@@ -63,18 +67,50 @@ function IconEllipsis() {
   );
 }
 
-function IconCheck() {
+function IconSearch({ className }: { className?: string }) {
   return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
     </svg>
   );
 }
 
-function IconX() {
+function IconFilter({ className }: { className?: string }) {
   return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+    </svg>
+  );
+}
+
+function IconSort({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
+    </svg>
+  );
+}
+
+function IconFolderOpen({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 7.5h5.379c.597 0 1.17.237 1.591.659l.621.621c.422.422.994.659 1.591.659H20.25c.414 0 .75.336.75.75v6A2.25 2.25 0 0118.75 19.5H6.108a2.25 2.25 0 01-2.15-1.586l-1.5-5.25A2.25 2.25 0 014.61 9.75H20.25" />
+    </svg>
+  );
+}
+
+function IconEdit({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+    </svg>
+  );
+}
+
+function IconTrash({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
     </svg>
   );
 }
@@ -130,7 +166,8 @@ function getBackendDescription(backend: StorageBackend, hosts?: Host[]): string 
       const hostName = host?.name || backend.host_id.slice(0, 8) + "...";
       return `${hostName}:${backend.root_path}`;
     }
-    case "google_drive": return "Google Drive";
+    case "google_drive":
+      return backend.root_folder_id ? "Folder selected" : "My Drive";
     case "cloudflare_r2": return `Bucket: ${backend.bucket}`;
     case "google_cloud_storage": return `Bucket: ${backend.bucket}`;
     case "smb": return backend.share ? `//${backend.host}/${backend.share}` : `//${backend.host}`;
@@ -138,159 +175,14 @@ function getBackendDescription(backend: StorageBackend, hosts?: Host[]): string 
   }
 }
 
-// ============================================================
-// Storages Table Component
-// ============================================================
-
-function StoragesTable({
-  storages,
-  hosts,
-  isLoading,
-  usageMap,
-  usageLoading,
-  onOpenBrowse,
-  onEdit,
-  onDelete,
-}: {
-  storages: Storage[];
-  hosts: Host[];
-  isLoading: boolean;
-  usageMap: Map<string, StorageUsage>;
-  usageLoading: boolean;
-  onOpenBrowse: (storage: Storage) => void;
-  onEdit: (storage: Storage) => void;
-  onDelete: (storage: Storage) => void;
-}) {
-  const pricingQuery = usePricingSettings();
-  const displayCurrency = pricingQuery.data?.display_currency ?? "USD";
-  const exchangeRates = pricingQuery.data?.exchange_rates;
-  const formatUsd = (value: number, decimals = 2) =>
-    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
-
-  const columns: ColumnDef<Storage>[] = [
-    {
-      key: "name",
-      header: "Name",
-      grow: true,
-      minWidth: "180px",
-      nowrap: false, // Allow name/subtitle to wrap if needed
-      sortable: true,
-      render: (storage) => {
-        const icon = getBackendIconNode(storage.backend, storage.icon);
-        return (
-          <CellWithIcon
-            icon={icon}
-            title={storage.name}
-            subtitle={getBackendDescription(storage.backend, hosts)}
-          />
-        );
-      },
-    },
-    {
-      key: "type",
-      header: "Type",
-      sortable: true,
-      render: (storage) => (
-        <StatusChip label={getBackendTypeName(storage.backend)} />
-      ),
-    },
-    {
-      key: "usage",
-      header: "Usage",
-      render: (storage) => {
-        const usage = usageMap.get(storage.id);
-        const isR2 = storage.backend.type === "cloudflare_r2";
-        const isSmbOrSsh = storage.backend.type === "smb" || storage.backend.type === "ssh_remote";
-
-        if (usageLoading && (isR2 || isSmbOrSsh)) {
-          return <span className="text-foreground/40">...</span>;
-        }
-        if (!usage) {
-          return <span className="text-foreground/40">-</span>;
-        }
-        if (isR2) {
-          return <span>{usage.used_gb.toFixed(2)} GB</span>;
-        }
-        if (isSmbOrSsh && usage.total_gb != null) {
-          return <span>{usage.used_gb.toFixed(1)} / {usage.total_gb.toFixed(1)} GB</span>;
-        }
-        return <span className="text-foreground/40">-</span>;
-      },
-    },
-    {
-      key: "cost",
-      header: "Cost",
-      render: (storage) => {
-        if (storage.backend.type !== "cloudflare_r2") {
-          return <span className="text-foreground/40">-</span>;
-        }
-        const usage = usageMap.get(storage.id);
-        if (!usage) {
-          return <span className="text-foreground/40">-</span>;
-        }
-        const r2MonthlyCost = calculateR2BucketCost(usage.used_gb);
-        return <span className="text-warning font-medium">{formatUsd(r2MonthlyCost)}/mo</span>;
-      },
-    },
-    {
-      key: "flags",
-      header: "",
-      render: (storage) => {
-        if (storage.readonly) {
-          return <StatusChip label="Read-only" color="warning" />;
-        }
-        return null;
-      },
-    },
-    {
-      key: "lastAccessed",
-      header: "Last Accessed",
-      sortable: true,
-      render: (storage) => {
-        if (!storage.last_accessed_at) {
-          return <span className="text-foreground/40">Never</span>;
-        }
-        return (
-          <span className="text-foreground/60 text-xs">
-            {new Date(storage.last_accessed_at).toLocaleString()}
-          </span>
-        );
-      },
-    },
-    {
-      key: "actions",
-      header: "",
-      render: (storage) => (
-        <div className="flex justify-end">
-          <ActionButton
-            label="Browse"
-            color="primary"
-            variant="flat"
-            onPress={() => onOpenBrowse(storage)}
-          />
-        </div>
-      ),
-    },
-  ];
-
-  const actions: RowAction<Storage>[] = [
-    { key: "test", label: "Test Connection", onPress: () => {} },
-    { key: "edit", label: "Edit", onPress: onEdit },
-    { key: "delete", label: "Delete", color: "danger", onPress: onDelete },
-  ];
-
-  return (
-    <DataTable
-      data={storages}
-      columns={columns}
-      rowKey={(storage) => storage.id}
-      actions={actions}
-      onRowClick={onOpenBrowse}
-      isLoading={isLoading}
-      emptyContent="No storage locations configured. Add a storage location to get started."
-      compact
-    />
-  );
+/**
+ * Format storage size in GB, automatically switching to TB if >= 1000 GB
+ */
+function formatStorageSize(gb: number, decimals = 2): string {
+  if (gb >= 1000) {
+    return `${(gb / 1024).toFixed(decimals)} TB`;
+  }
+  return `${gb.toFixed(decimals)} GB`;
 }
 
 // ============================================================
@@ -1054,6 +946,7 @@ export function StoragePage() {
   const queryClient = useQueryClient();
   const storagesQuery = useStorages();
   const hostsQuery = useHosts();
+  const pricingQuery = usePricingSettings();
   const addModal = useDisclosure();
   const editModal = useDisclosure();
   const [editingStorage, setEditingStorage] = useState<Storage | null>(null);
@@ -1150,113 +1043,390 @@ export function StoragePage() {
 
   const storages = storagesQuery.data ?? [];
   const hosts = hostsQuery.data ?? [];
-  const localCount = storages.filter((s) => s.backend.type === "local").length;
-  const remoteCount = storages.filter((s) => s.backend.type === "ssh_remote").length;
-  const cloudCount = storages.filter(
-    (s) =>
-      s.backend.type === "google_drive" ||
-      s.backend.type === "cloudflare_r2" ||
-      s.backend.type === "google_cloud_storage"
-  ).length;
+
+  const displayCurrency = pricingQuery.data?.display_currency ?? "USD";
+  const exchangeRates = pricingQuery.data?.exchange_rates;
+  const formatUsd = (value: number, decimals = 2) =>
+    formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStorageId, setSelectedStorageId] = useState<string | null>(null);
+  const [filterType, setFilterType] = useState<"all" | StorageBackend["type"]>("all");
+  const [sortBy, setSortBy] = useState<"name" | "recent">("name");
+
+  function getFilterLabel(key: "all" | StorageBackend["type"]): string {
+    switch (key) {
+      case "all":
+        return "Filter";
+      case "local":
+        return "Local";
+      case "ssh_remote":
+        return "SSH Remote";
+      case "smb":
+        return "SMB/NAS";
+      case "google_drive":
+        return "Google Drive";
+      case "cloudflare_r2":
+        return "Cloudflare R2";
+      case "google_cloud_storage":
+        return "Google Cloud Storage";
+      default:
+        return String(key);
+    }
+  }
+
+  const filteredStorages = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let list = storages;
+
+    if (q) {
+      list = list.filter((s) => {
+        const description = getBackendDescription(s.backend, hosts);
+        const haystack = `${s.name} ${description} ${getBackendTypeName(s.backend)}`.toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+
+    if (filterType !== "all") {
+      list = list.filter((s) => s.backend.type === filterType);
+    }
+
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      if (sortBy === "recent") {
+        const at = a.last_accessed_at ? new Date(a.last_accessed_at).getTime() : 0;
+        const bt = b.last_accessed_at ? new Date(b.last_accessed_at).getTime() : 0;
+        return bt - at || a.name.localeCompare(b.name);
+      }
+      return a.name.localeCompare(b.name);
+    });
+    return sorted;
+  }, [filterType, hosts, searchQuery, sortBy, storages]);
+
+  const visibleStorageIdSet = useMemo(
+    () => new Set(filteredStorages.map((s) => s.id)),
+    [filteredStorages]
+  );
+
+  useEffect(() => {
+    if (!selectedStorageId) return;
+    if (!visibleStorageIdSet.has(selectedStorageId)) {
+      setSelectedStorageId(null);
+    }
+  }, [selectedStorageId, visibleStorageIdSet]);
+
+  const localStorages = useMemo(() => filteredStorages.filter((s) => s.backend.type === "local"), [filteredStorages]);
+  const sshRemoteStorages = useMemo(() => filteredStorages.filter((s) => s.backend.type === "ssh_remote"), [filteredStorages]);
+  const smbStorages = useMemo(() => filteredStorages.filter((s) => s.backend.type === "smb"), [filteredStorages]);
+  const googleDriveStorages = useMemo(() => filteredStorages.filter((s) => s.backend.type === "google_drive"), [filteredStorages]);
+  const cloudflareR2Storages = useMemo(() => filteredStorages.filter((s) => s.backend.type === "cloudflare_r2"), [filteredStorages]);
+  const googleCloudStorageStorages = useMemo(
+    () => filteredStorages.filter((s) => s.backend.type === "google_cloud_storage"),
+    [filteredStorages]
+  );
+
+  const selectedStorage = selectedStorageId
+    ? filteredStorages.find((s) => s.id === selectedStorageId) ?? null
+    : null;
+  const canBrowseSelected = Boolean(selectedStorage);
+  const isLoading = storagesQuery.isLoading || hostsQuery.isLoading;
+
+  function openBrowse(storage: Storage) {
+    navigate({ to: "/storage/$id", params: { id: storage.id } });
+  }
+
+  function buildRightTags(storage: Storage): { label: string; color?: "default" | "primary" | "warning" }[] {
+    const tags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+
+    if (storage.readonly) {
+      tags.push({ label: "Read-only", color: "warning" });
+    }
+
+    const usage = storageUsages.get(storage.id);
+    const supportsUsage =
+      storage.backend.type === "cloudflare_r2" ||
+      storage.backend.type === "smb" ||
+      storage.backend.type === "ssh_remote";
+
+    if (supportsUsage) {
+      if (usageLoading && !usage) {
+        tags.push({ label: "...", color: "default" });
+      } else if (usage) {
+        if (storage.backend.type === "cloudflare_r2") {
+          tags.push({ label: formatStorageSize(usage.used_gb), color: "primary" });
+        } else if ((storage.backend.type === "smb" || storage.backend.type === "ssh_remote") && usage.total_gb != null) {
+          tags.push({
+            label: `${formatStorageSize(usage.used_gb, 1)} / ${formatStorageSize(usage.total_gb, 1)}`,
+            color: "primary",
+          });
+        }
+      }
+    }
+
+    if (storage.backend.type === "cloudflare_r2" && usage) {
+      const r2MonthlyCost = calculateR2BucketCost(usage.used_gb);
+      tags.push({ label: `${formatUsd(r2MonthlyCost)}/mo`, color: "warning" });
+    }
+
+    return tags;
+  }
+
+  function renderStorageRow(storage: Storage) {
+    const rightTags = buildRightTags(storage);
+    return (
+      <HostRow
+        key={storage.id}
+        icon={getBackendIconNode(storage.backend, storage.icon)}
+        title={storage.name}
+        subtitle={getBackendDescription(storage.backend, hosts)}
+        rightTags={rightTags}
+        isSelected={selectedStorageId === storage.id}
+        onClick={() => setSelectedStorageId(storage.id)}
+        onDoubleClick={() => openBrowse(storage)}
+        hoverActions={
+          <div
+            className="flex items-center gap-1"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Tooltip content="Browse" delay={500}>
+              <Button
+                size="sm"
+                variant="light"
+                isIconOnly
+                className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                onPress={() => openBrowse(storage)}
+              >
+                <IconFolderOpen className="w-4 h-4" />
+              </Button>
+            </Tooltip>
+            <Tooltip content="Edit" delay={500}>
+              <Button
+                size="sm"
+                variant="light"
+                isIconOnly
+                className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                onPress={() => handleEdit(storage)}
+              >
+                <IconEdit className="w-4 h-4" />
+              </Button>
+            </Tooltip>
+            <Dropdown placement="bottom-end">
+              <DropdownTrigger>
+                <Button
+                  size="sm"
+                  variant="light"
+                  isIconOnly
+                  className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                >
+                  <IconEllipsis />
+                </Button>
+              </DropdownTrigger>
+              <DropdownMenu aria-label="Storage actions">
+                <DropdownItem
+                  key="delete"
+                  color="danger"
+                  className="text-danger"
+                  startContent={<IconTrash className="w-4 h-4" />}
+                  onPress={() => {
+                    deleteMutation.mutate(storage.id);
+                    setSelectedStorageId((prev) => (prev === storage.id ? null : prev));
+                  }}
+                >
+                  Delete
+                </DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
+          </div>
+        }
+      />
+    );
+  }
+
+  function renderStorageSection(title: string, sectionStorages: Storage[]) {
+    if (sectionStorages.length === 0) return null;
+    return (
+      <HostSection title={title} count={sectionStorages.length}>
+        {sectionStorages.map((storage) => renderStorageRow(storage))}
+      </HostSection>
+    );
+  }
 
   return (
-    <PageLayout
-      title="Storage"
-      subtitle="Manage local, remote, and cloud storage locations"
-      actions={
-        <>
-          <Button
-            variant="flat"
-            startContent={<IconRefresh />}
-            onPress={handleRefresh}
-            isLoading={storagesQuery.isFetching || usageLoading}
-          >
-            Refresh
-          </Button>
-          <Button color="primary" startContent={<IconPlus />} onPress={addModal.onOpen}>
-            Add Storage
-          </Button>
-        </>
-      }
-    >
-      {/* Stats */}
-      <div className="doppio-stats-grid">
-        <StatsCard title="Total Storages" value={storages.length} />
-        <StatsCard
-          title="Local"
-          value={localCount}
-          icon={<span className="text-lg">💻</span>}
-        />
-        <StatsCard
-          title="Remote"
-          value={remoteCount}
-          icon={<AppIcon name="ssh" className="w-5 h-5" alt="SSH" />}
-        />
-        <StatsCard
-          title="Cloud"
-          value={cloudCount}
-          icon={<AppIcon name="cloudflare" className="w-5 h-5" alt="Cloud" />}
-        />
-      </div>
+    <div className="doppio-page">
+      <div className="doppio-page-content">
+        {/* Termius-style Toolbar */}
+        <div className="termius-toolbar">
+          {/* Row 1: Search + Browse */}
+          <div className="termius-toolbar-row">
+            <div className="termius-search-bar">
+              <Input
+                size="lg"
+                placeholder="Search storages..."
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+                startContent={<IconSearch className="w-5 h-5 text-foreground/40" />}
+                endContent={
+                  <Button
+                    color="primary"
+                    size="sm"
+                    className="h-8 px-4"
+                    onPress={() => {
+                      if (!selectedStorage) return;
+                      openBrowse(selectedStorage);
+                    }}
+                    isDisabled={!canBrowseSelected}
+                  >
+                    Browse
+                  </Button>
+                }
+                classNames={{
+                  base: "flex-1",
+                  inputWrapper: "bg-content2 h-12",
+                  input: "text-base",
+                }}
+              />
+            </div>
+          </div>
 
-      {/* Storage Table */}
-      <PageSection>
-        <StoragesTable
-          storages={storages}
-          hosts={hosts}
-          isLoading={storagesQuery.isLoading}
-          usageMap={storageUsages}
-          usageLoading={usageLoading}
-          onOpenBrowse={(storage) => {
-            navigate({ to: "/storage/$id", params: { id: storage.id } });
-          }}
-          onEdit={handleEdit}
-          onDelete={(storage) => deleteMutation.mutate(storage.id)}
-        />
-      </PageSection>
+          {/* Row 2: Quick Actions + Filters */}
+          <div className="termius-toolbar-row justify-between">
+            <div className="termius-quick-actions">
+              <button className="termius-quick-action" onClick={addModal.onOpen}>
+                <IconPlus />
+                <span>New Storage</span>
+              </button>
+              <button
+                className="termius-quick-action"
+                onClick={() => void handleRefresh()}
+                disabled={storagesQuery.isFetching || usageLoading}
+              >
+                <IconRefresh />
+                <span>Refresh</span>
+              </button>
+            </div>
 
-      {/* Add Storage Modal */}
-      <AddStorageModal
-        isOpen={addModal.isOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            addModal.onOpen();
-          } else {
-            addModal.onClose();
-          }
-        }}
-        onSuccess={addModal.onClose}
-        setShowGDriveWizard={setShowGDriveWizard}
-      />
+            <div className="flex items-center gap-1">
+              <Dropdown>
+                <DropdownTrigger>
+                  <button className={`termius-quick-action ${filterType !== "all" ? "termius-quick-action-primary" : ""}`}>
+                    <IconFilter />
+                    <span>{getFilterLabel(filterType)}</span>
+                  </button>
+                </DropdownTrigger>
+                <DropdownMenu
+                  selectionMode="single"
+                  selectedKeys={new Set([filterType])}
+                  onSelectionChange={(keys) => {
+                    const selected = Array.from(keys)[0] as "all" | StorageBackend["type"];
+                    setFilterType(selected);
+                  }}
+                >
+                  <DropdownItem key="all">All</DropdownItem>
+                  <DropdownItem key="local">Local</DropdownItem>
+                  <DropdownItem key="ssh_remote">SSH Remote</DropdownItem>
+                  <DropdownItem key="smb">SMB/NAS</DropdownItem>
+                  <DropdownItem key="google_drive">Google Drive</DropdownItem>
+                  <DropdownItem key="cloudflare_r2">Cloudflare R2</DropdownItem>
+                  <DropdownItem key="google_cloud_storage">Google Cloud Storage</DropdownItem>
+                </DropdownMenu>
+              </Dropdown>
 
-      {/* Google Drive OAuth Wizard */}
-      <GoogleDriveWizard
-        isOpen={showGDriveWizard}
-        onOpenChange={setShowGDriveWizard}
-        onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ["storages"] });
-        }}
-      />
+              <Dropdown>
+                <DropdownTrigger>
+                  <button className="termius-quick-action">
+                    <IconSort />
+                    <span>{sortBy === "name" ? "Name" : "Recent"}</span>
+                  </button>
+                </DropdownTrigger>
+                <DropdownMenu
+                  selectionMode="single"
+                  selectedKeys={new Set([sortBy])}
+                  onSelectionChange={(keys) => {
+                    const selected = Array.from(keys)[0] as "name" | "recent";
+                    setSortBy(selected);
+                  }}
+                >
+                  <DropdownItem key="name">Name</DropdownItem>
+                  <DropdownItem key="recent">Recent</DropdownItem>
+                </DropdownMenu>
+              </Dropdown>
+            </div>
+          </div>
+        </div>
 
-      {/* Edit Storage Modal */}
-      {editingStorage && (
-        <EditStorageModal
-          storage={editingStorage}
-          isOpen={editModal.isOpen}
+        {/* Content */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Spinner size="lg" />
+          </div>
+        ) : filteredStorages.length === 0 ? (
+          <EmptyHostState
+            icon={<span className="text-lg">🗄️</span>}
+            title={searchQuery ? "No storages match your search" : "No storages yet"}
+            description={searchQuery ? undefined : "Add a storage location to get started."}
+            action={
+              !searchQuery ? (
+                <Button size="sm" color="primary" onPress={addModal.onOpen}>
+                  New Storage
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <>
+            {renderStorageSection("LOCAL", localStorages)}
+            {renderStorageSection("SSH REMOTE", sshRemoteStorages)}
+            {renderStorageSection("SMB/NAS", smbStorages)}
+            {renderStorageSection("GOOGLE DRIVE", googleDriveStorages)}
+            {renderStorageSection("CLOUDFLARE R2", cloudflareR2Storages)}
+            {renderStorageSection("GOOGLE CLOUD STORAGE", googleCloudStorageStorages)}
+          </>
+        )}
+
+        {/* Add Storage Modal */}
+        <AddStorageModal
+          isOpen={addModal.isOpen}
           onOpenChange={(open) => {
             if (open) {
-              editModal.onOpen();
+              addModal.onOpen();
             } else {
-              editModal.onClose();
-              setEditingStorage(null);
+              addModal.onClose();
             }
           }}
+          onSuccess={addModal.onClose}
+          setShowGDriveWizard={setShowGDriveWizard}
+        />
+
+        {/* Google Drive OAuth Wizard */}
+        <GoogleDriveWizard
+          isOpen={showGDriveWizard}
+          onOpenChange={setShowGDriveWizard}
           onSuccess={() => {
-            editModal.onClose();
-            setEditingStorage(null);
+            queryClient.invalidateQueries({ queryKey: ["storages"] });
           }}
         />
-      )}
-    </PageLayout>
+
+        {/* Edit Storage Modal */}
+        {editingStorage && (
+          <EditStorageModal
+            storage={editingStorage}
+            isOpen={editModal.isOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                editModal.onOpen();
+              } else {
+                editModal.onClose();
+                setEditingStorage(null);
+              }
+            }}
+            onSuccess={() => {
+              editModal.onClose();
+              setEditingStorage(null);
+            }}
+          />
+        )}
+      </div>
+    </div>
   );
 }

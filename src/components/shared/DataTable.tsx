@@ -210,7 +210,7 @@ export function DataTable<T>({
                 return (
                   <th
                     key={col.key}
-                    className={`${headerPadding} text-left text-xs font-semibold text-foreground/60 uppercase tracking-wider ${shouldNowrap ? "whitespace-nowrap" : ""}`}
+                    className={`${headerPadding} text-left text-xs font-semibold text-foreground/60 tracking-wider ${shouldNowrap ? "whitespace-nowrap" : ""}`}
                     style={{
                       width: col.grow ? "auto" : col.width,
                       minWidth: col.minWidth,
@@ -218,7 +218,7 @@ export function DataTable<T>({
                   >
                     {col.sortable ? (
                       <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                        className="flex items-center gap-1 hover:text-foreground transition-colors uppercase"
                         onClick={() => handleSort(col.key)}
                       >
                         {col.header}
@@ -227,7 +227,7 @@ export function DataTable<T>({
                         )}
                       </button>
                     ) : (
-                      col.header
+                      <span className="uppercase">{col.header}</span>
                     )}
                   </th>
                 );

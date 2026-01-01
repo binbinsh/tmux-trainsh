@@ -339,11 +339,16 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
 
   const isActive =
     execution.status === "running" ||
-    execution.status === "connecting";
-  
+    execution.status === "connecting" ||
+    execution.status === "pending";
+
   const isPaused = execution.status === "paused";
+  const isWaitingForInput = execution.status === "waiting_for_input";
 
   const isCompleted = execution.status === "completed" || execution.status === "failed" || execution.status === "cancelled";
+
+  // Show cancel button when recipe is active, paused, or waiting for input
+  const showCancelButton = isActive || isPaused || isWaitingForInput;
 
   // Find current step index
   const currentStepIndex = execution.steps.findIndex((s) => s.status === "running");
@@ -405,14 +410,14 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
                 </Button>
               </Tooltip>
             )}
-            {(isActive || isPaused) && (
+            {showCancelButton && (
               <>
                 <Tooltip content="Send Ctrl+C">
                   <Button
                     size="sm"
                     isIconOnly
                     variant="flat"
-                    color="danger"
+                    color="warning"
                     isLoading={actionLoading === "interrupt"}
                     onPress={handleInterrupt}
                   >
@@ -459,9 +464,9 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
       )}
 
       {/* Input Status / Lock Control */}
-      {isActive && (
+      {(isActive || isWaitingForInput) && (
         <div className="px-3 py-2 border-b border-divider">
-          {execution.status === "waiting_for_input" ? (
+          {isWaitingForInput ? (
             <>
               <div className="flex items-center gap-2 p-2 bg-secondary/10 rounded-lg">
                 <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />

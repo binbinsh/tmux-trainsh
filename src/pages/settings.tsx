@@ -300,41 +300,42 @@ export function SettingsPage() {
   return (
     <div className="doppio-page">
       <div className="doppio-page-content">
-        {/* Header */}
-        <div className="doppio-page-header">
-          <div>
-            <h1 className="doppio-page-title">Settings</h1>
-            <p className="doppio-page-subtitle">Configuration saved locally</p>
-          </div>
-          <div className="flex items-center gap-3">
-            {savedAt && !saveError && (
-              <span className="text-xs text-success flex items-center gap-1">
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                </svg>
-                Saved {savedAt}
-              </span>
-            )}
-            {saveError && (
-              <span className="text-xs text-danger">Failed: {saveError}</span>
-            )}
-            <Button
-              size="sm"
-              variant="flat"
-              onPress={() => fetchRates.mutate()}
-              isLoading={fetchRates.isPending}
-            >
-              Refresh Rates
-            </Button>
-            <Button
-              size="sm"
-              color="primary"
-              isLoading={saving}
-              isDisabled={!draft || saving || !isDirty}
-              onPress={onSave}
-            >
-              Save
-            </Button>
+        <div className="termius-toolbar">
+          <div className="termius-toolbar-row justify-between">
+            <div className="min-w-0">
+              <h1 className="doppio-page-title">Settings</h1>
+              <p className="doppio-page-subtitle">Configuration saved locally</p>
+            </div>
+            <div className="flex items-center gap-3">
+              {savedAt && !saveError && (
+                <span className="text-xs text-success flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  Saved {savedAt}
+                </span>
+              )}
+              {saveError && (
+                <span className="text-xs text-danger">Failed: {saveError}</span>
+              )}
+              <Button
+                size="sm"
+                variant="flat"
+                onPress={() => fetchRates.mutate()}
+                isLoading={fetchRates.isPending}
+              >
+                Refresh Rates
+              </Button>
+              <Button
+                size="sm"
+                color="primary"
+                isLoading={saving}
+                isDisabled={!draft || saving || !isDirty}
+                onPress={onSave}
+              >
+                Save
+              </Button>
+            </div>
           </div>
         </div>
 

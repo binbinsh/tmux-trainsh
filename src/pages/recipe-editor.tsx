@@ -186,14 +186,14 @@ type OperationDef = {
 };
 
 const OPERATION_CATEGORIES: Record<OperationCategory, { label: string; color: string; lightColor: string; bgClass: string }> = {
-  commands: { label: "Commands", color: "#3B82F6", lightColor: "#DBEAFE", bgClass: "bg-blue-100" },
-  transfer: { label: "Transfer", color: "#10B981", lightColor: "#D1FAE5", bgClass: "bg-emerald-100" },
-  vastai: { label: "Vast.ai", color: "#F59E0B", lightColor: "#FEF3C7", bgClass: "bg-amber-100" },
-  tmux: { label: "Tmux", color: "#8B5CF6", lightColor: "#EDE9FE", bgClass: "bg-violet-100" },
-  gdrive: { label: "Google Drive", color: "#4285F4", lightColor: "#E8F0FE", bgClass: "bg-blue-50" },
-  git: { label: "Git & ML", color: "#F97316", lightColor: "#FFEDD5", bgClass: "bg-orange-100" },
-  control: { label: "Control", color: "#EC4899", lightColor: "#FCE7F3", bgClass: "bg-pink-100" },
-  utility: { label: "Utility", color: "#6B7280", lightColor: "#F3F4F6", bgClass: "bg-gray-100" },
+  commands: { label: "Commands", color: "#66D9EF", lightColor: "#E3F9FE", bgClass: "bg-cyan-100" },       // Monokai cyan
+  transfer: { label: "Transfer", color: "#A6E22E", lightColor: "#E8F9DC", bgClass: "bg-green-100" },      // Monokai green
+  vastai: { label: "Vast.ai", color: "#FD971F", lightColor: "#FEF3E1", bgClass: "bg-orange-100" },        // Monokai param orange
+  tmux: { label: "Tmux", color: "#AE81FF", lightColor: "#F0E8FE", bgClass: "bg-purple-100" },             // Monokai purple
+  gdrive: { label: "Google Drive", color: "#28C6E4", lightColor: "#E3F5FA", bgClass: "bg-blue-50" },      // Monokai type cyan
+  git: { label: "Git & ML", color: "#F25A00", lightColor: "#FEE8DC", bgClass: "bg-orange-100" },          // Monokai string orange
+  control: { label: "Control", color: "#F92672", lightColor: "#FEE7F0", bgClass: "bg-pink-100" },         // Monokai keyword pink
+  utility: { label: "Utility", color: "#75715E", lightColor: "#F3F2EF", bgClass: "bg-gray-100" },         // Monokai comment
 };
 
 const OPERATION_TYPES: OperationDef[] = [

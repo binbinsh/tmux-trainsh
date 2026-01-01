@@ -7,18 +7,38 @@ import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { getConfig, hostApi, sshCheck, termOpenSshTmux, termResize, termWrite, useHosts, useVastInstances, vastAttachSshKey, vastGetInstance, type RemoteTmuxSession } from "../lib/tauri-api";
+import {
+  getConfig,
+  hostApi,
+  sshCheck,
+  termOpenSshTmux,
+  termResize,
+  termWrite,
+  useHosts,
+  useInteractiveExecutions,
+  useRunInteractiveRecipe,
+  useVastInstances,
+  vastAttachSshKey,
+  vastGetInstance,
+  type RemoteTmuxSession,
+} from "../lib/tauri-api";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useTerminal } from "../contexts/TerminalContext";
 import { AnimatePresence, motion } from "framer-motion";
-import { RecipeAutomationPanel } from "../components/recipe/RecipeAutomationPanel";
-import { TerminalHistoryPanel } from "../components/terminal/TerminalHistoryPanel";
+import { RecipeTerminalControls } from "../components/recipe/RecipeTerminalControls";
 import { TmuxSessionSelectModal } from "../components/host/TmuxSessionSelectModal";
 import { copyText } from "../lib/clipboard";
 import { AppIcon, type AppIconName } from "../components/AppIcon";
-import { getStatusBadgeColor } from "../components/shared/StatusBadge";
-import { DataTable, CellWithIcon, StatusChip, ActionButton, type ColumnDef } from "../components/shared/DataTable";
-import type { Host, HostStatus, VastInstance } from "../lib/types";
+import { EmptyHostState, HostRow, HostSection } from "../components/shared/HostCard";
+import { formatGpuCountLabel } from "../lib/gpu";
+import {
+  loadRecentConnections,
+  removeRecentConnection,
+  saveRecentConnections,
+  upsertRecentConnection,
+  type RecentConnection,
+} from "../lib/terminal-recents";
+import type { InteractiveExecution, InteractiveStatus, VastInstance } from "../lib/types";
 
 interface TerminalPaneProps {
   id: string;
@@ -61,49 +81,51 @@ function extractErrorCode(message: string): string | null {
   return null;
 }
 
-const HOST_STATUS_ORDER: Record<HostStatus, number> = {
-  online: 0,
-  connecting: 1,
-  offline: 2,
-  error: 3,
-};
-
-function getHostIconName(host: Host): AppIconName {
-  if (host.type === "colab") return "colab";
-  if (host.type === "vast") return "vast";
-  return "host";
-}
-
-function getVastStatus(inst: VastInstance): HostStatus {
-  const v = (inst.actual_status ?? "").toLowerCase();
-  if (v.includes("error") || v.includes("failed")) return "error";
-  if (v.includes("running") || v.includes("active") || v.includes("online")) return "online";
-  if (v.includes("stopped") || v.includes("exited") || v.includes("offline")) return "offline";
-  return "connecting";
-}
-
 function getVastLabel(inst: VastInstance): string {
   return inst.label?.trim() || `vast #${inst.id}`;
 }
 
-// Unified row type for combined DataTable
-type UnifiedHost = {
-  kind: "host";
-  id: string;
-  name: string;
-  subtitle: string | undefined;
-  status: HostStatus;
-  iconName: AppIconName;
-  host: Host;
-} | {
-  kind: "vast";
-  id: string;
-  name: string;
-  subtitle: string;
-  status: HostStatus;
-  iconName: AppIconName;
-  instance: VastInstance;
-};
+function isVastInstanceOnline(inst: VastInstance): boolean {
+  const v = (inst.actual_status ?? "").toLowerCase();
+  return v.includes("running") || v.includes("active") || v.includes("online");
+}
+
+function getExecutionStatusLabel(status: InteractiveStatus): string {
+  switch (status) {
+    case "pending":
+      return "Pending";
+    case "connecting":
+      return "Connecting";
+    case "running":
+      return "Running";
+    case "waiting_for_input":
+      return "Waiting";
+    case "paused":
+      return "Paused";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return status;
+  }
+}
+
+function getExecutionTagColor(status: InteractiveStatus): "default" | "primary" | "warning" {
+  switch (status) {
+    case "running":
+    case "waiting_for_input":
+      return "primary";
+    case "paused":
+    case "connecting":
+    case "pending":
+      return "warning";
+    default:
+      return "default";
+  }
+}
 
 
 function IconCopy() {
@@ -118,6 +140,54 @@ function IconCheck() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    </svg>
+  );
+}
+
+function IconTerminal({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+    </svg>
+  );
+}
+
+function IconServer({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 17.25v-.228a4.5 4.5 0 00-.12-1.03l-2.268-9.64a3.375 3.375 0 00-3.285-2.602H7.923a3.375 3.375 0 00-3.285 2.602l-2.268 9.64a4.5 4.5 0 00-.12 1.03v.228m19.5 0a3 3 0 01-3 3H5.25a3 3 0 01-3-3m19.5 0a3 3 0 00-3-3H5.25a3 3 0 00-3 3m16.5 0h.008v.008h-.008v-.008zm-3 0h.008v.008h-.008v-.008z" />
+    </svg>
+  );
+}
+
+function IconFolder({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75A2.25 2.25 0 014.5 4.5h4.379c.597 0 1.17.237 1.591.659l.621.621c.422.422.994.659 1.591.659H19.5A2.25 2.25 0 0121.75 8.25v9A2.25 2.25 0 0119.5 19.5h-15A2.25 2.25 0 012.25 17.25v-10.5z" />
+    </svg>
+  );
+}
+
+function IconPlay({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+    </svg>
+  );
+}
+
+function IconPencil({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+    </svg>
+  );
+}
+
+function IconTrash({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
     </svg>
   );
 }
@@ -220,30 +290,32 @@ function TerminalPane(props: TerminalPaneProps) {
       macOptionClickForcesSelection: true,
       allowProposedApi: true, // Required for search decorations
       minimumContrastRatio: 2,
+      // Monokai Light theme
       theme: {
-        background: "#d6d8df",
-        foreground: "#343b58",
-        cursor: "#707280",
-        cursorAccent: "#d6d8df",
-        selectionBackground: "#acb0bf40",
-        selectionForeground: "#343b58",
-        selectionInactiveBackground: "#acb0bf33",
-        black: "#343b58",
-        red: "#8c4351",
-        green: "#33635c",
-        yellow: "#8f5e15",
-        blue: "#2959aa",
-        magenta: "#7b43ba",
-        cyan: "#006c86",
-        white: "#707280",
-        brightBlack: "#343b58",
-        brightRed: "#8c4351",
-        brightGreen: "#33635c",
-        brightYellow: "#8f5e15",
-        brightBlue: "#2959aa",
-        brightMagenta: "#7b43ba",
-        brightCyan: "#006c86",
-        brightWhite: "#707280",
+        background: "#FFFFFF",
+        foreground: "#272822",
+        cursor: "#272822",
+        cursorAccent: "#FFFFFF",
+        selectionBackground: "#C2E8FF80",
+        selectionForeground: "#272822",
+        selectionInactiveBackground: "#C2E8FF50",
+        // ANSI colors - Monokai Light palette
+        black: "#272822",
+        red: "#F92672",       // Monokai keyword pink
+        green: "#A6E22E",     // Monokai green
+        yellow: "#FD971F",    // Monokai param orange
+        blue: "#66D9EF",      // Monokai cyan
+        magenta: "#AE81FF",   // Monokai purple
+        cyan: "#28C6E4",      // Monokai type cyan
+        white: "#F8F8F2",
+        brightBlack: "#75715E",   // Monokai comment
+        brightRed: "#F92672",
+        brightGreen: "#A6E22E",
+        brightYellow: "#E6DB74",  // Monokai string yellow
+        brightBlue: "#66D9EF",
+        brightMagenta: "#AE81FF",
+        brightCyan: "#28C6E4",
+        brightWhite: "#F8F8F2",
       },
     });
 
@@ -267,21 +339,11 @@ function TerminalPane(props: TerminalPaneProps) {
 
     term.open(hostRef.current);
 
-    // Ensure wheel always scrolls terminal buffer (not shell history)
-    const onWheel = (e: WheelEvent) => {
-      if (!termRef.current) return;
-      const lines = Math.max(1, Math.round(Math.abs(e.deltaY) / 40));
-      termRef.current.scrollLines(e.deltaY > 0 ? lines : -lines);
-      e.preventDefault();
-    };
-    hostRef.current.addEventListener("wheel", onWheel, { passive: false });
-
     // Load WebGL addon for hardware acceleration (after terminal is opened)
     try {
       const webgl = new WebglAddon();
       term.loadAddon(webgl);
       webglRef.current = webgl;
-      console.log("[Terminal] WebGL renderer enabled");
 
       // Handle WebGL context loss
       webgl.onContextLoss(() => {
@@ -305,16 +367,34 @@ function TerminalPane(props: TerminalPaneProps) {
       console.warn("[Terminal] WebGL not supported, using canvas renderer:", e);
     }
     
+    // Track last dimensions to avoid unnecessary resize calls
+    let lastCols = 0;
+    let lastRows = 0;
+    let fitDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     // Fit after a short delay to ensure container is fully rendered
     const doFit = () => {
       try {
         fit.fit();
-        void termResize(props.id, term.cols, term.rows);
+        // Only send resize if dimensions actually changed
+        if (term.cols !== lastCols || term.rows !== lastRows) {
+          lastCols = term.cols;
+          lastRows = term.rows;
+          void termResize(props.id, term.cols, term.rows);
+        }
       } catch {
         // ignore
       }
     };
-    
+
+    // Debounced fit for resize events to prevent rapid-fire resize loops
+    const debouncedFit = () => {
+      if (fitDebounceTimer) {
+        clearTimeout(fitDebounceTimer);
+      }
+      fitDebounceTimer = setTimeout(doFit, 50);
+    };
+
     // Initial fit with delay
     setTimeout(doFit, 50);
     // Fit again after a longer delay to catch late layout changes
@@ -334,12 +414,12 @@ function TerminalPane(props: TerminalPaneProps) {
     });
 
     const ro = new ResizeObserver(() => {
-      doFit();
+      debouncedFit();
     });
     ro.observe(hostRef.current);
-    
+
     // Also listen for window resize
-    const handleWindowResize = () => doFit();
+    const handleWindowResize = () => debouncedFit();
     window.addEventListener("resize", handleWindowResize);
 
     termRef.current = term;
@@ -393,7 +473,7 @@ function TerminalPane(props: TerminalPaneProps) {
     (async () => {
       // Check if already unmounted before setting up listeners
       if (!isMounted) return;
-      
+
       const dataUnlisten = await listen<{ id: string; data: string }>("term:data", (evt) => {
         if (evt.payload.id === props.id) {
           // Buffer data instead of writing immediately
@@ -402,7 +482,7 @@ function TerminalPane(props: TerminalPaneProps) {
           scheduleFlush();
         }
       });
-      
+
       // Check again after await - component might have unmounted
       if (!isMounted) {
         dataUnlisten();
@@ -436,7 +516,12 @@ function TerminalPane(props: TerminalPaneProps) {
     return () => {
       // Mark as unmounted first to prevent new listeners from being set up
       isMounted = false;
-      
+
+      // Cancel any pending fit debounce
+      if (fitDebounceTimer) {
+        clearTimeout(fitDebounceTimer);
+      }
+
       // Cancel any pending flush
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
@@ -454,7 +539,6 @@ function TerminalPane(props: TerminalPaneProps) {
       onDataDispose.dispose();
       if (unlistenData) unlistenData();
       if (unlistenExit) unlistenExit();
-      hostRef.current?.removeEventListener("wheel", onWheel);
       if (webglRef.current) webglRef.current.dispose();
       if (searchRef.current) searchRef.current.dispose();
       term.dispose();
@@ -465,21 +549,33 @@ function TerminalPane(props: TerminalPaneProps) {
     };
   }, [props.id]);
 
+  // Track previous active state to only trigger on actual activation
+  const wasActiveRef = useRef(props.active);
+
   useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = props.active;
+
     if (props.active && termRef.current && fitRef.current) {
       termRef.current.focus();
-      // Re-fit when becoming active (tab switch)
-      // Use requestAnimationFrame for smoother transition
-      requestAnimationFrame(() => {
-        try {
-          fitRef.current?.fit();
-          if (termRef.current) {
+
+      // Only re-fit if we're transitioning from inactive to active (not on initial render)
+      // This prevents double-fitting when switching from other pages
+      if (!wasActive) {
+        // Use a single RAF to batch the fit and refresh together
+        requestAnimationFrame(() => {
+          if (!fitRef.current || !termRef.current) return;
+          try {
+            fitRef.current.fit();
             void termResize(props.id, termRef.current.cols, termRef.current.rows);
+            // Force refresh the terminal viewport to ensure content is visible
+            // This is needed because WebGL context may lose rendering when hidden
+            termRef.current.refresh(0, termRef.current.rows - 1);
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
-      });
+        });
+      }
     }
   }, [props.active, props.id]);
 
@@ -535,15 +631,19 @@ export function TerminalPage() {
     openLocalTerminal,
     closeSession,
     refreshSessions,
+    addRecipeTerminal,
     isLoading,
-    recipePanelVisible,
-    toggleRecipePanel,
-    historyPanelVisible,
+    recipeDetailsExpanded,
+    toggleRecipeDetails,
     workspaceVisible,
     setWorkspaceVisible,
+    removeCurrentPlaceholder,
+    createNewTab,
   } = useTerminal();
   const hostsQuery = useHosts();
   const vastQuery = useVastInstances();
+  const executionsQuery = useInteractiveExecutions();
+  const runRecipeMutation = useRunInteractiveRecipe();
 
   const [connectState, setConnectState] = useState<
     | { status: "idle" }
@@ -551,15 +651,47 @@ export function TerminalPage() {
     | { status: "select_tmux"; label: string }
     | { status: "error"; label?: string | null; message: string }
   >({ status: "idle" });
-  const [quickFilter, setQuickFilter] = useState("");
+  const [launcherQuery, setLauncherQuery] = useState("");
+  const [launcherError, setLauncherError] = useState<string | null>(null);
+  const [recentConnections, setRecentConnections] = useState<RecentConnection[]>(() => loadRecentConnections());
+  const [selectedRecentId, setSelectedRecentId] = useState<string | null>(null);
+  const [selectedRecipePath, setSelectedRecipePath] = useState<string | null>(null);
 
   const [tmuxSelect, setTmuxSelect] = useState<{
+    kind: "host" | "vast";
     hostId: string | null;
+    vastInstanceId: number | null;
     hostName: string;
     ssh: { host: string; port: number; user: string; keyPath?: string | null; extraArgs?: string[] };
     envVars: Record<string, string> | null;
     sessions: RemoteTmuxSession[];
   } | null>(null);
+
+  function persistRecentConnections(updater: (prev: RecentConnection[]) => RecentConnection[]) {
+    setRecentConnections((prev) => {
+      const next = updater(prev);
+      saveRecentConnections(next);
+      return next;
+    });
+  }
+
+  function recordLocalConnection() {
+    persistRecentConnections((prev) =>
+      upsertRecentConnection(prev, { id: "__local__", kind: "local", label: "Local" })
+    );
+  }
+
+  function recordHostConnection(hostId: string, label: string) {
+    persistRecentConnections((prev) =>
+      upsertRecentConnection(prev, { id: `host:${hostId}`, kind: "host", host_id: hostId, label })
+    );
+  }
+
+  function recordVastConnection(instanceId: number, label: string) {
+    persistRecentConnections((prev) =>
+      upsertRecentConnection(prev, { id: `vast:${instanceId}`, kind: "vast", vast_instance_id: instanceId, label })
+    );
+  }
 
   const connectHandledRef = useRef<string | null>(null);
   const pendingConnectKey =
@@ -581,91 +713,147 @@ export function TerminalPage() {
           : "Connecting…";
   const connectErrorCode =
     connectState.status === "error" ? extractErrorCode(connectState.message) : null;
-  const hasQuickFilter = quickFilter.trim().length > 0;
   const hosts = hostsQuery.data ?? [];
-  const filteredHosts = useMemo(() => {
-    const needle = quickFilter.trim().toLowerCase();
-    const base = needle
-      ? hosts.filter((host) => {
-          const tokens = [
-            host.name,
-            host.type,
-            host.status,
-            host.ssh?.host,
-            host.ssh?.user,
-            host.ssh?.port != null ? String(host.ssh.port) : null,
-            host.cloudflared_hostname,
-          ]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase();
-          return tokens.includes(needle);
-        })
-      : hosts;
-
-    return [...base].sort((a, b) => {
-      const statusDelta = HOST_STATUS_ORDER[a.status] - HOST_STATUS_ORDER[b.status];
-      if (statusDelta !== 0) return statusDelta;
-      return a.name.localeCompare(b.name);
-    });
-  }, [hosts, quickFilter]);
-
   const vastInstances = vastQuery.data ?? [];
-  const filteredVastInstances = useMemo(() => {
-    const needle = quickFilter.trim().toLowerCase();
-    const base = needle
-      ? vastInstances.filter((inst) => {
-          const tokens = [
-            getVastLabel(inst),
-            inst.gpu_name,
-            inst.actual_status,
-            String(inst.id),
-          ]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase();
-          return tokens.includes(needle);
-        })
-      : vastInstances;
+  const executions = executionsQuery.data ?? [];
 
-    return [...base].sort((a, b) => {
-      const statusDelta = HOST_STATUS_ORDER[getVastStatus(a)] - HOST_STATUS_ORDER[getVastStatus(b)];
-      if (statusDelta !== 0) return statusDelta;
-      return getVastLabel(a).localeCompare(getVastLabel(b));
-    });
-  }, [quickFilter, vastInstances]);
-  // Unified list combining hosts and vast instances
-  const unifiedHosts: UnifiedHost[] = useMemo(() => {
-    const hostRows: UnifiedHost[] = filteredHosts.map((host) => ({
-      kind: "host" as const,
-      id: `host-${host.id}`,
-      name: host.name,
-      subtitle: host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : undefined,
-      status: host.status,
-      iconName: getHostIconName(host),
-      host,
-    }));
-    const vastRows: UnifiedHost[] = filteredVastInstances.map((inst) => ({
-      kind: "vast" as const,
-      id: `vast-${inst.id}`,
-      name: getVastLabel(inst),
-      subtitle: inst.gpu_name ? `${inst.num_gpus ?? 1}x ${inst.gpu_name}` : "GPU info pending",
-      status: getVastStatus(inst),
-      iconName: "vast" as AppIconName,
-      instance: inst,
-    }));
-    // Merge and sort by status, then by name
-    return [...hostRows, ...vastRows].sort((a, b) => {
-      const statusDelta = HOST_STATUS_ORDER[a.status] - HOST_STATUS_ORDER[b.status];
-      if (statusDelta !== 0) return statusDelta;
-      return a.name.localeCompare(b.name);
-    });
-  }, [filteredHosts, filteredVastInstances]);
+  const filteredRecentConnections = useMemo(() => {
+    const needle = launcherQuery.trim().toLowerCase();
+    if (!needle) return recentConnections;
 
-  const isLoadingHosts = hostsQuery.isLoading || vastQuery.isLoading;
-  const hostCountLabel = isLoadingHosts
-    ? "Loading..."
-    : `${unifiedHosts.length} host${unifiedHosts.length === 1 ? "" : "s"}${hasQuickFilter ? " matched" : ""}`;
+    return recentConnections.filter((conn) => {
+      const tokens: string[] = [conn.label];
+      if (conn.kind === "host") {
+        const host = hosts.find((h) => h.id === conn.host_id) ?? null;
+        if (host?.ssh) tokens.push(`${host.ssh.user}@${host.ssh.host}:${host.ssh.port}`);
+      }
+      if (conn.kind === "vast") tokens.push(String(conn.vast_instance_id));
+      return tokens.join(" ").toLowerCase().includes(needle);
+    });
+  }, [hosts, launcherQuery, recentConnections]);
+
+  useEffect(() => {
+    if (!selectedRecentId) return;
+    if (!filteredRecentConnections.some((c) => c.id === selectedRecentId)) {
+      setSelectedRecentId(null);
+    }
+  }, [filteredRecentConnections, selectedRecentId]);
+
+  const recipeHistory = useMemo(() => {
+    const sorted = [...executions].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const seen = new Set<string>();
+    const out: InteractiveExecution[] = [];
+    for (const exec of sorted) {
+      if (seen.has(exec.recipe_path)) continue;
+      seen.add(exec.recipe_path);
+      out.push(exec);
+      if (out.length >= 12) break;
+    }
+
+    const needle = launcherQuery.trim().toLowerCase();
+    if (!needle) return out;
+    return out.filter((exec) => {
+      const haystack = `${exec.recipe_name} ${exec.recipe_path} ${exec.host_id} ${exec.status}`.toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [executions, launcherQuery]);
+
+  useEffect(() => {
+    if (!selectedRecipePath) return;
+    if (!recipeHistory.some((e) => e.recipe_path === selectedRecipePath)) {
+      setSelectedRecipePath(null);
+    }
+  }, [recipeHistory, selectedRecipePath]);
+
+  const hostNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    map.set("__local__", "Local");
+    for (const h of hosts) map.set(h.id, h.name);
+    for (const inst of vastInstances) map.set(`vast:${inst.id}`, getVastLabel(inst));
+    return map;
+  }, [hosts, vastInstances]);
+
+  const launcherIsLoading = hostsQuery.isLoading || vastQuery.isLoading || executionsQuery.isLoading;
+
+  const selectedRecent = useMemo(() => {
+    if (!selectedRecentId) return null;
+    return recentConnections.find((c) => c.id === selectedRecentId) ?? null;
+  }, [recentConnections, selectedRecentId]);
+
+  const selectedExecution = useMemo(() => {
+    if (!selectedRecipePath) return null;
+    return recipeHistory.find((e) => e.recipe_path === selectedRecipePath) ?? null;
+  }, [recipeHistory, selectedRecipePath]);
+
+  function parseVastHostId(hostId: string): number | null {
+    if (!hostId.startsWith("vast:")) return null;
+    const n = Number(hostId.slice("vast:".length));
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
+  }
+
+  function recordConnectionByHostId(hostId: string) {
+    if (hostId === "__local__") {
+      recordLocalConnection();
+      return;
+    }
+
+    const vastId = parseVastHostId(hostId);
+    if (vastId != null) {
+      recordVastConnection(vastId, hostNameById.get(`vast:${vastId}`) ?? `vast #${vastId}`);
+      return;
+    }
+
+    recordHostConnection(hostId, hostNameById.get(hostId) ?? hostId);
+  }
+
+  const launchLocalTerminal = useCallback(async () => {
+    setLauncherError(null);
+    removeCurrentPlaceholder();
+    setActiveId(null);
+    setWorkspaceVisible(false);
+    await openLocalTerminal();
+    recordLocalConnection();
+  }, [openLocalTerminal, recordLocalConnection, removeCurrentPlaceholder, setActiveId, setWorkspaceVisible]);
+
+  const launchExecution = useCallback(async (exec: InteractiveExecution) => {
+    setLauncherError(null);
+    removeCurrentPlaceholder();
+    setActiveId(null);
+    setWorkspaceVisible(false);
+
+    try {
+      const variables: Record<string, string> = { ...(exec.variables ?? {}) };
+      if (exec.host_id && exec.host_id !== "__local__" && variables.target == null) {
+        variables.target = exec.host_id;
+      }
+
+      const execution = await runRecipeMutation.mutateAsync({
+        path: exec.recipe_path,
+        hostId: exec.host_id,
+        variables,
+      });
+
+      if (!execution.terminal_id) {
+        throw new Error("Execution did not return a terminal session");
+      }
+
+      addRecipeTerminal({
+        id: execution.terminal_id,
+        title: `Recipe: ${execution.recipe_name}`,
+        recipeExecutionId: execution.id,
+        hostId: execution.host_id,
+      });
+      recordConnectionByHostId(execution.host_id);
+    } catch (e) {
+      console.error("Failed to run recipe from terminal launcher:", e);
+      setLauncherError(getErrorMessage(e));
+    }
+  }, [addRecipeTerminal, recordConnectionByHostId, removeCurrentPlaceholder, runRecipeMutation, setActiveId, setWorkspaceVisible]);
+
+  const launcherPrimaryLabel = selectedRecipePath ? "Run" : "Connect";
+  const canLauncherPrimary = Boolean(selectedRecipePath ? selectedExecution : selectedRecent);
+  const launcherPrimaryLoading = selectedRecipePath ? runRecipeMutation.isPending : false;
 
   // Search state
   const [showSearch, setShowSearch] = useState(false);
@@ -713,6 +901,8 @@ export function TerminalPage() {
 
   const connectToSavedHost = useCallback(
     async (hostId: string, label?: string) => {
+      // Remove placeholder tab before connecting
+      removeCurrentPlaceholder();
       setConnectState({ status: "connecting", label: label ?? "Connecting…", detail: "Fetching host info…" });
       setTmuxSelect(null);
       setActiveId(null);
@@ -744,7 +934,9 @@ export function TerminalPage() {
       // or create a new session
       if (tmuxSessions.length >= 1) {
         setTmuxSelect({
+          kind: "host",
           hostId,
+          vastInstanceId: null,
           hostName: host.name,
           ssh,
           envVars: host.env_vars ?? null,
@@ -763,13 +955,16 @@ export function TerminalPage() {
         title: `${host.name} · ${sessionName}`,
         envVars: host.env_vars ?? null,
       });
+      recordHostConnection(hostId, host.name);
       setConnectState({ status: "idle" });
     },
-    [openSshTmux, setActiveId]
+    [openSshTmux, recordHostConnection, removeCurrentPlaceholder, setActiveId]
   );
 
   const connectToVastInstance = useCallback(
     async (instanceId: number, label?: string) => {
+      // Remove placeholder tab before connecting
+      removeCurrentPlaceholder();
       setConnectState({ status: "connecting", label: label ?? `Vast #${instanceId}`, detail: "Loading Vast instance…" });
       setTmuxSelect(null);
       setActiveId(null);
@@ -865,7 +1060,9 @@ export function TerminalPage() {
           // If there are existing sessions, show the selection modal
           if (tmuxSessions.length >= 1) {
             setTmuxSelect({
+              kind: "vast",
               hostId: null, // No host ID for Vast instances
+              vastInstanceId: instanceId,
               hostName: label ?? `Vast #${instanceId}`,
               ssh,
               envVars: null,
@@ -887,6 +1084,7 @@ export function TerminalPage() {
             title: `${label ?? `Vast #${instanceId}`} · main`,
             envVars: null,
           });
+          recordVastConnection(instanceId, label ?? `Vast #${instanceId}`);
           setConnectState({ status: "idle" });
           return;
         } catch (e) {
@@ -896,89 +1094,42 @@ export function TerminalPage() {
 
       throw lastError ?? new Error("SSH connection failed");
     },
-    [openSshTmux, setActiveId]
+    [openSshTmux, recordVastConnection, removeCurrentPlaceholder, setActiveId]
   );
 
-  const handleQuickConnectHost = useCallback(
-    async (host: Host) => {
-      try {
-        await connectToSavedHost(host.id, host.name);
-      } catch (e) {
-        setConnectState({ status: "error", label: host.name, message: getErrorMessage(e) });
+  const launchRecentConnection = useCallback(async (conn: RecentConnection) => {
+    setLauncherError(null);
+    if (conn.kind === "local") {
+      await launchLocalTerminal();
+      return;
+    }
+
+    try {
+      if (conn.kind === "host") {
+        const vastId = parseVastHostId(conn.host_id);
+        if (vastId != null) {
+          await connectToVastInstance(vastId, hostNameById.get(`vast:${vastId}`) ?? conn.label);
+          return;
+        }
+        await connectToSavedHost(conn.host_id, hostNameById.get(conn.host_id) ?? conn.label);
+        return;
       }
-    },
-    [connectToSavedHost]
-  );
 
-  const handleQuickConnectVast = useCallback(
-    async (inst: VastInstance) => {
-      const label = getVastLabel(inst);
-      try {
-        await connectToVastInstance(inst.id, label);
-      } catch (e) {
-        setConnectState({ status: "error", label, message: getErrorMessage(e) });
-      }
-    },
-    [connectToVastInstance]
-  );
+      await connectToVastInstance(conn.vast_instance_id, hostNameById.get(`vast:${conn.vast_instance_id}`) ?? conn.label);
+    } catch (e) {
+      setConnectState({ status: "error", label: conn.label, message: getErrorMessage(e) });
+    }
+  }, [connectToSavedHost, connectToVastInstance, hostNameById, launchLocalTerminal]);
 
-  // Handle unified connect
-  const handleUnifiedConnect = useCallback(
-    (row: UnifiedHost) => {
-      if (row.kind === "host") {
-        void handleQuickConnectHost(row.host);
-      } else {
-        void handleQuickConnectVast(row.instance);
-      }
-    },
-    [handleQuickConnectHost, handleQuickConnectVast]
-  );
-
-  // DataTable column definitions for unified hosts
-  const unifiedColumns: ColumnDef<UnifiedHost>[] = useMemo(() => [
-    {
-      key: "name",
-      header: "Name",
-      grow: true,
-      minWidth: "140px",
-      nowrap: false,
-      render: (row) => (
-        <CellWithIcon
-          icon={<AppIcon name={row.iconName} className="w-5 h-5" alt={row.kind === "host" ? row.host.type : "Vast.ai"} />}
-          title={row.name}
-          subtitle={row.subtitle}
-        />
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      render: (row) => {
-        const badge = getStatusBadgeColor(row.status);
-        return <StatusChip label={badge.label} color={badge.color} />;
-      },
-    },
-    {
-      key: "actions",
-      header: "",
-      render: (row) => {
-        const canConnect = row.kind === "host"
-          ? !!row.host.ssh
-          : row.status === "online" || row.status === "connecting";
-        return (
-          <div className="flex justify-end">
-            <ActionButton
-              label="Connect"
-              color="primary"
-              variant="flat"
-              onPress={() => handleUnifiedConnect(row)}
-              isDisabled={!canConnect}
-            />
-          </div>
-        );
-      },
-    },
-  ], [handleUnifiedConnect]);
+  const handleLauncherPrimary = useCallback(async () => {
+    if (selectedExecution) {
+      await launchExecution(selectedExecution);
+      return;
+    }
+    if (selectedRecent) {
+      await launchRecentConnection(selectedRecent);
+    }
+  }, [launchExecution, launchRecentConnection, selectedExecution, selectedRecent]);
 
   // If navigated here with a connect request, start connecting immediately and show the waiting UI here.
   useEffect(() => {
@@ -1016,12 +1167,12 @@ export function TerminalPage() {
     activeIdRef.current = activeId;
   }, [activeId]);
 
-  // Toggle search with Cmd/Ctrl+F, toggle automation panel with Cmd/Ctrl+], close search with Escape
+  // Toggle search with Cmd+F (not Ctrl+F to allow emacs keybinding), toggle recipe details with Cmd+]
   // Close terminal with Cmd+W, open new terminal with Cmd+T
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Toggle search with Cmd/Ctrl+F
-      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+      // Toggle search with Cmd+F only (Ctrl+F reserved for emacs forward)
+      if (e.metaKey && !e.ctrlKey && e.key === "f") {
         e.preventDefault();
         e.stopPropagation();
         setShowSearch((prev) => {
@@ -1036,17 +1187,17 @@ export function TerminalPage() {
         });
         return;
       }
-      
-      // Toggle automation panel with Cmd/Ctrl+]
-      if ((e.metaKey || e.ctrlKey) && e.key === "]") {
+
+      // Toggle recipe details with Cmd+]
+      if (e.metaKey && e.key === "]") {
         e.preventDefault();
         e.stopPropagation();
-        toggleRecipePanel();
+        toggleRecipeDetails();
         return;
       }
-      
+
       // Close current terminal with Cmd+W
-      if ((e.metaKey || e.ctrlKey) && e.key === "w") {
+      if (e.metaKey && e.key === "w") {
         e.preventDefault();
         e.stopPropagation();
         if (activeIdRef.current) {
@@ -1054,15 +1205,15 @@ export function TerminalPage() {
         }
         return;
       }
-      
-      // Open new terminal tab with Cmd+T
-      if ((e.metaKey || e.ctrlKey) && e.key === "t") {
+
+      // Open new tab with Cmd+T (same as + button - shows workspace)
+      if (e.metaKey && e.key === "t") {
         e.preventDefault();
         e.stopPropagation();
-        void openLocalTerminal();
+        createNewTab();
         return;
       }
-      
+
       // Close search with Escape (use ref to get current value)
       if (e.key === "Escape" && showSearchRef.current) {
         e.preventDefault();
@@ -1071,11 +1222,11 @@ export function TerminalPage() {
         setSearchQuery("");
       }
     };
-    
+
     // Use capture phase to intercept before terminal
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [closeSession, openLocalTerminal, toggleRecipePanel]); // Stable callbacks from context
+  }, [closeSession, createNewTab, toggleRecipeDetails]); // Stable callbacks from context
 
   const handleSearchResult = useCallback((current: number, total: number) => {
     setSearchResult({ current, total });
@@ -1245,48 +1396,334 @@ export function TerminalPage() {
         ) : sessions.length === 0 || workspaceVisible ? (
           <div className="doppio-page">
             <div className="doppio-page-content">
-              {/* Header with filter and local terminal button */}
-              <div className="doppio-page-header">
-                <div className="flex items-center gap-4 flex-1">
-                  <div>
-                    <h1 className="doppio-page-title">Terminal</h1>
-                    <p className="text-xs text-foreground/50">{hostCountLabel}</p>
+              {/* Termius-style Toolbar */}
+              <div className="termius-toolbar">
+                {/* Row 1: Search + Primary Action */}
+                <div className="termius-toolbar-row">
+                  <div className="termius-search-bar">
+                    <Input
+                      size="lg"
+                      placeholder="Search recent connections & recipes..."
+                      value={launcherQuery}
+                      onValueChange={setLauncherQuery}
+                      startContent={<SearchIcon className="w-5 h-5 text-foreground/40" />}
+                      endContent={
+                        <Button
+                          color="primary"
+                          size="sm"
+                          className="h-8 px-4"
+                          onPress={() => void handleLauncherPrimary()}
+                          isDisabled={!canLauncherPrimary || launcherPrimaryLoading}
+                          isLoading={launcherPrimaryLoading}
+                        >
+                          {launcherPrimaryLabel}
+                        </Button>
+                      }
+                      classNames={{
+                        base: "flex-1",
+                        inputWrapper: "bg-content2 h-12",
+                        input: "text-base",
+                      }}
+                    />
                   </div>
-                  <Input
-                    labelPlacement="inside"
-                    placeholder="Filter..."
-                    value={quickFilter}
-                    onValueChange={setQuickFilter}
-                    startContent={<SearchIcon className="text-foreground/50" />}
-                    classNames={{
-                      base: "max-w-xs",
-                      inputWrapper: "h-9 bg-content2 border border-divider",
-                      input: "text-sm text-foreground/80",
-                    }}
-                  />
                 </div>
-                <Button color="primary" onPress={() => void openLocalTerminal()}>
-                  Local Terminal
-                </Button>
+
+                {/* Row 2: Quick Actions */}
+                <div className="termius-toolbar-row justify-between">
+                  <div className="termius-quick-actions">
+                    <button
+                      className="termius-quick-action"
+                      onClick={() => void launchLocalTerminal()}
+                    >
+                      <IconTerminal className="w-4 h-4" />
+                      <span>Local Terminal</span>
+                    </button>
+                    <button className="termius-quick-action" onClick={() => navigate({ to: "/hosts" })}>
+                      <IconServer className="w-4 h-4" />
+                      <span>Hosts</span>
+                    </button>
+                    <button className="termius-quick-action" onClick={() => navigate({ to: "/recipes" })}>
+                      <IconFolder className="w-4 h-4" />
+                      <span>Recipes</span>
+                    </button>
+                  </div>
+
+                  {sessions.length > 0 && (
+                    <button
+                      className="termius-quick-action"
+                      onClick={() => setWorkspaceVisible(false)}
+                    >
+                      <span>Back</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Unified Hosts DataTable */}
-              {(hostsQuery.error || vastQuery.error) ? (
-                <p className="text-sm text-danger">Failed to load hosts. Check your connection or API keys in Settings.</p>
+              {(launcherError ||
+                hostsQuery.error ||
+                vastQuery.error ||
+                executionsQuery.error) && (
+                <Card className="mb-4 border border-divider">
+                  <CardBody className="py-3">
+                    {launcherError && (
+                      <p className="text-sm text-danger whitespace-pre-wrap">{launcherError}</p>
+                    )}
+                    {!launcherError && (
+                      <p className="text-sm text-danger whitespace-pre-wrap">
+                        {getErrorMessage(hostsQuery.error ?? vastQuery.error ?? executionsQuery.error)}
+                      </p>
+                    )}
+                  </CardBody>
+                </Card>
+              )}
+
+              {launcherIsLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Spinner size="lg" />
+                </div>
               ) : (
-                <DataTable
-                  data={unifiedHosts}
-                  columns={unifiedColumns}
-                  rowKey={(row) => row.id}
-                  isLoading={isLoadingHosts}
-                  emptyContent={hasQuickFilter ? "No matching hosts." : "No hosts or instances. Add a host or start a Vast.ai instance."}
-                  compact
-                />
+                <>
+                  {filteredRecentConnections.length > 0 && (
+                    <HostSection title="RECENT CONNECTIONS" count={filteredRecentConnections.length}>
+                      {filteredRecentConnections.map((conn) => {
+                        const isSelected = selectedRecentId === conn.id;
+
+                        if (conn.kind === "local") {
+                          return (
+                            <HostRow
+                              key={conn.id}
+                              icon={<AppIcon name="ssh" className="w-4 h-4" alt="Local" />}
+                              title="Local"
+                              subtitle="On this machine"
+                              isOnline={true}
+                              isSelected={isSelected}
+                              onClick={() => {
+                                setSelectedRecentId(conn.id);
+                                setSelectedRecipePath(null);
+                              }}
+                              onDoubleClick={() => void launchRecentConnection(conn)}
+                              hoverActions={
+                                <div
+                                  className="flex items-center gap-1"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <Tooltip content="Forget" delay={500}>
+                                    <Button
+                                      size="sm"
+                                      variant="light"
+                                      isIconOnly
+                                      className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100 text-danger"
+                                      onPress={() => {
+                                        persistRecentConnections((prev) => removeRecentConnection(prev, conn.id));
+                                        setSelectedRecentId((prev) => (prev === conn.id ? null : prev));
+                                      }}
+                                    >
+                                      <IconTrash className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </Tooltip>
+                                </div>
+                              }
+                            />
+                          );
+                        }
+
+                        if (conn.kind === "host") {
+                          const host = hosts.find((h) => h.id === conn.host_id) ?? null;
+                          const title = host?.name ?? conn.label;
+                          const subtitle = host?.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : undefined;
+                          const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+                          if (host?.gpu_name) {
+                            rightTags.push({ label: formatGpuCountLabel(host.gpu_name, host.num_gpus), color: "primary" });
+                          }
+
+                          const iconName: AppIconName =
+                            host?.type === "colab" ? "colab" : host?.type === "vast" ? "vast" : "host";
+
+                          return (
+                            <HostRow
+                              key={conn.id}
+                              icon={<AppIcon name={iconName} className="w-4 h-4" alt={host?.type ?? "Host"} />}
+                              title={title}
+                              subtitle={subtitle}
+                              rightTags={rightTags}
+                              isOnline={host?.status === "online"}
+                              isSelected={isSelected}
+                              onClick={() => {
+                                setSelectedRecentId(conn.id);
+                                setSelectedRecipePath(null);
+                              }}
+                              onDoubleClick={() => void launchRecentConnection(conn)}
+                              hoverActions={
+                                <div
+                                  className="flex items-center gap-1"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <Tooltip content="Forget" delay={500}>
+                                    <Button
+                                      size="sm"
+                                      variant="light"
+                                      isIconOnly
+                                      className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100 text-danger"
+                                      onPress={() => {
+                                        persistRecentConnections((prev) => removeRecentConnection(prev, conn.id));
+                                        setSelectedRecentId((prev) => (prev === conn.id ? null : prev));
+                                      }}
+                                    >
+                                      <IconTrash className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </Tooltip>
+                                </div>
+                              }
+                            />
+                          );
+                        }
+
+                        const inst = vastInstances.find((i) => i.id === conn.vast_instance_id) ?? null;
+                        const title = inst ? getVastLabel(inst) : conn.label;
+                        const subtitle =
+                          inst?.ssh_host && inst.ssh_port ? `root@${inst.ssh_host}:${inst.ssh_port}` : `Instance #${conn.vast_instance_id}`;
+                        const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+                        if (inst?.gpu_name) {
+                          rightTags.push({ label: formatGpuCountLabel(inst.gpu_name, inst.num_gpus), color: "primary" });
+                        }
+
+                        return (
+                          <HostRow
+                            key={conn.id}
+                            icon={<AppIcon name="vast" className="w-4 h-4" alt="Vast.ai" />}
+                            title={title}
+                            subtitle={subtitle}
+                            rightTags={rightTags}
+                            isOnline={inst ? isVastInstanceOnline(inst) : false}
+                            isSelected={isSelected}
+                            onClick={() => {
+                              setSelectedRecentId(conn.id);
+                              setSelectedRecipePath(null);
+                            }}
+                            onDoubleClick={() => void launchRecentConnection(conn)}
+                            hoverActions={
+                              <div
+                                className="flex items-center gap-1"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Tooltip content="Forget" delay={500}>
+                                  <Button
+                                    size="sm"
+                                    variant="light"
+                                    isIconOnly
+                                    className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100 text-danger"
+                                    onPress={() => {
+                                      persistRecentConnections((prev) => removeRecentConnection(prev, conn.id));
+                                      setSelectedRecentId((prev) => (prev === conn.id ? null : prev));
+                                    }}
+                                  >
+                                    <IconTrash className="w-3.5 h-3.5" />
+                                  </Button>
+                                </Tooltip>
+                              </div>
+                            }
+                          />
+                        );
+                      })}
+                    </HostSection>
+                  )}
+
+                  {recipeHistory.length > 0 && (
+                    <HostSection title="RECENT RECIPES" count={recipeHistory.length}>
+                      {recipeHistory.map((exec) => {
+                        const hostName = hostNameById.get(exec.host_id) || exec.host_id;
+                        const isSelected = selectedRecipePath === exec.recipe_path;
+                        const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [
+                          { label: getExecutionStatusLabel(exec.status), color: getExecutionTagColor(exec.status) },
+                        ];
+
+                        return (
+                          <HostRow
+                            key={exec.recipe_path}
+                            icon={<span className="text-lg">📜</span>}
+                            title={exec.recipe_name}
+                            subtitle={`${hostName} · ${new Date(exec.created_at).toLocaleString()}`}
+                            rightTags={rightTags}
+                            isOnline={exec.status === "running" || exec.status === "waiting_for_input"}
+                            isSelected={isSelected}
+                            onClick={() => {
+                              setSelectedRecipePath(exec.recipe_path);
+                              setSelectedRecentId(null);
+                            }}
+                            onDoubleClick={() => void launchExecution(exec)}
+                            hoverActions={
+                              <div
+                                className="flex items-center gap-1"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Tooltip content="Run" delay={500}>
+                                  <Button
+                                    size="sm"
+                                    variant="light"
+                                    isIconOnly
+                                    className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                                    onPress={() => void launchExecution(exec)}
+                                  >
+                                    <IconPlay className="w-3.5 h-3.5" />
+                                  </Button>
+                                </Tooltip>
+                                <Tooltip content="Open" delay={500}>
+                                  <Button
+                                    size="sm"
+                                    variant="light"
+                                    isIconOnly
+                                    className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                                    onPress={() => {
+                                      navigate({ to: "/recipes/$path", params: { path: encodeURIComponent(exec.recipe_path) } });
+                                    }}
+                                  >
+                                    <IconPencil className="w-3.5 h-3.5" />
+                                  </Button>
+                                </Tooltip>
+                              </div>
+                            }
+                          />
+                        );
+                      })}
+                    </HostSection>
+                  )}
+
+                  {filteredRecentConnections.length === 0 && recipeHistory.length === 0 && (
+                    <EmptyHostState
+                      icon={<IconTerminal className="w-5 h-5" />}
+                      title={launcherQuery ? "No matches" : "Nothing recent yet"}
+                      description={launcherQuery ? "Try a different search term." : "Connect to a host or run a recipe to see it here."}
+                      action={
+                        !launcherQuery ? (
+                          <div className="flex items-center gap-2">
+                            <Button as={Link} to="/hosts" variant="flat">
+                              Go to Hosts
+                            </Button>
+                            <Button as={Link} to="/recipes" variant="flat">
+                              Go to Recipes
+                            </Button>
+                          </div>
+                        ) : null
+                      }
+                    />
+                  )}
+                </>
               )}
             </div>
           </div>
         ) : (
           <>
+            {/* Recipe Terminal Controls - shows when active terminal has a recipe */}
+            {activeId && sessions.find((s) => s.id === activeId)?.recipeExecutionId && (
+              <RecipeTerminalControls
+                terminalId={activeId}
+                executionId={sessions.find((s) => s.id === activeId)?.recipeExecutionId}
+              />
+            )}
             {/* Terminal area - full height, tabs are now in the title bar */}
             {/* Use visibility instead of display:none to maintain container dimensions */}
             <div
@@ -1314,20 +1751,10 @@ export function TerminalPage() {
                   />
                 </div>
               ))}
-              <AnimatePresence>
-                {historyPanelVisible && <TerminalHistoryPanel />}
-              </AnimatePresence>
             </div>
           </>
         )}
       </div>
-
-      {/* Recipe Automation Panel - Right Sidebar */}
-      <AnimatePresence>
-        {recipePanelVisible && (
-          <RecipeAutomationPanel />
-        )}
-      </AnimatePresence>
 
       <TmuxSessionSelectModal
         sessions={tmuxSelect?.sessions ?? []}
@@ -1349,6 +1776,13 @@ export function TerminalPage() {
                 title: `${current.hostName} · ${name}`,
                 envVars: current.envVars,
               });
+              if (current.kind === "host" && current.hostId) {
+                recordHostConnection(current.hostId, current.hostName);
+              }
+              if (current.kind === "vast" && current.vastInstanceId != null) {
+                recordVastConnection(current.vastInstanceId, current.hostName);
+              }
+              setWorkspaceVisible(false);
               setConnectState({ status: "idle" });
             } catch (e) {
               setConnectState({ status: "error", label: current.hostName, message: getErrorMessage(e) });
@@ -1368,6 +1802,13 @@ export function TerminalPage() {
                 title: `${current.hostName} · ${name}`,
                 envVars: current.envVars,
               });
+              if (current.kind === "host" && current.hostId) {
+                recordHostConnection(current.hostId, current.hostName);
+              }
+              if (current.kind === "vast" && current.vastInstanceId != null) {
+                recordVastConnection(current.vastInstanceId, current.hostName);
+              }
+              setWorkspaceVisible(false);
               setConnectState({ status: "idle" });
             } catch (e) {
               setConnectState({ status: "error", label: current.hostName, message: getErrorMessage(e) });

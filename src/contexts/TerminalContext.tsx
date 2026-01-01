@@ -11,6 +11,8 @@ export type TerminalSession = {
   hostId?: string | null;
   /** Whether intervention is currently locked */
   interventionLocked?: boolean;
+  /** Whether this is a placeholder tab (not yet connected) */
+  isPlaceholder?: boolean;
 };
 
 type TerminalContextType = {
@@ -27,19 +29,24 @@ type TerminalContextType = {
   /** Get session by terminal ID */
   getSession: (id: string) => TerminalSession | undefined;
   isLoading: boolean;
-  /** Whether the recipe panel is visible */
-  recipePanelVisible: boolean;
-  setRecipePanelVisible: (visible: boolean) => void;
-  toggleRecipePanel: () => void;
+  /** Whether the recipe details panel is expanded in the top bar */
+  recipeDetailsExpanded: boolean;
+  setRecipeDetailsExpanded: (expanded: boolean) => void;
+  toggleRecipeDetails: () => void;
   /** Check if current terminal has an associated recipe */
   hasActiveRecipe: boolean;
-  historyPanelVisible: boolean;
-  setHistoryPanelVisible: (visible: boolean) => void;
-  toggleHistoryPanel: () => void;
   /** Whether the workspace panel is visible (for connecting to hosts) */
   workspaceVisible: boolean;
   setWorkspaceVisible: (visible: boolean) => void;
   showWorkspace: () => void;
+  /** Create a new tab placeholder and show workspace */
+  createNewTab: () => void;
+  /** Remove the current placeholder tab (if any) */
+  removeCurrentPlaceholder: () => void;
+  /** Whether the sidebar is collapsed */
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  toggleSidebar: () => void;
 };
 
 const TerminalContext = createContext<TerminalContextType | null>(null);
@@ -60,10 +67,9 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [recipePanelVisible, setRecipePanelVisible] = useState(false);
-  const [historyPanelVisible, setHistoryPanelVisible] = useState(false);
+  const [recipeDetailsExpanded, setRecipeDetailsExpanded] = useState(false);
   const [workspaceVisible, setWorkspaceVisible] = useState(false);
-  const [userToggledPanel, setUserToggledPanel] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const lastSessionCount = useRef(0);
 
   // Check if current terminal has an associated recipe
@@ -71,21 +77,12 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     (s) => s.id === activeId && s.recipeExecutionId
   );
 
-  // Auto show/hide panel when switching terminals (unless user manually toggled)
-  useEffect(() => {
-    if (!userToggledPanel) {
-      // Auto-show when terminal has recipe, auto-hide when no recipe
-      setRecipePanelVisible(hasActiveRecipe);
-    }
-  }, [activeId, hasActiveRecipe, userToggledPanel]);
-
-  const toggleRecipePanel = useCallback(() => {
-    setUserToggledPanel(true);
-    setRecipePanelVisible((prev) => !prev);
+  const toggleRecipeDetails = useCallback(() => {
+    setRecipeDetailsExpanded((prev) => !prev);
   }, []);
 
-  const toggleHistoryPanel = useCallback(() => {
-    setHistoryPanelVisible((prev) => !prev);
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => !prev);
   }, []);
 
   // Show workspace panel (hides terminal, shows host connection UI)
@@ -93,13 +90,43 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     setWorkspaceVisible(true);
   }, []);
 
-  // Wrapper for setActiveId that hides workspace when a session is selected
+  // Create a new placeholder tab and show workspace
+  const createNewTab = useCallback(() => {
+    const placeholderId = `placeholder-${Date.now()}`;
+    const placeholderSession: TerminalSession = {
+      id: placeholderId,
+      title: "New Tab",
+      isPlaceholder: true,
+    };
+    setSessions((prev) => [...prev, placeholderSession]);
+    setActiveId(placeholderId);
+    setWorkspaceVisible(true);
+  }, []);
+
+  // Remove the current placeholder tab (if active tab is a placeholder)
+  const removeCurrentPlaceholder = useCallback(() => {
+    setSessions((prev) => {
+      const currentSession = prev.find((s) => s.id === activeId);
+      if (currentSession?.isPlaceholder) {
+        return prev.filter((s) => s.id !== activeId);
+      }
+      return prev;
+    });
+  }, [activeId]);
+
+  // Wrapper for setActiveId that manages workspace visibility
   const handleSetActiveId = useCallback((id: string | null) => {
     if (id !== null) {
-      setWorkspaceVisible(false);
+      // Check if this is a placeholder tab - read sessions directly without triggering setState
+      const session = sessions.find((s) => s.id === id);
+      if (session?.isPlaceholder) {
+        setWorkspaceVisible(true);
+      } else {
+        setWorkspaceVisible(false);
+      }
     }
     setActiveId(id);
-  }, []);
+  }, [sessions]);
 
   // Refresh sessions from backend
   const refreshSessions = useCallback(async () => {
@@ -164,14 +191,18 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const closeSession = useCallback(async (id: string) => {
-    await termClose(id);
+    // Check if this is a placeholder session (doesn't need backend call)
+    const session = sessions.find((s) => s.id === id);
+    if (!session?.isPlaceholder) {
+      await termClose(id);
+    }
     setSessions((prev) => {
       const next = prev.filter((s) => s.id !== id);
       lastSessionCount.current = next.length;
       setActiveId((prevActive) => (prevActive === id ? next[0]?.id ?? null : prevActive));
       return next;
     });
-  }, []);
+  }, [sessions]);
 
   const openLocalTerminal = useCallback(async () => {
     try {
@@ -204,9 +235,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       return next;
     });
     setActiveId(session.id);
-    // Ensure recipe panel is visible for recipe terminals
-    setRecipePanelVisible(true);
-    setUserToggledPanel(false); // Reset user toggle so auto-show/hide works
   }, []);
 
   /** Update intervention lock state for a session */
@@ -269,16 +297,18 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         setInterventionLocked,
         getSession,
         isLoading,
-        recipePanelVisible,
-        setRecipePanelVisible,
-        toggleRecipePanel,
+        recipeDetailsExpanded,
+        setRecipeDetailsExpanded,
+        toggleRecipeDetails,
         hasActiveRecipe,
-        historyPanelVisible,
-        setHistoryPanelVisible,
-        toggleHistoryPanel,
         workspaceVisible,
         setWorkspaceVisible,
         showWorkspace,
+        createNewTab,
+        removeCurrentPlaceholder,
+        sidebarCollapsed,
+        setSidebarCollapsed,
+        toggleSidebar,
       }}
     >
       {children}

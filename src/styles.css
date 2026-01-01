@@ -3,78 +3,119 @@
 @tailwind utilities;
 
 @layer base {
-  /* Design Tokens - Light Mode */
+  /* Design Tokens - Monokai Light Theme */
   :root {
-    /* Surface colors */
+    /* Monokai Light Core Colors */
+    --monokai-bg: 255 255 255;
+    --monokai-fg: 0 0 0;
+    --monokai-selection: 194 232 255;
+    --monokai-line-highlight: 165 165 165;
+    --monokai-comment: 117 113 94;
+    --monokai-string: 242 90 0;
+    --monokai-keyword: 249 38 114;
+    --monokai-class: 106 175 25;
+    --monokai-type: 40 198 228;
+    --monokai-number: 174 129 255;
+    --monokai-param: 253 151 31;
+    --monokai-find: 255 231 146;
+
+    /* Surface colors - Monokai Light based */
     --doppio-surface: 255 255 255;
-    --doppio-surface-elevated: 250 250 252;
-    --doppio-surface-muted: 245 246 248;
+    --doppio-surface-elevated: 252 252 250;
+    --doppio-surface-muted: 247 247 244;
 
     /* Border colors */
-    --doppio-border: 228 230 235;
-    --doppio-border-subtle: 238 240 244;
+    --doppio-border: 230 228 220;
+    --doppio-border-subtle: 240 238 232;
 
-    /* Text colors */
-    --doppio-text-primary: 52 59 88;
-    --doppio-text-secondary: 74 80 104;
-    --doppio-text-muted: 136 142 166;
+    /* Text colors - Monokai style */
+    --doppio-text-primary: 39 40 34;
+    --doppio-text-secondary: 80 80 72;
+    --doppio-text-muted: 117 113 94;
 
-    /* Title bar */
-    --doppio-titlebar-bg: 255 255 255 / 0.92;
-    --doppio-titlebar-tab-active: 230 231 237;
-    --doppio-titlebar-tab-inactive: 214 216 223;
-    --doppio-titlebar-tab-hover: 218 220 227;
+    /* Title bar - Monokai Light style with better tab contrast */
+    --doppio-titlebar-bg: 240 240 236 / 0.95;
+    --doppio-titlebar-text: 39 40 34;
+    --doppio-titlebar-tab-active: 255 255 255;
+    --doppio-titlebar-tab-inactive: 232 232 228;
+    --doppio-titlebar-tab-hover: 242 242 238;
+    --doppio-titlebar-tab-border: 210 208 200;
 
-    /* Terminal theme */
-    --term-bg: 214 216 223;
-    --term-fg: 52 59 88;
-    --term-cursor: 52 59 88;
-    --term-selection: 52 59 88 / 0.2;
+    /* Sidebar - Monokai Light style (light background) */
+    --doppio-sidebar-bg: 247 247 244 / 0.95;
+    --doppio-sidebar-text: 39 40 34;
+    --doppio-sidebar-item-active: 249 38 114 / 0.12;
+    --doppio-sidebar-item-hover: 0 0 0 / 0.04;
+    --doppio-sidebar-icon-active: 249 38 114;
+    --doppio-sidebar-text-muted: 117 113 94;
+
+    /* Accent colors from Monokai */
+    --doppio-accent-pink: 249 38 114;
+    --doppio-accent-orange: 253 151 31;
+    --doppio-accent-yellow: 230 219 116;
+    --doppio-accent-green: 166 226 46;
+    --doppio-accent-cyan: 102 217 239;
+    --doppio-accent-purple: 174 129 255;
+
+    /* Terminal theme - Monokai Light */
+    --term-bg: 255 255 255;
+    --term-fg: 39 40 34;
+    --term-cursor: 39 40 34;
+    --term-selection: 194 232 255 / 0.6;
 
     /* Terminal panel */
-    --term-card: rgba(255, 255, 255, 0.95);
-    --term-card-muted: rgba(245, 246, 248, 0.9);
-    --term-border: rgba(228, 230, 235, 0.8);
-    --term-shadow-strong: 0 8px 32px rgba(0, 0, 0, 0.12);
+    --term-card: rgba(255, 255, 255, 0.98);
+    --term-card-muted: rgba(252, 252, 250, 0.95);
+    --term-border: rgba(230, 228, 220, 0.8);
+    --term-shadow-strong: 0 8px 32px rgba(0, 0, 0, 0.08);
 
-    /* Card shadows - refined for depth perception */
-    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.03), 0 1px 3px 0 rgb(0 0 0 / 0.02);
-    --doppio-shadow-md: 0 2px 4px 0 rgb(0 0 0 / 0.04), 0 4px 8px 0 rgb(0 0 0 / 0.03);
-    --doppio-shadow-lg: 0 4px 8px 0 rgb(0 0 0 / 0.05), 0 8px 16px 0 rgb(0 0 0 / 0.04);
+    /* Card shadows - subtle for light theme */
+    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05), 0 1px 3px 0 rgb(0 0 0 / 0.04);
+    --doppio-shadow-md: 0 2px 4px 0 rgb(0 0 0 / 0.06), 0 4px 8px 0 rgb(0 0 0 / 0.05);
+    --doppio-shadow-lg: 0 4px 8px 0 rgb(0 0 0 / 0.08), 0 8px 16px 0 rgb(0 0 0 / 0.06);
   }
 
-  /* Dark Mode Tokens */
+  /* Dark Mode Tokens - Monokai Classic Dark */
   .dark {
-    --doppio-surface: 24 24 27;
-    --doppio-surface-elevated: 32 32 36;
-    --doppio-surface-muted: 39 39 42;
+    --doppio-surface: 39 40 34;
+    --doppio-surface-elevated: 49 50 44;
+    --doppio-surface-muted: 59 60 54;
 
-    --doppio-border: 63 63 70;
-    --doppio-border-subtle: 55 55 60;
+    --doppio-border: 73 72 62;
+    --doppio-border-subtle: 63 62 52;
 
-    --doppio-text-primary: 250 250 250;
-    --doppio-text-secondary: 212 212 216;
-    --doppio-text-muted: 113 113 122;
+    --doppio-text-primary: 248 248 242;
+    --doppio-text-secondary: 200 200 192;
+    --doppio-text-muted: 117 113 94;
 
-    --doppio-titlebar-bg: 24 24 27 / 0.92;
-    --doppio-titlebar-tab-active: 45 45 50;
-    --doppio-titlebar-tab-inactive: 35 35 40;
-    --doppio-titlebar-tab-hover: 50 50 55;
+    --doppio-titlebar-bg: 30 31 26 / 0.96;
+    --doppio-titlebar-text: 248 248 242;
+    --doppio-titlebar-tab-active: 73 72 62;
+    --doppio-titlebar-tab-inactive: 39 40 34;
+    --doppio-titlebar-tab-hover: 56 57 49;
 
-    --term-bg: 24 24 27;
-    --term-fg: 250 250 250;
-    --term-cursor: 250 250 250;
-    --term-selection: 250 250 250 / 0.2;
+    /* Sidebar - Monokai dark */
+    --doppio-sidebar-bg: 30 31 26 / 0.96;
+    --doppio-sidebar-text: 248 248 242;
+    --doppio-sidebar-item-active: 249 38 114 / 0.2;
+    --doppio-sidebar-item-hover: 255 255 255 / 0.06;
+    --doppio-sidebar-icon-active: 249 38 114;
+    --doppio-sidebar-text-muted: 117 113 94;
+
+    --term-bg: 39 40 34;
+    --term-fg: 248 248 242;
+    --term-cursor: 248 248 242;
+    --term-selection: 73 72 62 / 0.6;
 
     /* Terminal panel */
-    --term-card: rgba(32, 32, 36, 0.95);
-    --term-card-muted: rgba(39, 39, 42, 0.9);
-    --term-border: rgba(63, 63, 70, 0.8);
+    --term-card: rgba(49, 50, 44, 0.98);
+    --term-card-muted: rgba(59, 60, 54, 0.95);
+    --term-border: rgba(73, 72, 62, 0.8);
     --term-shadow-strong: 0 8px 32px rgba(0, 0, 0, 0.4);
 
-    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.15), 0 1px 3px 0 rgb(0 0 0 / 0.1);
-    --doppio-shadow-md: 0 2px 4px 0 rgb(0 0 0 / 0.2), 0 4px 8px 0 rgb(0 0 0 / 0.15);
-    --doppio-shadow-lg: 0 4px 8px 0 rgb(0 0 0 / 0.25), 0 8px 16px 0 rgb(0 0 0 / 0.2);
+    --doppio-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.2), 0 1px 3px 0 rgb(0 0 0 / 0.15);
+    --doppio-shadow-md: 0 2px 4px 0 rgb(0 0 0 / 0.25), 0 4px 8px 0 rgb(0 0 0 / 0.2);
+    --doppio-shadow-lg: 0 4px 8px 0 rgb(0 0 0 / 0.3), 0 8px 16px 0 rgb(0 0 0 / 0.25);
   }
 
   /* Keep xterm selection text aligned with the terminal font. */
@@ -85,6 +126,27 @@
   [data-slot="label"] {
     @apply text-xs text-foreground/60;
   }
+
+  /* NextUI Input - strong border contrast */
+  [data-slot="input-wrapper"] {
+    @apply bg-white border-2;
+    border-color: #C8C8C0 !important;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.08);
+  }
+
+  [data-slot="input-wrapper"]:hover {
+    border-color: #A0A098 !important;
+  }
+
+  [data-slot="input-wrapper"]:focus-within {
+    border-color: #F92672 !important;
+    box-shadow: 0 0 0 3px rgba(249, 38, 114, 0.15), 0 1px 3px 0 rgb(0 0 0 / 0.08);
+  }
+
+  /* NextUI Input with inside label variant */
+  [data-slot="inner-wrapper"] {
+    @apply bg-transparent;
+  }
 }
 
 /* Utility classes using design tokens */
@@ -92,6 +154,7 @@
   /* Consistent page container */
   .doppio-page {
     @apply h-full overflow-auto;
+    background: rgb(var(--doppio-surface-muted));
   }
 
   .doppio-page-content {
@@ -130,16 +193,16 @@
     @apply grid grid-cols-1 md:grid-cols-2 gap-4;
   }
 
-  /* Consistent card styling - refined */
+  /* Consistent card styling - refined with better contrast */
   .doppio-card {
     @apply bg-content1 border border-divider rounded-xl;
-    box-shadow: var(--doppio-shadow-sm);
-    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    box-shadow: var(--doppio-shadow-md);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
   }
 
   .doppio-card:hover {
-    @apply border-primary/30;
-    box-shadow: var(--doppio-shadow-md);
+    @apply bg-content1 border-default-300;
+    box-shadow: var(--doppio-shadow-lg);
   }
 
   .doppio-card-interactive {
@@ -148,12 +211,12 @@
 
   .doppio-card-interactive:hover {
     @apply border-primary/40;
-    box-shadow: var(--doppio-shadow-md);
+    box-shadow: var(--doppio-shadow-lg);
   }
 
   .doppio-card-interactive:active {
     @apply border-primary/50;
-    box-shadow: var(--doppio-shadow-sm);
+    box-shadow: var(--doppio-shadow-md);
   }
 
   /* Stat card */
@@ -169,22 +232,30 @@
     @apply text-2xl font-bold;
   }
 
-  /* Sidebar styles */
+  /* Sidebar styles - macOS Tahoe style */
   .doppio-sidebar {
-    @apply h-full flex flex-col border-r border-divider bg-content1 transition-all duration-200;
+    @apply h-full flex flex-col transition-all duration-200;
+    background: rgb(var(--doppio-sidebar-bg));
   }
 
   .doppio-sidebar-section-header {
-    @apply text-xs font-semibold text-foreground/60 uppercase tracking-wider;
+    @apply text-[11px] font-medium uppercase tracking-wide;
+    color: rgb(var(--doppio-sidebar-text-muted));
+    letter-spacing: 0.02em;
   }
 
   .doppio-sidebar-item {
-    @apply flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors text-sm;
-    @apply text-foreground/70 hover:bg-default/40;
+    @apply flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-all duration-150 text-[13px];
+    @apply text-foreground/80 cursor-default;
+  }
+
+  .doppio-sidebar-item:hover {
+    background: rgb(var(--doppio-sidebar-item-hover));
   }
 
   .doppio-sidebar-item-active {
-    @apply bg-primary/10 text-primary;
+    background: rgb(var(--doppio-sidebar-item-active));
+    @apply text-foreground font-medium;
   }
 
   /* Line clamp utility (for descriptions) */
@@ -200,5 +271,190 @@
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  /* ============================================================
+   * Termius-style Host Rows (simplified cards) - better contrast
+   * ============================================================ */
+
+  .termius-host-row {
+    @apply flex items-center px-3 py-2.5 rounded-lg cursor-default;
+    @apply bg-content1 border border-divider transition-all duration-100;
+    width: calc(33.333% - 8px);
+    flex-shrink: 0;
+    box-shadow: var(--doppio-shadow-sm);
+  }
+
+  .termius-host-row:hover,
+  .termius-host-row-hover {
+    @apply bg-content1 border-default-300;
+    box-shadow: var(--doppio-shadow-md);
+  }
+
+  .termius-host-row-selected {
+    @apply bg-primary/10 ring-1 ring-primary/30 border-primary/30;
+  }
+
+  .termius-host-row:active {
+    @apply bg-content2;
+  }
+
+  .termius-host-list {
+    @apply flex flex-wrap gap-3;
+  }
+
+  /* ============================================================
+   * Termius-style Toolbar - better contrast
+   * ============================================================ */
+
+  .termius-toolbar {
+    @apply flex flex-col gap-3 mb-4;
+  }
+
+  .termius-toolbar-row {
+    @apply flex items-center gap-2;
+  }
+
+  .termius-search-bar {
+    @apply flex-1 flex items-center gap-2;
+  }
+
+  .termius-quick-actions {
+    @apply flex items-center gap-1;
+  }
+
+  .termius-quick-action {
+    @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm;
+    @apply bg-content1 border border-divider text-foreground/70 transition-colors cursor-default;
+    box-shadow: var(--doppio-shadow-sm);
+  }
+
+  .termius-quick-action:hover {
+    @apply bg-content1 border-default-300 text-foreground;
+  }
+
+  .termius-quick-action-primary {
+    @apply bg-primary text-primary-foreground border-primary;
+  }
+
+  .termius-quick-action-primary:hover {
+    @apply bg-primary/90;
+  }
+
+  /* ============================================================
+   * Content Tabs - Termius style with better contrast
+   * ============================================================ */
+
+  .doppio-content-tabs {
+    @apply flex items-center justify-between gap-4 mb-4 pb-3 border-b border-divider;
+  }
+
+  .doppio-content-tab {
+    @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium;
+    @apply text-foreground/60 transition-all duration-150 cursor-default border border-transparent;
+  }
+
+  .doppio-content-tab:hover {
+    @apply text-foreground/80 bg-content1 border-divider;
+  }
+
+  .doppio-content-tab-active {
+    @apply text-foreground bg-content1 border-divider;
+    box-shadow: var(--doppio-shadow-sm);
+  }
+
+  .doppio-content-tab-badge {
+    @apply ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium;
+    @apply bg-default-200 text-foreground/70;
+  }
+
+  .doppio-content-tab-active .doppio-content-tab-badge {
+    @apply bg-primary/20 text-primary;
+  }
+
+  /* ============================================================
+   * Filter Panel - Termius style with better contrast
+   * ============================================================ */
+
+  .doppio-filter-panel {
+    @apply w-56 bg-content1 border-l border-divider flex-shrink-0;
+    @apply h-full overflow-auto;
+  }
+
+  .doppio-filter-toggle {
+    @apply relative p-2 rounded-lg text-foreground/60 border border-transparent;
+    @apply hover:bg-content1 hover:border-divider hover:text-foreground transition-colors;
+  }
+
+  .doppio-filter-toggle-active {
+    @apply text-primary bg-primary/10 border-primary/30;
+  }
+
+  .doppio-filter-dot {
+    @apply absolute top-1 right-1 w-2 h-2 rounded-full bg-primary;
+  }
+
+  .doppio-filter-option {
+    @apply flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg;
+    @apply text-sm text-foreground/70 transition-colors cursor-default;
+  }
+
+  .doppio-filter-option:hover {
+    @apply bg-content2 text-foreground;
+  }
+
+  .doppio-filter-option-active {
+    @apply bg-primary/10 text-primary font-medium;
+  }
+
+  .doppio-filter-button {
+    @apply flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium;
+    @apply bg-content1 border border-divider text-foreground/70 transition-colors cursor-default;
+  }
+
+  .doppio-filter-button:hover {
+    @apply bg-content1 border-default-300 text-foreground;
+  }
+
+  .doppio-filter-button-active {
+    @apply bg-primary/10 text-primary border-primary/30;
+  }
+
+  /* ============================================================
+   * Quick Filters - Termius style chips with better contrast
+   * ============================================================ */
+
+  .doppio-quick-filter {
+    @apply flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium;
+    @apply bg-content1 border border-divider text-foreground/70 transition-all duration-150 cursor-default;
+  }
+
+  .doppio-quick-filter:hover {
+    @apply bg-content1 border-default-300 text-foreground;
+  }
+
+  .doppio-quick-filter-active {
+    @apply bg-primary text-primary-foreground border-primary;
+  }
+
+  .doppio-quick-filter-count {
+    @apply ml-0.5 px-1 py-0 rounded text-[10px];
+    @apply bg-default-200;
+  }
+
+  .doppio-quick-filter-active .doppio-quick-filter-count {
+    @apply bg-primary-foreground/20;
+  }
+
+  /* ============================================================
+   * Page with Filter Layout
+   * ============================================================ */
+
+  .doppio-page-with-filter {
+    @apply h-full flex overflow-hidden;
+  }
+
+  .doppio-page-main {
+    @apply flex-1 overflow-auto;
   }
 }

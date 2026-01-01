@@ -128,7 +128,7 @@ export function ColabPage() {
     },
     {
       key: "actions",
-      header: "Actions",
+      header: "",
       render: (s) => (
         <div className="flex flex-wrap gap-2">
           <ActionButton
@@ -140,7 +140,7 @@ export function ColabPage() {
             onPress={() => void handleOpenTerminal(s)}
           />
           <ActionButton
-            label="Copy ssh config"
+            label="Copy SSH Config"
             variant="flat"
             onPress={async () => {
               const snippet = [

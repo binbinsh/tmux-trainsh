@@ -44,6 +44,11 @@ import type {
   VastOffer,
   VastPricingRates,
 } from "./types";
+import {
+  loadRecipeFolderAssignments,
+  renameRecipePathInAssignments,
+  saveRecipeFolderAssignments,
+} from "./recipe-folders";
 
 // ============================================================
 // Error Handling
@@ -1261,6 +1266,14 @@ export function useSaveRecipe() {
     mutationFn: ({ path, recipe }: { path: string; recipe: Recipe }) =>
       recipeApi.save(path, recipe),
     onSuccess: (newPath, variables) => {
+      if (newPath !== variables.path) {
+        const assignments = loadRecipeFolderAssignments();
+        const next = renameRecipePathInAssignments(assignments, variables.path, newPath);
+        if (next !== assignments) {
+          saveRecipeFolderAssignments(next);
+        }
+      }
+
       // Keep the recipe detail + list caches in sync so navigation shows the latest content.
       queryClient.setQueryData(["recipes", newPath], variables.recipe);
       if (newPath !== variables.path) {
