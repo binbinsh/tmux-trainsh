@@ -1,4 +1,5 @@
 import { ScrollShadow, Tooltip } from "@nextui-org/react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../ui";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useMemo } from "react";
@@ -252,13 +253,28 @@ function NavItem({ to, icon, label, isActive, badge }: NavItemProps) {
         }
       `}
     >
-      <span className="w-5 h-5 flex items-center justify-center">{icon}</span>
+      <motion.span
+        className="w-5 h-5 flex items-center justify-center"
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.95 }}
+        transition={{ type: "spring", stiffness: 400, damping: 17 }}
+      >
+        {icon}
+      </motion.span>
       <span className={`text-[13px] ${isActive ? "text-[rgb(var(--doppio-sidebar-text))]" : ""}`}>{label}</span>
-      {badge && (
-        <span className="ml-auto text-[10px] bg-black/5 text-[rgb(var(--doppio-sidebar-text))]/60 px-1.5 py-0.5 rounded-full font-medium">
-          {badge}
-        </span>
-      )}
+      <AnimatePresence>
+        {badge && (
+          <motion.span
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 400, damping: 20 }}
+            className="ml-auto text-[10px] bg-black/5 text-[rgb(var(--doppio-sidebar-text))]/60 px-1.5 py-0.5 rounded-full font-medium"
+          >
+            {badge}
+          </motion.span>
+        )}
+      </AnimatePresence>
     </Link>
   );
 }
@@ -369,12 +385,26 @@ function CollapsedNavItem({ to, icon, label, isActive, badge }: CollapsedNavItem
           }
         `}
       >
-        {icon}
-        {badge && (
-          <span className="absolute -top-0.5 -right-0.5 text-[9px] bg-primary text-primary-foreground w-3.5 h-3.5 rounded-full flex items-center justify-center font-medium">
-            {badge}
-          </span>
-        )}
+        <motion.span
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          transition={{ type: "spring", stiffness: 400, damping: 17 }}
+        >
+          {icon}
+        </motion.span>
+        <AnimatePresence>
+          {badge && (
+            <motion.span
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 400, damping: 20 }}
+              className="absolute -top-0.5 -right-0.5 text-[9px] bg-primary text-primary-foreground w-3.5 h-3.5 rounded-full flex items-center justify-center font-medium"
+            >
+              {badge}
+            </motion.span>
+          )}
+        </AnimatePresence>
       </Link>
     </Tooltip>
   );

@@ -14,14 +14,13 @@ import {
   ModalHeader,
   Select,
   SelectItem,
-  Spinner,
   Switch,
   Tab,
   Tabs,
   Tooltip,
   useDisclosure,
 } from "@nextui-org/react";
-import { Button } from "../components/ui";
+import { Button, SkeletonSection } from "../components/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -1357,9 +1356,10 @@ export function StoragePage() {
 
         {/* Content */}
         {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Spinner size="lg" />
-          </div>
+          <>
+            <SkeletonSection itemCount={2} />
+            <SkeletonSection itemCount={3} />
+          </>
         ) : filteredStorages.length === 0 ? (
           <EmptyHostState
             icon={<span className="text-lg">🗄️</span>}

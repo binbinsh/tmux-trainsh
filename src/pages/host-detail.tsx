@@ -1447,8 +1447,33 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <Spinner size="lg" />
+      <div className="h-full p-6 overflow-auto">
+        <div className="max-w-4xl mx-auto">
+          {/* Skeleton Header */}
+          <div className="flex items-center gap-4 mb-6">
+            <Skeleton className="w-9 h-9 rounded-lg" />
+            <div className="flex-1">
+              <Skeleton className="h-7 w-48 rounded-lg mb-2" />
+              <Skeleton className="h-4 w-64 rounded-lg" />
+            </div>
+            <Skeleton className="w-24 h-9 rounded-lg" />
+          </div>
+          {/* Skeleton Tabs */}
+          <div className="flex gap-2 mb-6">
+            <Skeleton className="h-10 w-24 rounded-lg" />
+            <Skeleton className="h-10 w-24 rounded-lg" />
+            <Skeleton className="h-10 w-24 rounded-lg" />
+          </div>
+          {/* Skeleton Content */}
+          <div className="doppio-card p-6">
+            <div className="space-y-4">
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-3/4 rounded-lg" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

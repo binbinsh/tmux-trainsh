@@ -11,6 +11,7 @@ import {
   ModalHeader,
   Select,
   SelectItem,
+  Skeleton,
   Spinner,
   Table,
   TableBody,
@@ -276,10 +277,41 @@ export function SettingsPage() {
   const isLoading = cfgQuery.isLoading || !draft;
 
   if (isLoading) {
-  return (
-      <div className="h-full flex items-center justify-center">
-          <Spinner size="lg" />
+    return (
+      <div className="doppio-page">
+        <div className="doppio-page-content">
+          {/* Skeleton toolbar */}
+          <div className="termius-toolbar">
+            <div className="termius-toolbar-row justify-between">
+              <div className="min-w-0">
+                <Skeleton className="h-8 w-32 rounded-lg mb-2" />
+                <Skeleton className="h-4 w-48 rounded-lg" />
+              </div>
+              <Skeleton className="h-9 w-24 rounded-lg" />
+            </div>
+          </div>
+          {/* Skeleton cards */}
+          <div className="space-y-6">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="doppio-card">
+                <div className="flex justify-between items-start gap-3 p-4 border-b border-divider">
+                  <div className="flex gap-3 items-center">
+                    <Skeleton className="w-10 h-10 rounded-xl" />
+                    <div>
+                      <Skeleton className="h-5 w-32 rounded-lg mb-1" />
+                      <Skeleton className="h-3 w-48 rounded-lg" />
+                    </div>
+                  </div>
+                </div>
+                <div className="p-4 space-y-4">
+                  <Skeleton className="h-12 w-full rounded-lg" />
+                  <Skeleton className="h-12 w-full rounded-lg" />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
+      </div>
     );
   }
 

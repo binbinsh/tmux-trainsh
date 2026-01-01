@@ -1,9 +1,34 @@
-import { Outlet } from "@tanstack/react-router";
+import { Outlet, useLocation } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
 import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
 import { TerminalProvider, useTerminalOptional } from "../../contexts/TerminalContext";
 import { hostApi, recipeApi, useInteractiveExecutions } from "../../lib/tauri-api";
+
+// Page transition variants
+const pageTransitionVariants = {
+  initial: {
+    opacity: 0,
+    y: 6,
+  },
+  animate: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.18,
+      ease: [0.25, 0.1, 0.25, 1],
+    },
+  },
+  exit: {
+    opacity: 0,
+    y: -4,
+    transition: {
+      duration: 0.12,
+      ease: [0.25, 0.1, 0.25, 1],
+    },
+  },
+};
 
 export function RootLayout() {
   return (
@@ -16,6 +41,11 @@ export function RootLayout() {
 function RootLayoutShell() {
   const terminal = useTerminalOptional();
   const isCollapsed = terminal?.sidebarCollapsed ?? false;
+  const location = useLocation();
+
+  // Determine if we should animate page transitions
+  // Terminal page manages its own state, so we skip animation there
+  const isTerminalPage = location.pathname === "/terminal";
 
   const hostsQuery = useQuery({
     queryKey: ["hosts"],
@@ -48,7 +78,24 @@ function RootLayoutShell() {
           isCollapsed={isCollapsed}
         />
         <main className="flex-1 overflow-hidden bg-background">
-          <Outlet />
+          <AnimatePresence mode="wait">
+            {isTerminalPage ? (
+              // Terminal page - no animation wrapper to preserve xterm state
+              <Outlet />
+            ) : (
+              // Other pages - apply page transition animation
+              <motion.div
+                key={location.pathname}
+                variants={pageTransitionVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="h-full"
+              >
+                <Outlet />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </main>
       </div>
     </div>

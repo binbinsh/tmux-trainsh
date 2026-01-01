@@ -1,3 +1,4 @@
+import { motion, AnimatePresence } from "framer-motion";
 import { type ReactNode } from "react";
 
 // Icons
@@ -52,26 +53,52 @@ export function ContentTabs({
     <div className={`doppio-content-tabs ${className}`}>
       <div className="flex items-center gap-1">
         {tabs.map((tab) => (
-          <button
+          <motion.button
             key={tab.key}
             onClick={() => onTabChange(tab.key)}
             className={`
               doppio-content-tab
               ${activeTab === tab.key ? "doppio-content-tab-active" : ""}
             `}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
           >
-            {tab.icon && <span className="w-4 h-4">{tab.icon}</span>}
-            <span>{tab.label}</span>
-            {tab.count !== undefined && (
-              <span className="doppio-content-tab-badge">{tab.count}</span>
+            {tab.icon && (
+              <motion.span
+                className="w-4 h-4"
+                whileHover={{ rotate: 5 }}
+                transition={{ type: "spring", stiffness: 400, damping: 20 }}
+              >
+                {tab.icon}
+              </motion.span>
             )}
-          </button>
+            <span>{tab.label}</span>
+            <AnimatePresence mode="wait">
+              {tab.count !== undefined && (
+                <motion.span
+                  className="doppio-content-tab-badge"
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 20 }}
+                >
+                  {tab.count}
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </motion.button>
         ))}
       </div>
       {rightContent && (
-        <div className="flex items-center gap-2">
+        <motion.div
+          className="flex items-center gap-2"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+        >
           {rightContent}
-        </div>
+        </motion.div>
       )}
     </div>
   );
@@ -222,17 +249,25 @@ export function FilterButton({
   className = "",
 }: FilterButtonProps) {
   return (
-    <button
+    <motion.button
       onClick={onClick}
       className={`
         doppio-filter-button
         ${isActive ? "doppio-filter-button-active" : ""}
         ${className}
       `}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      transition={{ type: "spring", stiffness: 400, damping: 25 }}
     >
       {label}
-      <IconChevronDown className="w-3 h-3" />
-    </button>
+      <motion.span
+        animate={{ rotate: isActive ? 180 : 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 20 }}
+      >
+        <IconChevronDown className="w-3 h-3" />
+      </motion.span>
+    </motion.button>
   );
 }
 
@@ -259,19 +294,32 @@ export function QuickFilters({
   return (
     <div className={`flex items-center gap-1.5 ${className}`}>
       {filters.map((filter) => (
-        <button
+        <motion.button
           key={filter.key}
           onClick={() => onSelect(selectedKey === filter.key ? undefined : filter.key)}
           className={`
             doppio-quick-filter
             ${selectedKey === filter.key ? "doppio-quick-filter-active" : ""}
           `}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+          transition={{ type: "spring", stiffness: 400, damping: 25 }}
         >
           {filter.label}
-          {filter.count !== undefined && (
-            <span className="doppio-quick-filter-count">{filter.count}</span>
-          )}
-        </button>
+          <AnimatePresence mode="wait">
+            {filter.count !== undefined && (
+              <motion.span
+                className="doppio-quick-filter-count"
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 400, damping: 20 }}
+              >
+                {filter.count}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.button>
       ))}
     </div>
   );

@@ -210,12 +210,14 @@
   .doppio-card {
     @apply bg-content1 border border-divider rounded-xl;
     box-shadow: var(--doppio-shadow-md);
-    transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transform: translateY(0);
   }
 
   .doppio-card:hover {
     @apply bg-content1 border-default-300;
     box-shadow: var(--doppio-shadow-lg);
+    transform: translateY(-2px);
   }
 
   .doppio-card-interactive {
@@ -225,11 +227,13 @@
   .doppio-card-interactive:hover {
     @apply border-primary/40;
     box-shadow: var(--doppio-shadow-lg);
+    transform: translateY(-2px);
   }
 
   .doppio-card-interactive:active {
     @apply border-primary/50;
     box-shadow: var(--doppio-shadow-md);
+    transform: translateY(0) scale(0.99);
   }
 
   /* Stat card */
@@ -292,16 +296,19 @@
 
   .termius-host-row {
     @apply flex items-center px-3 py-2.5 rounded-lg cursor-default;
-    @apply bg-content1 border border-divider transition-all duration-100;
+    @apply bg-content1 border border-divider;
     width: calc(33.333% - 8px);
     flex-shrink: 0;
     box-shadow: var(--doppio-shadow-sm);
+    transition: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transform: translateY(0);
   }
 
   .termius-host-row:hover,
   .termius-host-row-hover {
     @apply bg-content1 border-default-300;
     box-shadow: var(--doppio-shadow-md);
+    transform: translateY(-1px);
   }
 
   .termius-host-row-selected {
@@ -310,6 +317,8 @@
 
   .termius-host-row:active {
     @apply bg-content2;
+    transform: translateY(0) scale(0.995);
+    box-shadow: var(--doppio-shadow-sm);
   }
 
   .termius-host-list {
@@ -338,12 +347,21 @@
 
   .termius-quick-action {
     @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm;
-    @apply bg-content1 border border-divider text-foreground/70 transition-colors cursor-default;
+    @apply bg-content1 border border-divider text-foreground/70 cursor-default;
     box-shadow: var(--doppio-shadow-sm);
+    transition: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transform: translateY(0);
   }
 
   .termius-quick-action:hover {
     @apply bg-content1 border-default-300 text-foreground;
+    box-shadow: var(--doppio-shadow-md);
+    transform: translateY(-1px);
+  }
+
+  .termius-quick-action:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: var(--doppio-shadow-sm);
   }
 
   .termius-quick-action-primary {
@@ -364,11 +382,18 @@
 
   .doppio-content-tab {
     @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium;
-    @apply text-foreground/60 transition-all duration-150 cursor-default border border-transparent;
+    @apply text-foreground/60 cursor-default border border-transparent;
+    transition: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transform: translateY(0);
   }
 
   .doppio-content-tab:hover {
     @apply text-foreground/80 bg-content1 border-divider;
+    transform: translateY(-1px);
+  }
+
+  .doppio-content-tab:active {
+    transform: translateY(0) scale(0.98);
   }
 
   .doppio-content-tab-active {
@@ -409,11 +434,17 @@
 
   .doppio-filter-option {
     @apply flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg;
-    @apply text-sm text-foreground/70 transition-colors cursor-default;
+    @apply text-sm text-foreground/70 cursor-default;
+    transition: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
   }
 
   .doppio-filter-option:hover {
     @apply bg-content2 text-foreground;
+    transform: translateX(2px);
+  }
+
+  .doppio-filter-option:active {
+    transform: translateX(1px) scale(0.99);
   }
 
   .doppio-filter-option-active {
@@ -422,11 +453,19 @@
 
   .doppio-filter-button {
     @apply flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium;
-    @apply bg-content1 border border-divider text-foreground/70 transition-colors cursor-default;
+    @apply bg-content1 border border-divider text-foreground/70 cursor-default;
+    transition: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transform: translateY(0);
   }
 
   .doppio-filter-button:hover {
     @apply bg-content1 border-default-300 text-foreground;
+    transform: translateY(-1px);
+    box-shadow: var(--doppio-shadow-sm);
+  }
+
+  .doppio-filter-button:active {
+    transform: translateY(0) scale(0.98);
   }
 
   .doppio-filter-button-active {
@@ -439,11 +478,19 @@
 
   .doppio-quick-filter {
     @apply flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium;
-    @apply bg-content1 border border-divider text-foreground/70 transition-all duration-150 cursor-default;
+    @apply bg-content1 border border-divider text-foreground/70 cursor-default;
+    transition: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transform: translateY(0);
   }
 
   .doppio-quick-filter:hover {
     @apply bg-content1 border-default-300 text-foreground;
+    transform: translateY(-1px);
+    box-shadow: var(--doppio-shadow-sm);
+  }
+
+  .doppio-quick-filter:active {
+    transform: translateY(0) scale(0.97);
   }
 
   .doppio-quick-filter-active {

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Tooltip } from "@nextui-org/react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../ui";
 import { AppIcon } from "../AppIcon";
 import type { Host, VastInstance } from "../../lib/types";
@@ -59,7 +60,7 @@ export function HostRow({
   const [isHovered, setIsHovered] = useState(false);
 
   return (
-    <div
+    <motion.div
       className={`
         termius-host-row
         ${isSelected ? "termius-host-row-selected" : ""}
@@ -70,17 +71,27 @@ export function HostRow({
       onMouseLeave={() => setIsHovered(false)}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      whileHover={{ scale: 1.005 }}
+      whileTap={{ scale: 0.995 }}
+      transition={{ type: "spring", stiffness: 400, damping: 25 }}
     >
       {/* Icon with status dot */}
       <div className="relative flex-shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-content3 flex items-center justify-center">
+        <motion.div
+          className="w-8 h-8 rounded-lg bg-content3 flex items-center justify-center"
+          whileHover={{ scale: 1.05 }}
+          transition={{ type: "spring", stiffness: 400, damping: 20 }}
+        >
           {icon}
-        </div>
+        </motion.div>
         {/* Status dot */}
-        <span
+        <motion.span
           className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-content2
             ${isOnline ? "bg-success" : "bg-foreground/30"}
           `}
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: "spring", stiffness: 500, damping: 20, delay: 0.1 }}
         />
       </div>
 
@@ -94,32 +105,57 @@ export function HostRow({
 
       {/* Right side - tags and edit button */}
       <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
-        {rightTags && rightTags.length > 0 && !isHovered && (
-          <div className="flex flex-col items-end gap-0.5">
-            {rightTags.map((tag, i) => (
-              <Tag key={i} color={tag.color}>{tag.label}</Tag>
-            ))}
-          </div>
-        )}
-        {hoverActions && isHovered ? (
-          hoverActions
-        ) : onEdit && isHovered ? (
-          <Tooltip content="Edit">
-            <Button
-              size="sm"
-              variant="light"
-              isIconOnly
-              className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-              onPress={() => {
-                onEdit();
-              }}
+        <AnimatePresence mode="wait">
+          {rightTags && rightTags.length > 0 && !isHovered && (
+            <motion.div
+              key="tags"
+              className="flex flex-col items-end gap-0.5"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              transition={{ duration: 0.15 }}
             >
-              <IconEdit className="w-3.5 h-3.5" />
-            </Button>
-          </Tooltip>
-        ) : null}
+              {rightTags.map((tag, i) => (
+                <Tag key={i} color={tag.color}>{tag.label}</Tag>
+              ))}
+            </motion.div>
+          )}
+          {hoverActions && isHovered ? (
+            <motion.div
+              key="hover-actions"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 10 }}
+              transition={{ duration: 0.15 }}
+            >
+              {hoverActions}
+            </motion.div>
+          ) : onEdit && isHovered ? (
+            <motion.div
+              key="edit-button"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 10 }}
+              transition={{ duration: 0.15 }}
+            >
+              <Tooltip content="Edit">
+                <Button
+                  size="sm"
+                  variant="light"
+                  isIconOnly
+                  className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                  onPress={() => {
+                    onEdit();
+                  }}
+                >
+                  <IconEdit className="w-3.5 h-3.5" />
+                </Button>
+              </Tooltip>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -278,17 +314,35 @@ type EmptyHostStateProps = {
 
 export function EmptyHostState({ icon, title, description, action }: EmptyHostStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+    <motion.div
+      className="flex flex-col items-center justify-center py-8 px-4 text-center"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
+    >
       {icon && (
-        <div className="w-10 h-10 rounded-lg bg-content2 flex items-center justify-center mb-3 text-foreground/40">
+        <motion.div
+          className="w-10 h-10 rounded-lg bg-content2 flex items-center justify-center mb-3 text-foreground/40"
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.1, type: "spring", stiffness: 300, damping: 20 }}
+        >
           {icon}
-        </div>
+        </motion.div>
       )}
       <h3 className="text-sm font-medium text-foreground/60 mb-1">{title}</h3>
       {description && (
         <p className="text-xs text-foreground/40 mb-3 max-w-xs">{description}</p>
       )}
-      {action}
-    </div>
+      {action && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2 }}
+        >
+          {action}
+        </motion.div>
+      )}
+    </motion.div>
   );
 }

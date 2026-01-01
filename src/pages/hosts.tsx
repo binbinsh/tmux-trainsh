@@ -8,7 +8,6 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
-  Spinner,
   Tab,
   Tabs,
   useDisclosure,
@@ -17,7 +16,7 @@ import {
   DropdownMenu,
   DropdownItem,
 } from "@nextui-org/react";
-import { Button } from "../components/ui";
+import { Button, SkeletonToolbar, SkeletonSection } from "../components/ui";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useMemo } from "react";
@@ -443,9 +442,10 @@ export function HostListPage() {
 
         {/* Content */}
         {hostsQuery.isLoading || vastQuery.isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Spinner size="lg" />
-          </div>
+          <>
+            <SkeletonSection itemCount={3} />
+            <SkeletonSection itemCount={2} />
+          </>
         ) : (
           <>
             {/* Saved Hosts Section */}

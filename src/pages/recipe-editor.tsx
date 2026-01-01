@@ -13,6 +13,7 @@ import {
   ScrollShadow,
   Select,
   SelectItem,
+  Skeleton,
   Spinner,
   Textarea,
   Tooltip,
@@ -2538,8 +2539,74 @@ export function RecipeEditorPage() {
   
   if (recipeQuery.isLoading || !recipe) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <Spinner size="lg" />
+      <div className="h-full flex flex-col overflow-hidden">
+        {/* Skeleton Header */}
+        <header className="flex items-center gap-4 px-4 h-14 border-b border-divider bg-content1">
+          <Skeleton className="w-8 h-8 rounded-lg" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-6 w-48 rounded-lg" />
+              <Skeleton className="h-5 w-20 rounded-lg" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-24 rounded-lg" />
+            <Skeleton className="h-8 w-28 rounded-lg" />
+            <Skeleton className="h-8 w-16 rounded-lg" />
+          </div>
+        </header>
+
+        {/* Skeleton Main Content */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Steps Canvas */}
+          <div className="flex-1 overflow-auto">
+            <div className="p-8 max-w-2xl mx-auto space-y-6">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="rounded-2xl overflow-hidden shadow-md border border-divider p-4">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Skeleton className="w-6 h-6 rounded" />
+                    <Skeleton className="w-10 h-10 rounded-lg" />
+                    <div className="flex-1">
+                      <Skeleton className="h-5 w-32 rounded-lg mb-1" />
+                      <Skeleton className="h-3 w-24 rounded-lg" />
+                    </div>
+                    <Skeleton className="w-8 h-8 rounded-lg" />
+                  </div>
+                  <div className="space-y-3">
+                    <Skeleton className="h-10 w-full rounded-lg" />
+                    <Skeleton className="h-24 w-full rounded-lg" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Action Palette Sidebar Skeleton */}
+          <div className="w-72 border-l border-divider bg-content1 flex flex-col">
+            <div className="p-4 border-b border-divider">
+              <Skeleton className="h-5 w-20 rounded-lg mb-1" />
+              <Skeleton className="h-3 w-32 rounded-lg" />
+            </div>
+            <div className="flex-1 p-3 space-y-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i}>
+                  <Skeleton className="h-3 w-16 rounded mb-2" />
+                  <div className="space-y-1">
+                    {[1, 2].map((j) => (
+                      <div key={j} className="flex items-center gap-3 px-3 py-2.5">
+                        <Skeleton className="w-8 h-8 rounded-lg" />
+                        <div className="flex-1">
+                          <Skeleton className="h-4 w-20 rounded mb-1" />
+                          <Skeleton className="h-3 w-32 rounded" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

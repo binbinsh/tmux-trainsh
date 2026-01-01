@@ -17,6 +17,7 @@ import {
   ModalHeader,
   Select,
   SelectItem,
+  Skeleton,
   Spinner,
   useDisclosure,
 } from "@nextui-org/react";
@@ -509,8 +510,43 @@ export function FileBrowserPage() {
 
   if (storageQuery.isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <Spinner size="lg" />
+      <div className="h-full flex flex-col">
+        {/* Skeleton Header */}
+        <div className="flex-shrink-0 p-4 border-b border-divider">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <Skeleton className="w-9 h-9 rounded-lg" />
+              <Skeleton className="w-8 h-8 rounded-lg" />
+              <div>
+                <Skeleton className="h-6 w-40 rounded-lg mb-1" />
+                <Skeleton className="h-4 w-56 rounded-lg" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="w-9 h-9 rounded-lg" />
+              <Skeleton className="w-9 h-9 rounded-lg" />
+            </div>
+          </div>
+          {/* Breadcrumbs skeleton */}
+          <div className="flex gap-2">
+            <Skeleton className="h-6 w-16 rounded-lg" />
+            <Skeleton className="h-6 w-24 rounded-lg" />
+            <Skeleton className="h-6 w-20 rounded-lg" />
+          </div>
+        </div>
+        {/* Skeleton File List */}
+        <div className="flex-1 p-4">
+          <div className="space-y-2">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-divider">
+                <Skeleton className="w-8 h-8 rounded" />
+                <Skeleton className="h-5 flex-1 rounded-lg" />
+                <Skeleton className="h-4 w-20 rounded-lg" />
+                <Skeleton className="h-4 w-32 rounded-lg" />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }

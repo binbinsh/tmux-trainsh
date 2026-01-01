@@ -12,11 +12,10 @@ import {
   ModalHeader,
   Select,
   SelectItem,
-  Spinner,
   Tooltip,
   useDisclosure,
 } from "@nextui-org/react";
-import { Button } from "../components/ui";
+import { Button, SkeletonSection } from "../components/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -942,9 +941,10 @@ export function RecipesPage() {
 
         {/* Content */}
         {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Spinner size="lg" />
-          </div>
+          <>
+            <SkeletonSection itemCount={2} />
+            <SkeletonSection itemCount={3} />
+          </>
         ) : (
           <>
             {activeExecutions.length > 0 && (
