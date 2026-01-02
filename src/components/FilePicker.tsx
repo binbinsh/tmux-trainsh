@@ -3,24 +3,48 @@
  * Supports: Local filesystem, Hosts (SSH), Storage backends
  */
 
-import {
-  Checkbox,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ScrollShadow,
-  Select,
-  SelectItem,
-  Spinner,
-} from "@nextui-org/react";
-import { Button } from "./ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
-import { createHostDir, createLocalDir, listLocalFiles, listHostFiles, storageApi, useHosts, useStorages } from "../lib/tauri-api";
-import type { FileEntry, Host, Storage } from "../lib/types";
+import {
+  Folder,
+  File,
+  ChevronRight,
+  ArrowUp,
+  Home,
+  FolderPlus,
+  Loader2,
+} from "lucide-react";
+import {
+  createHostDir,
+  createLocalDir,
+  listLocalFiles,
+  listHostFiles,
+  storageApi,
+  useHosts,
+  useStorages,
+} from "@/lib/tauri-api";
+import type { FileEntry, Host, Storage } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // ============================================================
 // Types
@@ -28,7 +52,7 @@ import type { FileEntry, Host, Storage } from "../lib/types";
 
 export type EndpointType = "local" | "host" | "storage";
 
-export type SelectedEndpoint = 
+export type SelectedEndpoint =
   | { type: "local"; path: string }
   | { type: "host"; hostId: string; path: string }
   | { type: "storage"; storageId: string; path: string };
@@ -44,42 +68,6 @@ interface FilePickerProps {
   defaultHostId?: string;
   defaultStorageId?: string;
   defaultPath?: string;
-}
-
-// ============================================================
-// Icons
-// ============================================================
-
-function IconFolder() {
-  return (
-    <svg className="w-5 h-5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-    </svg>
-  );
-}
-
-function IconFile() {
-  return (
-    <svg className="w-5 h-5 text-default-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-    </svg>
-  );
-}
-
-function IconChevronRight() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-    </svg>
-  );
-}
-
-function IconUp() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5L12 3m0 0l7.5 7.5M12 3v18" />
-    </svg>
-  );
 }
 
 // ============================================================
@@ -160,11 +148,11 @@ export function FilePicker({
       }
       return [];
     },
-    enabled: isOpen && (
-      endpointType === "local" ||
-      (endpointType === "storage" && !!storageId) ||
-      (endpointType === "host" && !!hostId)
-    ),
+    enabled:
+      isOpen &&
+      (endpointType === "local" ||
+        (endpointType === "storage" && !!storageId) ||
+        (endpointType === "host" && !!hostId)),
   });
 
   // Filter and sort files
@@ -174,7 +162,7 @@ export function FilePicker({
       // Show all but only allow selecting files
     } else if (mode === "folder") {
       // Show only folders
-      filtered = files.filter(f => f.is_dir);
+      filtered = files.filter((f) => f.is_dir);
     }
     // Sort: folders first, then by name
     return [...filtered].sort((a, b) => {
@@ -219,7 +207,7 @@ export function FilePicker({
 
   const handleConfirm = () => {
     const paths = Array.from(selectedPaths);
-    
+
     let endpoint: SelectedEndpoint;
     if (endpointType === "local") {
       endpoint = { type: "local", path: currentPath };
@@ -228,7 +216,7 @@ export function FilePicker({
     } else {
       endpoint = { type: "storage", storageId, path: currentPath };
     }
-    
+
     onSelect(endpoint, paths);
     onClose();
   };
@@ -292,162 +280,194 @@ export function FilePicker({
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onClose} size="3xl" scrollBehavior="inside">
-        <ModalContent>
-          <ModalHeader className="flex flex-col gap-2">
-            <span>{title}</span>
-            
-            {/* Endpoint selector */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <Select labelPlacement="inside" selectedKeys={[endpointType]}
-              onSelectionChange={(keys) => {
-                const type = Array.from(keys)[0] as EndpointType;
-                setEndpointType(type);
-                setCurrentPath("/");
-                setSelectedPaths(new Set());
-              }}
-              size="sm"
-              variant="bordered"
-              className="max-w-[140px]"
-              label="Source"><SelectItem key="local">Local</SelectItem>
-              <SelectItem key="host">Host</SelectItem>
-              <SelectItem key="storage">Storage</SelectItem></Select>
-              
-              {endpointType === "host" && (
-                <Select labelPlacement="inside" selectedKeys={hostId ? [hostId] : []}
-                onSelectionChange={(keys) => {
-                  const id = Array.from(keys)[0] as string;
-                  setHostId(id);
-                  setCurrentPath("/");
-                }}
-                size="sm"
-                variant="bordered"
-                className="max-w-[200px]"
-                label="Host"
-                placeholder="Select host...">{hosts.map((h: Host) => (
-                  <SelectItem key={h.id}>{h.name}</SelectItem>
-                ))}</Select>
-              )}
-              
-              {endpointType === "storage" && (
-                <Select labelPlacement="inside" selectedKeys={storageId ? [storageId] : []}
-                onSelectionChange={(keys) => {
-                  const id = Array.from(keys)[0] as string;
-                  setStorageId(id);
-                  setCurrentPath("/");
-                }}
-                size="sm"
-                variant="bordered"
-                className="max-w-[200px]"
-                label="Storage"
-                placeholder="Select storage...">{storages.map((s: Storage) => (
-                  <SelectItem key={s.id}>{s.name}</SelectItem>
-                ))}</Select>
-              )}
-              
-              {endpointType === "local" && (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription className="flex flex-col gap-2 pt-2">
+              {/* Endpoint selector */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="w-[140px]">
+                  <Label className="text-xs mb-1 block">Source</Label>
+                  <Select
+                    value={endpointType}
+                    onValueChange={(value) => {
+                      setEndpointType(value as EndpointType);
+                      setCurrentPath("/");
+                      setSelectedPaths(new Set());
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="local">Local</SelectItem>
+                      <SelectItem value="host">Host</SelectItem>
+                      <SelectItem value="storage">Storage</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {endpointType === "host" && (
+                  <div className="w-[200px]">
+                    <Label className="text-xs mb-1 block">Host</Label>
+                    <Select
+                      value={hostId}
+                      onValueChange={(value) => {
+                        setHostId(value);
+                        setCurrentPath("/");
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Select host..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {hosts.map((h: Host) => (
+                          <SelectItem key={h.id} value={h.id}>
+                            {h.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {endpointType === "storage" && (
+                  <div className="w-[200px]">
+                    <Label className="text-xs mb-1 block">Storage</Label>
+                    <Select
+                      value={storageId}
+                      onValueChange={(value) => {
+                        setStorageId(value);
+                        setCurrentPath("/");
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Select storage..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {storages.map((s: Storage) => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {endpointType === "local" && (
+                  <Button size="sm" variant="ghost" onClick={handleGoHome} className="mt-5">
+                    <Home className="h-4 w-4 mr-2" />
+                    Go to Home
+                  </Button>
+                )}
+
                 <Button
                   size="sm"
-                  variant="flat"
-                  onPress={handleGoHome}
+                  variant="ghost"
+                  onClick={() => {
+                    setNewFolderError(null);
+                    setNewFolderName("");
+                    setNewFolderOpen(true);
+                  }}
+                  disabled={!canCreateFolder}
+                  className="mt-5"
                 >
-                  Go to Home
+                  <FolderPlus className="h-4 w-4 mr-2" />
+                  New Folder
                 </Button>
-              )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-hidden flex flex-col gap-4">
+            {/* Path bar */}
+            <div className="flex items-center gap-1 p-2 bg-muted rounded-lg overflow-x-auto">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                onClick={() => handleNavigate(getParentPath(currentPath))}
+                disabled={currentPath === "/" || currentPath === ""}
+              >
+                <ArrowUp className="h-4 w-4" />
+              </Button>
 
               <Button
-                size="sm"
-                variant="flat"
-                onPress={() => {
-                  setNewFolderError(null);
-                  setNewFolderName("");
-                  setNewFolderOpen(true);
-                }}
-                isDisabled={!canCreateFolder}
-              >
-                New Folder
-              </Button>
-            </div>
-          </ModalHeader>
-          
-          <ModalBody>
-            {/* Path bar */}
-            <div className="flex items-center gap-1 mb-4 p-2 bg-default-100 rounded-lg overflow-x-auto">
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                onPress={() => handleNavigate(getParentPath(currentPath))}
-                isDisabled={currentPath === "/" || currentPath === ""}
-              >
-                <IconUp />
-              </Button>
-              
-              <button
-                className="text-sm text-primary hover:underline px-1"
+                type="button"
+                variant="link"
+                className="h-auto p-0 px-1 text-sm"
                 onClick={() => handleNavigate("/")}
               >
                 /
-              </button>
-              
+              </Button>
+
               {pathParts.map((part, i) => (
                 <div key={i} className="flex items-center">
-                  <IconChevronRight />
-                  <button
-                    className="text-sm text-primary hover:underline px-1"
+                  <ChevronRight className="h-4 w-4" />
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto p-0 px-1 text-sm"
                     onClick={() => handleNavigate("/" + pathParts.slice(0, i + 1).join("/"))}
                   >
                     {part}
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
-            
+
             {/* File list */}
-            <ScrollShadow className="h-[400px]">
+            <ScrollArea className="flex-1 h-[400px]">
               {isLoading ? (
                 <div className="flex items-center justify-center h-full">
-                  <Spinner />
+                  <Loader2 className="h-6 w-6 animate-spin" />
                 </div>
               ) : sortedFiles.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-foreground/50">
+                <div className="flex items-center justify-center h-full text-muted-foreground">
                   No files found
                 </div>
               ) : (
-                <div className="space-y-1">
+                <div className="space-y-1 pr-4">
                   {sortedFiles.map((file) => {
                     const isSelected = selectedPaths.has(file.path);
-                    const canSelect = mode === "both" || 
+                    const canSelect =
+                      mode === "both" ||
                       (mode === "file" && !file.is_dir) ||
                       (mode === "folder" && file.is_dir);
-                    
+
                     return (
                       <div
                         key={file.path}
-                        className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
-                          isSelected 
-                            ? "bg-primary/10 border border-primary/30" 
-                            : "hover:bg-default-100"
-                        }`}
+                        className={cn(
+                          "flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors",
+                          isSelected
+                            ? "bg-primary/10 border border-primary/30"
+                            : "hover:bg-accent"
+                        )}
                         onClick={() => handleToggleSelect(file)}
                         onDoubleClick={() => handleDoubleClick(file)}
                       >
                         {canSelect && (
                           <Checkbox
-                            isSelected={isSelected}
-                            onValueChange={() => handleToggleSelect(file)}
-                            size="sm"
+                            checked={isSelected}
+                            onCheckedChange={() => handleToggleSelect(file)}
                           />
                         )}
-                        
-                        {file.is_dir ? <IconFolder /> : <IconFile />}
-                        
+
+                        {file.is_dir ? (
+                          <Folder className="h-5 w-5 text-yellow-500" />
+                        ) : (
+                          <File className="h-5 w-5 text-muted-foreground" />
+                        )}
+
                         <div className="flex-1 min-w-0">
                           <p className="text-sm truncate">{file.name}</p>
                         </div>
-                        
+
                         {!file.is_dir && (
-                          <span className="text-xs text-foreground/50">
+                          <span className="text-xs text-muted-foreground">
                             {formatBytes(file.size)}
                           </span>
                         )}
@@ -456,61 +476,58 @@ export function FilePicker({
                   })}
                 </div>
               )}
-            </ScrollShadow>
-          </ModalBody>
-          
-          <ModalFooter>
-            <div className="flex-1 text-sm text-foreground/60">
+            </ScrollArea>
+          </div>
+
+          <DialogFooter>
+            <div className="flex-1 text-sm text-muted-foreground">
               {selectedPaths.size > 0 && `${selectedPaths.size} selected`}
             </div>
-            <Button variant="light" onPress={onClose}>
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirm} disabled={selectedPaths.size === 0}>
+              Select
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Folder</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="folder-name">Folder Name</Label>
+              <Input
+                id="folder-name"
+                placeholder="my-folder"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateFolder();
+                }}
+                autoFocus
+              />
+            </div>
+            {newFolderError && <p className="text-sm text-destructive">{newFolderError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setNewFolderOpen(false)}>
               Cancel
             </Button>
             <Button
-              color="primary"
-              onPress={handleConfirm}
-              isDisabled={selectedPaths.size === 0}
+              onClick={handleCreateFolder}
+              disabled={!newFolderName.trim() || createFolderMutation.isPending}
             >
-              Select
+              {createFolderMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Create
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal isOpen={newFolderOpen} onOpenChange={setNewFolderOpen} isDismissable={true}>
-        <ModalContent>
-          {(onCloseModal) => (
-            <>
-              <ModalHeader>New Folder</ModalHeader>
-              <ModalBody>
-                <Input
-                  labelPlacement="inside"
-                  label="Folder Name"
-                  placeholder="my-folder"
-                  value={newFolderName}
-                  onValueChange={setNewFolderName}
-                  autoFocus
-                  isRequired
-                />
-                {newFolderError && <p className="text-sm text-danger">{newFolderError}</p>}
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="light" onPress={onCloseModal}>
-                  Cancel
-                </Button>
-                <Button
-                  color="primary"
-                  onPress={handleCreateFolder}
-                  isLoading={createFolderMutation.isPending}
-                  isDisabled={!newFolderName.trim()}
-                >
-                  Create
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

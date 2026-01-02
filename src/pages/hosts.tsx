@@ -1,22 +1,25 @@
 import {
   Card,
-  CardBody,
-  Divider,
+  CardContent,
+  Separator,
   Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Tab,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
   Tabs,
-  useDisclosure,
-  Dropdown,
-  DropdownTrigger,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
   DropdownMenu,
-  DropdownItem,
-} from "@nextui-org/react";
-import { Button, SkeletonToolbar, SkeletonSection } from "../components/ui";
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  Button,
+  Label,
+  Skeleton,
+} from "@/components/ui";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useMemo } from "react";
@@ -38,71 +41,18 @@ import {
   HostSection,
   EmptyHostState,
 } from "../components/shared/HostCard";
-
-// Icons
-function IconPlus({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-    </svg>
-  );
-}
-
-function IconTerminal({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
-    </svg>
-  );
-}
-
-function IconSearch({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-    </svg>
-  );
-}
-
-function IconFilter({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
-    </svg>
-  );
-}
-
-function IconSort({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
-    </svg>
-  );
-}
-
-function IconCopy({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-3.5 h-3.5"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
-    </svg>
-  );
-}
-
-function IconCheck({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-3.5 h-3.5"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-    </svg>
-  );
-}
-
-function IconServer({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-5 h-5"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 17.25v-.228a4.5 4.5 0 00-.12-1.03l-2.268-9.64a3.375 3.375 0 00-3.285-2.602H7.923a3.375 3.375 0 00-3.285 2.602l-2.268 9.64a4.5 4.5 0 00-.12 1.03v.228m19.5 0a3 3 0 01-3 3H5.25a3 3 0 01-3-3m19.5 0a3 3 0 00-3-3H5.25a3 3 0 00-3 3m16.5 0h.008v.008h-.008v-.008zm-3 0h.008v.008h-.008v-.008z" />
-    </svg>
-  );
-}
+import { cn } from "@/lib/utils";
+import {
+  Plus,
+  Terminal,
+  Search,
+  Filter,
+  ArrowUpDown,
+  Copy,
+  Check,
+  Server,
+  Loader2,
+} from "lucide-react";
 
 // Copyable code block component
 function CodeBlock({ code }: { code: string }) {
@@ -116,18 +66,33 @@ function CodeBlock({ code }: { code: string }) {
 
   return (
     <div className="relative group">
-      <pre className="bg-content3 rounded-lg p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
+      <pre className="bg-muted border border-border rounded-lg p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
         {code}
       </pre>
       <Button
         size="sm"
-        variant="flat"
-        isIconOnly
-        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-        onPress={handleCopy}
+        variant="outline"
+        className={cn(
+          "absolute top-2 right-2 h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+        )}
+        onClick={handleCopy}
       >
-        {copied ? <IconCheck /> : <IconCopy />}
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
       </Button>
+    </div>
+  );
+}
+
+// SkeletonSection component (local to this file)
+function SkeletonSection({ itemCount }: { itemCount: number }) {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-6 w-32" />
+      <div className="space-y-2">
+        {Array.from({ length: itemCount }).map((_, i) => (
+          <Skeleton key={i} className="h-16 w-full" />
+        ))}
+      </div>
     </div>
   );
 }
@@ -135,7 +100,7 @@ function CodeBlock({ code }: { code: string }) {
 export function HostListPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const addHostModal = useDisclosure();
+  const [addHostModalOpen, setAddHostModalOpen] = useState(false);
 
   // State
   const [searchQuery, setSearchQuery] = useState("");
@@ -168,7 +133,7 @@ export function HostListPage() {
     mutationFn: hostApi.add,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["hosts"] });
-      addHostModal.onClose();
+      setAddHostModalOpen(false);
     },
   });
 
@@ -190,7 +155,7 @@ export function HostListPage() {
   useEffect(() => {
     let cancelled = false;
 
-    if (addHostTab === "colab" && addHostModal.isOpen) {
+    if (addHostTab === "colab" && addHostModalOpen) {
       (async () => {
         try {
           const cfg = await getConfig();
@@ -215,14 +180,14 @@ export function HostListPage() {
     return () => {
       cancelled = true;
     };
-  }, [addHostTab, addHostModal.isOpen]);
+  }, [addHostTab, addHostModalOpen]);
 
   useEffect(() => {
-    if (!addHostModal.isOpen) {
+    if (!addHostModalOpen) {
       setColabPubKey("");
       setColabPubKeyError("");
     }
-  }, [addHostModal.isOpen]);
+  }, [addHostModalOpen]);
 
   function handleAddHost() {
     if (!newHost.name) return;
@@ -342,100 +307,84 @@ export function HostListPage() {
           {/* Row 1: Search + Connect */}
           <div className="termius-toolbar-row">
             <div className="termius-search-bar">
-              <Input
-                size="lg"
-                placeholder="Search hosts..."
-                value={searchQuery}
-                onValueChange={setSearchQuery}
-                startContent={<IconSearch className="w-5 h-5 text-foreground/40" />}
-                endContent={
-                  <Button
-                    color="primary"
-                    size="sm"
-                    className="h-8 px-4"
-                    onPress={handleConnect}
-                    isDisabled={!canConnect}
-                  >
-                    Connect
-                  </Button>
-                }
-                classNames={{
-                  base: "flex-1",
-                  inputWrapper: "bg-content2 h-12",
-                  input: "text-base",
-                }}
-              />
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-foreground/40" />
+                <Input
+                  placeholder="Search hosts..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-12 pl-10 pr-28 text-base"
+                />
+                <Button
+                  size="sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-8 px-4"
+                  onClick={handleConnect}
+                  disabled={!canConnect}
+                >
+                  Connect
+                </Button>
+              </div>
             </div>
           </div>
 
           {/* Row 2: Quick Actions + Filters */}
           <div className="termius-toolbar-row justify-between">
             <div className="termius-quick-actions">
-              <button
-                className="termius-quick-action"
-                onClick={addHostModal.onOpen}
-              >
-                <IconPlus className="w-4 h-4" />
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAddHostModalOpen(true)}>
+                <Plus className="w-4 h-4" />
                 <span>New Host</span>
-              </button>
-              <button
-                className="termius-quick-action"
+              </Button>
+              <Button
+                variant="outline" size="sm" className="gap-1.5"
                 onClick={() => navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } })}
               >
-                <IconTerminal className="w-4 h-4" />
+                <Terminal className="w-4 h-4" />
                 <span>Terminal</span>
-              </button>
-              <button
-                className="termius-quick-action"
-                onClick={() => { void openVastConsole(); }}
-              >
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { void openVastConsole(); }}>
                 <span>Rent from Vast.ai</span>
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center gap-1">
               {/* Filter dropdown */}
-              <Dropdown>
-                <DropdownTrigger>
-                  <button className={`termius-quick-action ${filterStatus !== "all" ? "termius-quick-action-primary" : ""}`}>
-                    <IconFilter className="w-4 h-4" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className={cn("gap-1.5", filterStatus !== "all" && "bg-primary text-primary-foreground")}>
+                    <Filter className="w-4 h-4" />
                     <span>{filterStatus === "all" ? "Filter" : filterStatus}</span>
-                  </button>
-                </DropdownTrigger>
-                <DropdownMenu
-                  selectionMode="single"
-                  selectedKeys={new Set([filterStatus])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as "all" | "online" | "offline";
-                    setFilterStatus(selected);
-                  }}
-                >
-                  <DropdownItem key="all">All</DropdownItem>
-                  <DropdownItem key="online">Online</DropdownItem>
-                  <DropdownItem key="offline">Offline</DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setFilterStatus("all")}>
+                    All
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterStatus("online")}>
+                    Online
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterStatus("offline")}>
+                    Offline
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
               {/* Sort dropdown */}
-              <Dropdown>
-                <DropdownTrigger>
-                  <button className="termius-quick-action">
-                    <IconSort className="w-4 h-4" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <ArrowUpDown className="w-4 h-4" />
                     <span>{sortBy === "name" ? "Name" : "Recent"}</span>
-                  </button>
-                </DropdownTrigger>
-                <DropdownMenu
-                  selectionMode="single"
-                  selectedKeys={new Set([sortBy])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as "name" | "recent";
-                    setSortBy(selected);
-                  }}
-                >
-                  <DropdownItem key="name">Name</DropdownItem>
-                  <DropdownItem key="recent">Recent</DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setSortBy("name")}>
+                    Name
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSortBy("recent")}>
+                    Recent
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
@@ -513,12 +462,12 @@ export function HostListPage() {
             {/* Empty state */}
             {filteredHosts.length === 0 && filteredVastInstances.length === 0 && (
               <EmptyHostState
-                icon={<IconServer />}
+                icon={<Server className="w-5 h-5" />}
                 title={searchQuery ? "No hosts match your search" : "No hosts yet"}
                 description={searchQuery ? undefined : "Add a host to get started with remote connections."}
                 action={
                   !searchQuery ? (
-                    <Button size="sm" color="primary" onPress={addHostModal.onOpen}>
+                    <Button size="sm" onClick={() => setAddHostModalOpen(true)}>
                       Add Host
                     </Button>
                   ) : undefined
@@ -529,66 +478,86 @@ export function HostListPage() {
         )}
 
         {/* Add Host Modal */}
-        <Modal
-          isOpen={addHostModal.isOpen}
-          onOpenChange={addHostModal.onOpenChange}
-          isDismissable={true}
-          size="3xl"
-          scrollBehavior="inside"
-        >
-          <ModalContent>
-            {(onClose) => (
-              <>
-                <ModalHeader>Add Host</ModalHeader>
-                <ModalBody>
-                  <Tabs selectedKey={addHostTab} onSelectionChange={(k) => setAddHostTab(k as string)}>
-                    <Tab key="custom" title="Custom SSH">
-                      <div className="space-y-4 pt-4">
-                        <Input labelPlacement="inside" label="Host Name"
-                        placeholder="my-training-server"
-                        value={newHost.name ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, name: v })}
-                        isRequired />
-                        <Input labelPlacement="inside" label="SSH Host"
-                        placeholder="192.168.1.100 or hostname.example.com"
-                        value={newHost.ssh_host ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, ssh_host: v })}
-                        isRequired />
-                        <div className="grid grid-cols-2 gap-4">
-                          <Input labelPlacement="inside" label="SSH Port"
-                          type="number"
-                          value={String(newHost.ssh_port ?? 22)}
-                          onValueChange={(v) => setNewHost({ ...newHost, ssh_port: parseInt(v) || 22 })} />
-                          <Input labelPlacement="inside" label="SSH User"
-                          placeholder="root"
-                          value={newHost.ssh_user ?? ""}
-                          onValueChange={(v) => setNewHost({ ...newHost, ssh_user: v })} />
-                        </div>
-                        <Input labelPlacement="inside" label="SSH Key Path (optional)"
-                        placeholder="~/.ssh/id_rsa"
-                        value={newHost.ssh_key_path ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, ssh_key_path: v || null })} />
-                      </div>
-                    </Tab>
+        <Dialog open={addHostModalOpen} onOpenChange={setAddHostModalOpen}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Add Host</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <Tabs value={addHostTab} onValueChange={setAddHostTab}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="custom">Custom SSH</TabsTrigger>
+                  <TabsTrigger value="colab">Google Colab</TabsTrigger>
+                </TabsList>
+                <TabsContent value="custom" className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="host-name">Host Name *</Label>
+                    <Input
+                      id="host-name"
+                      placeholder="my-training-server"
+                      value={newHost.name ?? ""}
+                      onChange={(e) => setNewHost({ ...newHost, name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-host">SSH Host *</Label>
+                    <Input
+                      id="ssh-host"
+                      placeholder="192.168.1.100 or hostname.example.com"
+                      value={newHost.ssh_host ?? ""}
+                      onChange={(e) => setNewHost({ ...newHost, ssh_host: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-port">SSH Port</Label>
+                      <Input
+                        id="ssh-port"
+                        type="number"
+                        value={String(newHost.ssh_port ?? 22)}
+                        onChange={(e) => setNewHost({ ...newHost, ssh_port: parseInt(e.target.value) || 22 })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-user">SSH User</Label>
+                      <Input
+                        id="ssh-user"
+                        placeholder="root"
+                        value={newHost.ssh_user ?? ""}
+                        onChange={(e) => setNewHost({ ...newHost, ssh_user: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-key-path">SSH Key Path (optional)</Label>
+                    <Input
+                      id="ssh-key-path"
+                      placeholder="~/.ssh/id_rsa"
+                      value={newHost.ssh_key_path ?? ""}
+                      onChange={(e) => setNewHost({ ...newHost, ssh_key_path: e.target.value || null })}
+                    />
+                  </div>
+                </TabsContent>
 
-                    <Tab key="colab" title="Google Colab">
-                      <div className="space-y-4 pt-4">
-                        {colabPubKeyError && (
-                          <Card className="bg-danger/10 border border-danger/30">
-                            <CardBody>
-                              <p className="text-sm text-danger">{colabPubKeyError}</p>
-                            </CardBody>
-                          </Card>
-                        )}
+                <TabsContent value="colab" className="space-y-4 pt-4">
+                  {colabPubKeyError && (
+                    <Card className="bg-danger/10 border border-danger/30">
+                      <CardContent className="pt-6">
+                        <p className="text-sm text-danger">{colabPubKeyError}</p>
+                      </CardContent>
+                    </Card>
+                  )}
 
-                        <Card className="bg-content2">
-                          <CardBody className="gap-3">
-                            <p className="text-sm font-medium">One-Click Setup</p>
-                            <p className="text-xs text-foreground/60">
-                              Copy this entire code block and paste it into a Colab cell, then run it:
-                            </p>
+                  <Card className="bg-muted">
+                    <CardContent className="space-y-3 pt-6">
+                      <p className="text-sm font-medium">One-Click Setup</p>
+                      <p className="text-xs text-foreground/60">
+                        Copy this entire code block and paste it into a Colab cell, then run it:
+                      </p>
 
-                            <CodeBlock code={`# === Doppio Colab Setup ===
+                      <CodeBlock code={`# === Doppio Colab Setup ===
 !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && dpkg -i cloudflared-linux-amd64.deb
 !apt-get update -qq && apt-get install -y -qq openssh-server
 !mkdir -p /var/run/sshd ~/.ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
@@ -604,52 +573,63 @@ for _ in range(30):
         if match: print(f"\\n✅ Hostname: {match.group(1)}"); break
     time.sleep(0.5)`} />
 
-                            <p className="text-xs text-foreground/60">
-                              Copy the hostname and paste it below.
-                            </p>
-                          </CardBody>
-                        </Card>
+                      <p className="text-xs text-foreground/60">
+                        Copy the hostname and paste it below.
+                      </p>
+                    </CardContent>
+                  </Card>
 
-                        <Divider />
+                  <Separator />
 
-                        <Input labelPlacement="inside" label="Host Name"
-                        placeholder="my-colab"
-                        value={newHost.name ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, name: v, type: "colab" })}
-                        isRequired />
-                        <Input labelPlacement="inside" label="Cloudflared Hostname"
-                        placeholder="xxxx-xxxx.trycloudflare.com"
-                        value={newHost.cloudflared_hostname ?? ""}
-                        onValueChange={(v) => setNewHost({ ...newHost, cloudflared_hostname: v })}
-                        isRequired />
-                        <Input labelPlacement="inside" label="SSH User"
-                        placeholder="root"
-                        value={newHost.ssh_user ?? "root"}
-                        onValueChange={(v) => setNewHost({ ...newHost, ssh_user: v })} />
-                      </div>
-                    </Tab>
-                  </Tabs>
-                </ModalBody>
-                <ModalFooter>
-                  <Button variant="flat" onPress={onClose}>
-                    Cancel
-                  </Button>
-                  <Button
-                    color="primary"
-                    onPress={() => {
-                      setNewHost({ ...newHost, type: addHostTab as HostType });
-                      handleAddHost();
-                    }}
-                    isLoading={addHostMutation.isPending}
-                    isDisabled={!newHost.name}
-                  >
-                    Add Host
-                  </Button>
-                </ModalFooter>
-              </>
-            )}
-          </ModalContent>
-        </Modal>
+                  <div className="space-y-2">
+                    <Label htmlFor="colab-name">Host Name *</Label>
+                    <Input
+                      id="colab-name"
+                      placeholder="my-colab"
+                      value={newHost.name ?? ""}
+                      onChange={(e) => setNewHost({ ...newHost, name: e.target.value, type: "colab" })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="cloudflared-hostname">Cloudflared Hostname *</Label>
+                    <Input
+                      id="cloudflared-hostname"
+                      placeholder="xxxx-xxxx.trycloudflare.com"
+                      value={newHost.cloudflared_hostname ?? ""}
+                      onChange={(e) => setNewHost({ ...newHost, cloudflared_hostname: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="colab-ssh-user">SSH User</Label>
+                    <Input
+                      id="colab-ssh-user"
+                      placeholder="root"
+                      value={newHost.ssh_user ?? "root"}
+                      onChange={(e) => setNewHost({ ...newHost, ssh_user: e.target.value })}
+                    />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAddHostModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  setNewHost({ ...newHost, type: addHostTab as HostType });
+                  handleAddHost();
+                }}
+                disabled={addHostMutation.isPending || !newHost.name}
+              >
+                {addHostMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Add Host
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

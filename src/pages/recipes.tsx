@@ -1,21 +1,34 @@
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Chip,
-  Input,
-  Dropdown,
-  DropdownItem,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
-  DropdownTrigger,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
+  SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Tooltip,
-  useDisclosure,
-} from "@nextui-org/react";
-import { Button, SkeletonSection } from "../components/ui";
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -48,120 +61,26 @@ import {
   saveRecipeFolders,
   setAssignedFolderId,
 } from "../lib/recipe-folders";
+import { cn } from "@/lib/utils";
+import {
+  Plus,
+  Play,
+  Upload,
+  Folder,
+  Archive,
+  RotateCcw,
+  Terminal,
+  X,
+  Search,
+  Filter,
+  ArrowUpDown,
+  MoreHorizontal,
+  Edit,
+  Trash2,
+  Loader2,
+} from "lucide-react";
 
-// Icons
-function IconPlus() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-    </svg>
-  );
-}
-
-function IconPlay() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-    </svg>
-  );
-}
-
-function IconUpload() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-    </svg>
-  );
-}
-
-function IconFolder({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75A2.25 2.25 0 014.5 4.5h4.379c.597 0 1.17.237 1.591.659l.621.621c.422.422.994.659 1.591.659H19.5A2.25 2.25 0 0121.75 8.25v9A2.25 2.25 0 0119.5 19.5h-15A2.25 2.25 0 012.25 17.25v-10.5z" />
-    </svg>
-  );
-}
-
-function IconArchive({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.72-3.6A1.5 1.5 0 0018.06 2.75H5.94A1.5 1.5 0 004.47 3.9l-.72 3.6m16.5 0H3.75m16.5 0v12A1.5 1.5 0 0118.75 21h-13.5A1.5 1.5 0 013.75 19.5v-12m8.25 4.5v4.5m0 0l-2.25-2.25M12 16.5l2.25-2.25" />
-    </svg>
-  );
-}
-
-function IconRestore({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9.03 3.376c-.866 1.5-2.9 3.374-4.631 3.374H7.601c-1.73 0-3.564-1.874-4.43-3.374L1.5 12l1.671-3.376C4.037 7.124 5.87 5.25 7.6 5.25h8.799c1.73 0 3.765 1.874 4.631 3.374L22.5 12l-1.47 3.376z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75L12 7.5l2.25 2.25" />
-    </svg>
-  );
-}
-
-function IconTerminal({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
-    </svg>
-  );
-}
-
-function IconCancel() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
-}
-
-function IconSearch({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-    </svg>
-  );
-}
-
-function IconFilter({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
-    </svg>
-  );
-}
-
-function IconSort({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
-    </svg>
-  );
-}
-
-function IconEllipsis({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
-    </svg>
-  );
-}
-
-function IconEdit({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-    </svg>
-  );
-}
-
-function IconTrash({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-    </svg>
-  );
-}
+// Icons have been replaced with lucide-react imports above
 
 function getStatusLabel(status: InteractiveStatus): string {
   switch (status) {
@@ -195,29 +114,42 @@ function getExecutionProgressLabel(execution: InteractiveExecution): string {
     : "0/0";
 }
 
-function getExecutionTagColor(status: InteractiveStatus): "default" | "primary" | "warning" {
+function getExecutionTagColor(status: InteractiveStatus): "default" | "destructive" | "secondary" {
   switch (status) {
     case "running":
     case "waiting_for_input":
-      return "primary";
+      return "default";
     case "paused":
     case "connecting":
     case "pending":
-      return "warning";
+      return "secondary";
     default:
       return "default";
   }
+}
+
+function SkeletonSection({ itemCount }: { itemCount: number }) {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-6 w-32" />
+      <div className="space-y-2">
+        {Array.from({ length: itemCount }).map((_, i) => (
+          <Skeleton key={i} className="h-16 w-full" />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function RecipesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const terminalContext = useTerminalOptional();
-  const createRecipeModal = useDisclosure();
-  const createFolderModal = useDisclosure();
-  const deleteFolderModal = useDisclosure();
-  const moveRecipeModal = useDisclosure();
-  const { isOpen: isRunErrorOpen, onOpen: onRunErrorOpen, onClose: onRunErrorClose } = useDisclosure();
+  const [createRecipeModalOpen, setCreateRecipeModalOpen] = useState(false);
+  const [createFolderModalOpen, setCreateFolderModalOpen] = useState(false);
+  const [deleteFolderModalOpen, setDeleteFolderModalOpen] = useState(false);
+  const [moveRecipeModalOpen, setMoveRecipeModalOpen] = useState(false);
+  const [isRunErrorOpen, setIsRunErrorOpen] = useState(false);
   const [newRecipeName, setNewRecipeName] = useState("");
   const [newRecipeFolderKey, setNewRecipeFolderKey] = useState<string>("__root__");
   const [isRunning, setIsRunning] = useState(false);
@@ -234,19 +166,19 @@ export function RecipesPage() {
   const [deletingFolder, setDeletingFolder] = useState(false);
   const [moveRecipePath, setMoveRecipePath] = useState<string | null>(null);
   const [moveTargetFolderKey, setMoveTargetFolderKey] = useState<string>("__root__");
-  
+
   const recipesQuery = useRecipes();
   const executionsQuery = useInteractiveExecutions();
   const createMutation = useCreateRecipe();
   const deleteMutation = useDeleteRecipe();
   const duplicateMutation = useDuplicateRecipe();
-  
+
   // Delete confirmation modal
-  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [recipeToDelete, setRecipeToDelete] = useState<string | null>(null);
-  
+
   // Host selection modal for running recipes with targets
-  const { isOpen: isHostSelectOpen, onOpen: onHostSelectOpen, onClose: onHostSelectClose } = useDisclosure();
+  const [isHostSelectOpen, setIsHostSelectOpen] = useState(false);
   const [recipeToRun, setRecipeToRun] = useState<{ path: string; recipe: Recipe } | null>(null);
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const { data: hosts = [] } = useHosts();
@@ -304,18 +236,18 @@ export function RecipesPage() {
     setNewRecipeName("");
     setFolderError(null);
     setNewRecipeFolderKey(folderScopeKey.startsWith("folder:") ? folderScopeKey : "__root__");
-    createRecipeModal.onOpen();
+    setCreateRecipeModalOpen(true);
   }
 
   function openCreateFolderModal() {
     setNewFolderName("");
     setFolderError(null);
-    createFolderModal.onOpen();
+    setCreateFolderModalOpen(true);
   }
-  
+
   const handleCreate = async () => {
     if (!newRecipeName.trim()) return;
-    
+
     try {
       const path = await createMutation.mutateAsync(newRecipeName);
       const folderId = newRecipeFolderKey.startsWith("folder:")
@@ -324,24 +256,24 @@ export function RecipesPage() {
       if (folderId) {
         persistAssignments((prev) => setAssignedFolderId(prev, path, folderId));
       }
-      createRecipeModal.onClose();
+      setCreateRecipeModalOpen(false);
       setNewRecipeName("");
       navigate({ to: "/recipes/$path", params: { path: encodeURIComponent(path) } });
     } catch (e) {
       console.error("Failed to create recipe:", e);
     }
   };
-  
+
   const handleRunClick = async (path: string) => {
     try {
       // Load the recipe to check if it has a target
       const recipe = await recipeApi.get(path);
-      
+
       if (recipe.target) {
         // Show host selection modal
         setRecipeToRun({ path, recipe });
         setSelectedHostId(null);
-        onHostSelectOpen();
+        setIsHostSelectOpen(true);
       } else {
         // No target, run directly with local execution
         await executeRecipe(path, "__local__");
@@ -355,10 +287,10 @@ export function RecipesPage() {
             ? e.message
             : String(e);
       setRunError(msg);
-      onRunErrorOpen();
+      setIsRunErrorOpen(true);
     }
   };
-  
+
   const executeRecipe = async (recipePath: string, hostId: string) => {
     setIsRunning(true);
     try {
@@ -366,21 +298,21 @@ export function RecipesPage() {
       if (hostId && hostId !== "__local__") {
         variables.target = hostId;
       }
-      
+
       // Use interactive execution to run in terminal
       const execution = await interactiveRecipeApi.run({
         path: recipePath,
         hostId,
         variables,
       });
-      
+
       // Immediately seed the query cache with execution data
       // This allows the sidebar to show recipe info instantly
       queryClient.setQueryData(
         ["interactive-executions", execution.id],
         execution
       );
-      
+
       // Add terminal session to context and navigate
       if (terminalContext) {
         if (!execution.terminal_id) {
@@ -393,9 +325,9 @@ export function RecipesPage() {
           hostId: execution.host_id,
         });
       }
-      
+
       // Navigate to terminal page
-      navigate({ to: "/terminal" });
+      navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
     } catch (e) {
       console.error("Failed to run recipe:", e);
       const msg =
@@ -405,17 +337,17 @@ export function RecipesPage() {
             ? e.message
             : String(e);
       setRunError(msg);
-      onRunErrorOpen();
+      setIsRunErrorOpen(true);
     } finally {
       setIsRunning(false);
     }
   };
-  
+
   const handleConfirmRun = async () => {
     if (!recipeToRun) return;
     if (!selectedHostId && recipeToRun.recipe.target) return; // Must select a host or local
-    
-    onHostSelectClose();
+
+    setIsHostSelectOpen(false);
     await executeRecipe(recipeToRun.path, selectedHostId || "__local__");
     setRecipeToRun(null);
   };
@@ -436,7 +368,7 @@ export function RecipesPage() {
             terminalContext.setActiveId(execution.terminal_id);
           }
         }
-        navigate({ to: "/terminal" });
+        navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
         return;
       }
 
@@ -451,7 +383,7 @@ export function RecipesPage() {
           hostId: resumed.host_id,
         });
       }
-      navigate({ to: "/terminal" });
+      navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
     } catch (e) {
       console.error("Failed to open execution:", e);
       const msg =
@@ -461,7 +393,7 @@ export function RecipesPage() {
             ? e.message
             : String(e);
       setRunError(msg);
-      onRunErrorOpen();
+      setIsRunErrorOpen(true);
     }
   };
 
@@ -478,7 +410,7 @@ export function RecipesPage() {
             ? e.message
             : String(e);
       setRunError(msg);
-      onRunErrorOpen();
+      setIsRunErrorOpen(true);
     }
   };
 
@@ -491,7 +423,7 @@ export function RecipesPage() {
   const compatibleHosts = allHosts.filter((host: Host) => {
     if (!recipeToRun?.recipe.target) return true;
     const target = recipeToRun.recipe.target;
-    
+
     // "any" type allows all hosts
     if (target.type === "any") {
       // Still apply GPU/memory filters if specified
@@ -502,32 +434,32 @@ export function RecipesPage() {
       // Check host type for specific types
       if (target.type !== host.type) return false;
     }
-    
+
     // Check GPU count
     if (target.min_gpus && (host.num_gpus ?? 0) < target.min_gpus) return false;
-    
+
     // Check GPU type (case-insensitive partial match)
     if (target.gpu_type && host.gpu_name) {
       if (!host.gpu_name.toLowerCase().includes(target.gpu_type.toLowerCase())) {
         return false;
       }
     }
-    
+
     // Check memory
     if (target.min_memory_gb && host.system_info?.memory_total_gb) {
       if (host.system_info.memory_total_gb < target.min_memory_gb) return false;
     }
-    
+
     return true;
   });
-  
+
   // Check if Local option should be shown (for "any" or "local" target types)
   const showLocalOption = recipeToRun?.recipe.target?.type === "any" || recipeToRun?.recipe.target?.type === "local";
-  
+
   const handleEdit = (path: string) => {
     navigate({ to: "/recipes/$path", params: { path: encodeURIComponent(path) } });
   };
-  
+
   const handleDuplicate = async (path: string, name: string) => {
     try {
       const newPath = await duplicateMutation.mutateAsync({ path, newName: `${name} Copy` });
@@ -539,25 +471,25 @@ export function RecipesPage() {
       console.error("Failed to duplicate recipe:", e);
     }
   };
-  
+
   const handleDeleteClick = (path: string) => {
     setRecipeToDelete(path);
-    onDeleteOpen();
+    setIsDeleteOpen(true);
   };
-  
+
   const handleDeleteConfirm = async () => {
     if (!recipeToDelete) return;
     try {
       await deleteMutation.mutateAsync(recipeToDelete);
       persistAssignments((prev) => setAssignedFolderId(prev, recipeToDelete, null));
       setSelectedRecipePath((prev) => (prev === recipeToDelete ? null : prev));
-      onDeleteClose();
+      setIsDeleteOpen(false);
       setRecipeToDelete(null);
     } catch (e) {
       console.error("Failed to delete recipe:", e);
     }
   };
-  
+
   const handleImport = async () => {
     // TODO: Open file picker and import
     console.log("Import recipe");
@@ -591,7 +523,7 @@ export function RecipesPage() {
     };
 
     persistFolders((prev) => [...prev, newFolder].sort((a, b) => a.name.localeCompare(b.name)));
-    createFolderModal.onClose();
+    setCreateFolderModalOpen(false);
     setFolderScopeKey(`folder:${newFolder.id}`);
   };
 
@@ -608,7 +540,7 @@ export function RecipesPage() {
   const handleRequestDeleteFolder = (folder: RecipeFolder) => {
     setFolderError(null);
     setFolderToDelete(folder);
-    deleteFolderModal.onOpen();
+    setDeleteFolderModalOpen(true);
   };
 
   const handleConfirmDeleteFolder = async () => {
@@ -636,7 +568,7 @@ export function RecipesPage() {
 
       setSelectedRecipePath((prev) => (pathsToDelete.includes(prev ?? "") ? null : prev));
       setFolderScopeKey((prev) => (prev === `folder:${targetFolderId}` ? "all" : prev));
-      deleteFolderModal.onClose();
+      setDeleteFolderModalOpen(false);
       setFolderToDelete(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -650,16 +582,16 @@ export function RecipesPage() {
     setFolderError(null);
     setMoveRecipePath(recipePath);
     setMoveTargetFolderKey(folderKeyFromId(getAssignedFolderId(folderAssignments, recipePath)));
-    moveRecipeModal.onOpen();
+    setMoveRecipeModalOpen(true);
   };
 
   const handleConfirmMoveRecipe = async () => {
     if (!moveRecipePath) return;
     const folderId = folderIdFromKey(moveTargetFolderKey);
     persistAssignments((prev) => setAssignedFolderId(prev, moveRecipePath, folderId));
-    moveRecipeModal.onClose();
+    setMoveRecipeModalOpen(false);
   };
-  
+
   const recipes = recipesQuery.data ?? [];
   const executions = executionsQuery.data ?? [];
   const activeStatuses: InteractiveStatus[] = [
@@ -804,7 +736,7 @@ export function RecipesPage() {
     map.set("__local__", "Local");
     return map;
   }, [allHosts]);
-  
+
   const isLoading = recipesQuery.isLoading || executionsQuery.isLoading;
 
   return (
@@ -815,126 +747,104 @@ export function RecipesPage() {
           {/* Row 1: Search + Run */}
           <div className="termius-toolbar-row">
             <div className="termius-search-bar">
-              <Input
-                size="lg"
-                placeholder="Search recipes..."
-                value={searchQuery}
-                onValueChange={setSearchQuery}
-                startContent={<IconSearch className="w-5 h-5 text-foreground/40" />}
-                endContent={
-                  <Button
-                    color="primary"
-                    size="sm"
-                    className="h-8 px-4"
-                    onPress={() => {
-                      if (!selectedRecipePath) return;
-                      void handleRunClick(selectedRecipePath);
-                    }}
-                    isDisabled={!canRunSelected}
-                  >
-                    Run
-                  </Button>
-                }
-                classNames={{
-                  base: "flex-1",
-                  inputWrapper: "bg-content2 h-12",
-                  input: "text-base",
-                }}
-              />
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                <Input
+                  placeholder="Search recipes..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-24 h-12 text-base bg-muted/50"
+                />
+                <Button
+                  size="sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-8 px-4"
+                  onClick={() => {
+                    if (!selectedRecipePath) return;
+                    void handleRunClick(selectedRecipePath);
+                  }}
+                  disabled={!canRunSelected}
+                >
+                  Run
+                </Button>
+              </div>
             </div>
           </div>
 
           {/* Row 2: Quick Actions + Filters */}
           <div className="termius-toolbar-row justify-between">
             <div className="termius-quick-actions">
-              <button className="termius-quick-action" onClick={openCreateRecipeModalWithContext}>
-                <IconPlus className="w-4 h-4" />
+              <Button variant="outline" size="sm" className="gap-1.5" type="button" onClick={openCreateRecipeModalWithContext}>
+                <Plus className="w-4 h-4" />
                 <span>New Recipe</span>
-              </button>
-              <button className="termius-quick-action" onClick={openCreateFolderModal}>
-                <IconFolder className="w-4 h-4" />
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1.5" type="button" onClick={openCreateFolderModal}>
+                <Folder className="w-4 h-4" />
                 <span>New Folder</span>
-              </button>
-              <button className="termius-quick-action" onClick={() => void handleImport()}>
-                <IconUpload className="w-4 h-4" />
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1.5" type="button" onClick={() => void handleImport()}>
+                <Upload className="w-4 h-4" />
                 <span>Import</span>
-              </button>
-              <button
-                className="termius-quick-action"
+              </Button>
+              <Button
+                variant="outline" size="sm" className="gap-1.5"
+                type="button"
                 onClick={() => navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } })}
               >
-                <IconTerminal className="w-4 h-4" />
+                <Terminal className="w-4 h-4" />
                 <span>Terminal</span>
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center gap-1">
-              <Dropdown>
-                <DropdownTrigger>
-                  <button className={`termius-quick-action ${folderScopeKey !== "all" ? "termius-quick-action-primary" : ""}`}>
-                    <IconFolder className="w-4 h-4" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className={cn("gap-1.5", folderScopeKey !== "all" && "bg-primary text-primary-foreground")} type="button">
+                    <Folder className="w-4 h-4" />
                     <span>{folderScopeLabel}</span>
-                  </button>
-                </DropdownTrigger>
-                <DropdownMenu
-                  selectionMode="single"
-                  selectedKeys={new Set([folderScopeKey])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as string;
-                    setFolderScopeKey(selected);
-                  }}
-                >
-                  <DropdownItem key="all">All</DropdownItem>
-                  <DropdownItem key="recipes">Recipes</DropdownItem>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setFolderScopeKey("all")}>All</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFolderScopeKey("recipes")}>Recipes</DropdownMenuItem>
                   {activeFolders.map((f) => (
-                    <DropdownItem key={`folder:${f.id}`}>{f.name}</DropdownItem>
+                    <DropdownMenuItem key={f.id} onClick={() => setFolderScopeKey(`folder:${f.id}`)}>
+                      {f.name}
+                    </DropdownMenuItem>
                   ))}
                   {archivedFolders.map((f) => (
-                    <DropdownItem key={`folder:${f.id}`}>{f.name} (archived)</DropdownItem>
+                    <DropdownMenuItem key={f.id} onClick={() => setFolderScopeKey(`folder:${f.id}`)}>
+                      {f.name} (archived)
+                    </DropdownMenuItem>
                   ))}
-                </DropdownMenu>
-              </Dropdown>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-              <Dropdown>
-                <DropdownTrigger>
-                  <button className={`termius-quick-action ${filterStatus !== "all" ? "termius-quick-action-primary" : ""}`}>
-                    <IconFilter className="w-4 h-4" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className={cn("gap-1.5", filterStatus !== "all" && "bg-primary text-primary-foreground")} type="button">
+                    <Filter className="w-4 h-4" />
                     <span>{filterStatus === "all" ? "Filter" : filterStatus}</span>
-                  </button>
-                </DropdownTrigger>
-                <DropdownMenu
-                  selectionMode="single"
-                  selectedKeys={new Set([filterStatus])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as "all" | "running" | "idle";
-                    setFilterStatus(selected);
-                  }}
-                >
-                  <DropdownItem key="all">All</DropdownItem>
-                  <DropdownItem key="running">Running</DropdownItem>
-                  <DropdownItem key="idle">Idle</DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setFilterStatus("all")}>All</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterStatus("running")}>Running</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterStatus("idle")}>Idle</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-              <Dropdown>
-                <DropdownTrigger>
-                  <button className="termius-quick-action">
-                    <IconSort className="w-4 h-4" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5" type="button">
+                    <ArrowUpDown className="w-4 h-4" />
                     <span>{sortBy === "name" ? "Name" : "Steps"}</span>
-                  </button>
-                </DropdownTrigger>
-                <DropdownMenu
-                  selectionMode="single"
-                  selectedKeys={new Set([sortBy])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as "name" | "steps";
-                    setSortBy(selected);
-                  }}
-                >
-                  <DropdownItem key="name">Name</DropdownItem>
-                  <DropdownItem key="steps">Steps</DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setSortBy("name")}>Name</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSortBy("steps")}>Steps</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
@@ -951,7 +861,7 @@ export function RecipesPage() {
               <HostSection title="RUNNING" count={activeExecutions.length}>
                 {activeExecutions.map((exec) => {
                   const hostName = hostNameById.get(exec.host_id) || exec.host_id;
-                  const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [
+                  const rightTags: { label: string; color?: "default" | "destructive" | "secondary" }[] = [
                     { label: getStatusLabel(exec.status), color: getExecutionTagColor(exec.status) },
                     { label: getExecutionProgressLabel(exec), color: "default" },
                   ];
@@ -971,16 +881,18 @@ export function RecipesPage() {
                           onMouseDown={(e) => e.stopPropagation()}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <Tooltip content="Cancel" delay={500}>
-                            <Button
-                              size="sm"
-                              variant="light"
-                              isIconOnly
-                              className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100 text-danger"
-                              onPress={() => void handleCancelExecution(exec)}
-                            >
-                              <IconCancel />
-                            </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="w-7 h-7 opacity-60 hover:opacity-100 text-destructive"
+                                onClick={() => void handleCancelExecution(exec)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Cancel</TooltipContent>
                           </Tooltip>
                         </div>
                       }
@@ -996,9 +908,9 @@ export function RecipesPage() {
                   <HostSection title="RECIPES" count={recipeSections.rootRecipes.length}>
                     {recipeSections.rootRecipes.map((recipe) => {
                       const activeCount = activeByRecipePath.get(recipe.path) || 0;
-                      const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+                      const rightTags: { label: string; color?: "default" | "destructive" | "secondary" }[] = [];
                       if (activeCount > 0) {
-                        rightTags.push({ label: `${activeCount} running`, color: "warning" });
+                        rightTags.push({ label: `${activeCount} running`, color: "secondary" });
                       }
 
                       return (
@@ -1018,65 +930,60 @@ export function RecipesPage() {
                               onMouseDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <Tooltip content="Run" delay={500}>
-                                <Button
-                                  size="sm"
-                                  variant="light"
-                                  isIconOnly
-                                  className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                                  onPress={() => void handleRunClick(recipe.path)}
-                                >
-                                  <IconPlay />
-                                </Button>
-                              </Tooltip>
-
-                              <Tooltip content="Edit" delay={500}>
-                                <Button
-                                  size="sm"
-                                  variant="light"
-                                  isIconOnly
-                                  className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                                  onPress={() => handleEdit(recipe.path)}
-                                >
-                                  <IconEdit />
-                                </Button>
-                              </Tooltip>
-
-                              <Dropdown placement="bottom-end">
-                                <DropdownTrigger>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
                                   <Button
-                                    size="sm"
-                                    variant="light"
-                                    isIconOnly
-                                    className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="w-7 h-7 opacity-60 hover:opacity-100"
+                                    onClick={() => void handleRunClick(recipe.path)}
                                   >
-                                    <IconEllipsis />
+                                    <Play className="w-4 h-4" />
                                   </Button>
-                                </DropdownTrigger>
-                                <DropdownMenu aria-label="Recipe actions">
-                                  <DropdownItem
-                                    key="move"
-                                    onPress={() => handleOpenMoveRecipe(recipe.path)}
+                                </TooltipTrigger>
+                                <TooltipContent>Run</TooltipContent>
+                              </Tooltip>
+
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="w-7 h-7 opacity-60 hover:opacity-100"
+                                    onClick={() => handleEdit(recipe.path)}
                                   >
+                                    <Edit className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Edit</TooltipContent>
+                              </Tooltip>
+
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="w-7 h-7 opacity-60 hover:opacity-100"
+                                  >
+                                    <MoreHorizontal className="w-4 h-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => handleOpenMoveRecipe(recipe.path)}>
                                     Move to folder…
-                                  </DropdownItem>
-                                  <DropdownItem
-                                    key="duplicate"
-                                    onPress={() => void handleDuplicate(recipe.path, recipe.name)}
-                                  >
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => void handleDuplicate(recipe.path, recipe.name)}>
                                     Duplicate
-                                  </DropdownItem>
-                                  <DropdownItem
-                                    key="delete"
-                                    color="danger"
-                                    className="text-danger"
-                                    startContent={<IconTrash className="w-4 h-4" />}
-                                    onPress={() => handleDeleteClick(recipe.path)}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-destructive"
+                                    onClick={() => handleDeleteClick(recipe.path)}
                                   >
+                                    <Trash2 className="w-4 h-4 mr-2" />
                                     Delete
-                                  </DropdownItem>
-                                </DropdownMenu>
-                              </Dropdown>
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           }
                         />
@@ -1092,27 +999,31 @@ export function RecipesPage() {
                     count={recipes.length}
                     actions={
                       <div className="flex items-center gap-1">
-                        <Tooltip content={folder.status === "archived" ? "Restore" : "Archive"} delay={500}>
-                          <Button
-                            size="sm"
-                            variant="light"
-                            isIconOnly
-                            className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                            onPress={() => handleToggleArchiveFolder(folder.id)}
-                          >
-                            {folder.status === "archived" ? <IconRestore /> : <IconArchive />}
-                          </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-7 h-7 opacity-60 hover:opacity-100"
+                              onClick={() => handleToggleArchiveFolder(folder.id)}
+                            >
+                              {folder.status === "archived" ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{folder.status === "archived" ? "Restore" : "Archive"}</TooltipContent>
                         </Tooltip>
-                        <Tooltip content="Delete folder" delay={500}>
-                          <Button
-                            size="sm"
-                            variant="light"
-                            isIconOnly
-                            className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100 text-danger"
-                            onPress={() => handleRequestDeleteFolder(folder)}
-                          >
-                            <IconTrash />
-                          </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-7 h-7 opacity-60 hover:opacity-100 text-destructive"
+                              onClick={() => handleRequestDeleteFolder(folder)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete folder</TooltipContent>
                         </Tooltip>
                       </div>
                     }
@@ -1120,9 +1031,9 @@ export function RecipesPage() {
                     {recipes.length > 0 ? (
                       recipes.map((recipe) => {
                         const activeCount = activeByRecipePath.get(recipe.path) || 0;
-                        const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+                        const rightTags: { label: string; color?: "default" | "destructive" | "secondary" }[] = [];
                         if (activeCount > 0) {
-                          rightTags.push({ label: `${activeCount} running`, color: "warning" });
+                          rightTags.push({ label: `${activeCount} running`, color: "secondary" });
                         }
 
                         return (
@@ -1142,65 +1053,60 @@ export function RecipesPage() {
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <Tooltip content="Run" delay={500}>
-                                  <Button
-                                    size="sm"
-                                    variant="light"
-                                    isIconOnly
-                                    className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                                    onPress={() => void handleRunClick(recipe.path)}
-                                  >
-                                    <IconPlay />
-                                  </Button>
-                                </Tooltip>
-
-                                <Tooltip content="Edit" delay={500}>
-                                  <Button
-                                    size="sm"
-                                    variant="light"
-                                    isIconOnly
-                                    className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                                    onPress={() => handleEdit(recipe.path)}
-                                  >
-                                    <IconEdit />
-                                  </Button>
-                                </Tooltip>
-
-                                <Dropdown placement="bottom-end">
-                                  <DropdownTrigger>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
                                     <Button
-                                      size="sm"
-                                      variant="light"
-                                      isIconOnly
-                                      className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="w-7 h-7 opacity-60 hover:opacity-100"
+                                      onClick={() => void handleRunClick(recipe.path)}
                                     >
-                                      <IconEllipsis />
+                                      <Play className="w-4 h-4" />
                                     </Button>
-                                  </DropdownTrigger>
-                                  <DropdownMenu aria-label="Recipe actions">
-                                    <DropdownItem
-                                      key="move"
-                                      onPress={() => handleOpenMoveRecipe(recipe.path)}
+                                  </TooltipTrigger>
+                                  <TooltipContent>Run</TooltipContent>
+                                </Tooltip>
+
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="w-7 h-7 opacity-60 hover:opacity-100"
+                                      onClick={() => handleEdit(recipe.path)}
                                     >
+                                      <Edit className="w-4 h-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Edit</TooltipContent>
+                                </Tooltip>
+
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="w-7 h-7 opacity-60 hover:opacity-100"
+                                    >
+                                      <MoreHorizontal className="w-4 h-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => handleOpenMoveRecipe(recipe.path)}>
                                       Move to folder…
-                                    </DropdownItem>
-                                    <DropdownItem
-                                      key="duplicate"
-                                      onPress={() => void handleDuplicate(recipe.path, recipe.name)}
-                                    >
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => void handleDuplicate(recipe.path, recipe.name)}>
                                       Duplicate
-                                    </DropdownItem>
-                                    <DropdownItem
-                                      key="delete"
-                                      color="danger"
-                                      className="text-danger"
-                                      startContent={<IconTrash className="w-4 h-4" />}
-                                      onPress={() => handleDeleteClick(recipe.path)}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-destructive"
+                                      onClick={() => handleDeleteClick(recipe.path)}
                                     >
+                                      <Trash2 className="w-4 h-4 mr-2" />
                                       Delete
-                                    </DropdownItem>
-                                  </DropdownMenu>
-                                </Dropdown>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               </div>
                             }
                           />
@@ -1209,11 +1115,11 @@ export function RecipesPage() {
                     ) : (
                       <div className="w-full">
                         <EmptyHostState
-                          icon={<IconFolder className="w-5 h-5" />}
+                          icon={<Folder className="w-5 h-5" />}
                           title="No recipes in this folder"
                           description="Create a recipe and assign it to this folder."
                           action={
-                            <Button size="sm" color="primary" onPress={openCreateRecipeModalWithContext}>
+                            <Button size="sm" onClick={openCreateRecipeModalWithContext}>
                               New Recipe
                             </Button>
                           }
@@ -1230,7 +1136,7 @@ export function RecipesPage() {
                 description={searchQuery ? undefined : "Create a recipe to automate training workflows."}
                 action={
                   !searchQuery ? (
-                    <Button size="sm" color="primary" onPress={openCreateRecipeModalWithContext}>
+                    <Button size="sm" onClick={openCreateRecipeModalWithContext}>
                       New Recipe
                     </Button>
                   ) : undefined
@@ -1240,210 +1146,231 @@ export function RecipesPage() {
           </>
         )}
 
-        {/* Create Recipe Modal */}
-        <Modal isOpen={createRecipeModal.isOpen} onClose={createRecipeModal.onClose}>
-          <ModalContent>
-            <ModalHeader>Create New Recipe</ModalHeader>
-            <ModalBody className="space-y-3">
-              <Input
-                labelPlacement="inside"
-                label="Recipe Name"
-                placeholder="my-training-recipe"
-                value={newRecipeName}
-                onValueChange={setNewRecipeName}
-                autoFocus
-              />
+        {/* Create Recipe Dialog */}
+        <Dialog open={createRecipeModalOpen} onOpenChange={setCreateRecipeModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create New Recipe</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="recipe-name">Recipe Name</Label>
+                <Input
+                  id="recipe-name"
+                  placeholder="my-training-recipe"
+                  value={newRecipeName}
+                  onChange={(e) => setNewRecipeName(e.target.value)}
+                  autoFocus
+                />
+              </div>
 
-              <Select
-                labelPlacement="inside"
-                label="Folder"
-                placeholder="Recipes"
-                selectedKeys={new Set([newRecipeFolderKey])}
-                onSelectionChange={(keys) => {
-                  const selected = Array.from(keys)[0] as string | undefined;
-                  if (selected) setNewRecipeFolderKey(selected);
-                }}
-              >
-                <SelectItem key="__root__">Recipes</SelectItem>
-                {activeFolders.map((f) => (
-                  <SelectItem key={`folder:${f.id}`}>{f.name}</SelectItem>
-                ))}
-                {archivedFolders.map((f) => (
-                  <SelectItem key={`folder:${f.id}`}>{f.name} (archived)</SelectItem>
-                ))}
-              </Select>
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={createRecipeModal.onClose}>
+              <div className="space-y-2">
+                <Label htmlFor="folder-select">Folder</Label>
+                <Select value={newRecipeFolderKey} onValueChange={setNewRecipeFolderKey}>
+                  <SelectTrigger id="folder-select">
+                    <SelectValue placeholder="Recipes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__root__">Recipes</SelectItem>
+                    {activeFolders.map((f) => (
+                      <SelectItem key={f.id} value={`folder:${f.id}`}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                    {archivedFolders.map((f) => (
+                      <SelectItem key={f.id} value={`folder:${f.id}`}>
+                        {f.name} (archived)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCreateRecipeModalOpen(false)}>
                 Cancel
               </Button>
               <Button
-                color="primary"
-                onPress={handleCreate}
-                isLoading={createMutation.isPending}
-                isDisabled={!newRecipeName.trim()}
+                onClick={handleCreate}
+                disabled={!newRecipeName.trim() || createMutation.isPending}
               >
+                {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Create
               </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-        {/* Create Folder Modal */}
-        <Modal isOpen={createFolderModal.isOpen} onClose={createFolderModal.onClose}>
-          <ModalContent>
-            <ModalHeader>Create Folder</ModalHeader>
-            <ModalBody className="space-y-3">
-              <Input
-                labelPlacement="inside"
-                label="Folder Name"
-                placeholder="my-project"
-                value={newFolderName}
-                onValueChange={setNewFolderName}
-                autoFocus
-              />
+        {/* Create Folder Dialog */}
+        <Dialog open={createFolderModalOpen} onOpenChange={setCreateFolderModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create Folder</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="folder-name">Folder Name</Label>
+                <Input
+                  id="folder-name"
+                  placeholder="my-project"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  autoFocus
+                />
+              </div>
               {folderError && (
-                <p className="text-sm text-danger whitespace-pre-wrap">{folderError}</p>
+                <p className="text-sm text-destructive whitespace-pre-wrap">{folderError}</p>
               )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={createFolderModal.onClose}>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCreateFolderModalOpen(false)}>
                 Cancel
               </Button>
               <Button
-                color="primary"
-                onPress={handleCreateFolder}
-                isDisabled={!newFolderName.trim()}
+                onClick={handleCreateFolder}
+                disabled={!newFolderName.trim()}
               >
                 Create
               </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-        {/* Delete Folder Modal */}
-        <Modal isOpen={deleteFolderModal.isOpen} onClose={deleteFolderModal.onClose}>
-          <ModalContent>
-            <ModalHeader>Delete Folder</ModalHeader>
-            <ModalBody className="space-y-3">
-              <p className="text-sm text-foreground/70">
+        {/* Delete Folder Dialog */}
+        <Dialog open={deleteFolderModalOpen} onOpenChange={setDeleteFolderModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Folder</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <p className="text-sm text-muted-foreground">
                 {folderToDelete
                   ? `Delete "${folderToDelete.name}"? This will also delete all recipes in this folder.`
                   : "Delete this folder?"}
               </p>
               {folderToDelete && (
-                <p className="text-xs text-foreground/50">
+                <p className="text-xs text-muted-foreground">
                   {recipes.filter((r) => folderAssignments[r.path] === folderToDelete.id).length} recipes will be deleted.
                 </p>
               )}
               {folderError && (
-                <p className="text-sm text-danger whitespace-pre-wrap">{folderError}</p>
+                <p className="text-sm text-destructive whitespace-pre-wrap">{folderError}</p>
               )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={deleteFolderModal.onClose} isDisabled={deletingFolder}>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteFolderModalOpen(false)} disabled={deletingFolder}>
                 Cancel
               </Button>
               <Button
-                color="danger"
-                onPress={() => void handleConfirmDeleteFolder()}
-                isLoading={deletingFolder}
+                variant="destructive"
+                onClick={() => void handleConfirmDeleteFolder()}
+                disabled={deletingFolder}
               >
+                {deletingFolder && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Delete
               </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-        {/* Move Recipe Modal */}
-        <Modal isOpen={moveRecipeModal.isOpen} onClose={moveRecipeModal.onClose}>
-          <ModalContent>
-            <ModalHeader>Move Recipe</ModalHeader>
-            <ModalBody className="space-y-3">
-              <Select
-                labelPlacement="inside"
-                label="Target Folder"
-                placeholder="Recipes"
-                selectedKeys={new Set([moveTargetFolderKey])}
-                onSelectionChange={(keys) => {
-                  const selected = Array.from(keys)[0] as string | undefined;
-                  if (selected) setMoveTargetFolderKey(selected);
-                }}
-              >
-                <SelectItem key="__root__">Recipes</SelectItem>
-                {activeFolders.map((f) => (
-                  <SelectItem key={`folder:${f.id}`}>{f.name}</SelectItem>
-                ))}
-                {archivedFolders.map((f) => (
-                  <SelectItem key={`folder:${f.id}`}>{f.name} (archived)</SelectItem>
-                ))}
-              </Select>
+        {/* Move Recipe Dialog */}
+        <Dialog open={moveRecipeModalOpen} onOpenChange={setMoveRecipeModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Move Recipe</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="target-folder">Target Folder</Label>
+                <Select value={moveTargetFolderKey} onValueChange={setMoveTargetFolderKey}>
+                  <SelectTrigger id="target-folder">
+                    <SelectValue placeholder="Recipes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__root__">Recipes</SelectItem>
+                    {activeFolders.map((f) => (
+                      <SelectItem key={f.id} value={`folder:${f.id}`}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                    {archivedFolders.map((f) => (
+                      <SelectItem key={f.id} value={`folder:${f.id}`}>
+                        {f.name} (archived)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
               {folderError && (
-                <p className="text-sm text-danger whitespace-pre-wrap">{folderError}</p>
+                <p className="text-sm text-destructive whitespace-pre-wrap">{folderError}</p>
               )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={moveRecipeModal.onClose}>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setMoveRecipeModalOpen(false)}>
                 Cancel
               </Button>
               <Button
-                color="primary"
-                onPress={() => void handleConfirmMoveRecipe()}
-                isDisabled={!moveRecipePath}
+                onClick={() => void handleConfirmMoveRecipe()}
+                disabled={!moveRecipePath}
               >
                 Move
               </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-      
-      {/* Delete Confirmation Modal */}
-      <Modal isOpen={isDeleteOpen} onClose={onDeleteClose}>
-        <ModalContent>
-          <ModalHeader>Delete Recipe</ModalHeader>
-          <ModalBody>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Recipe</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
             <p>Are you sure you want to delete this recipe? This action cannot be undone.</p>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onDeleteClose}>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
               Cancel
             </Button>
             <Button
-              color="danger"
-              onPress={handleDeleteConfirm}
-              isLoading={deleteMutation.isPending}
+              variant="destructive"
+              onClick={handleDeleteConfirm}
+              disabled={deleteMutation.isPending}
             >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               Delete
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-      
-      {/* Host Selection Modal for Running Recipes */}
-      <Modal isOpen={isHostSelectOpen} onClose={onHostSelectClose} size="lg">
-        <ModalContent>
-          <ModalHeader>Select Target Host</ModalHeader>
-          <ModalBody>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Host Selection Dialog for Running Recipes */}
+      <Dialog open={isHostSelectOpen} onOpenChange={setIsHostSelectOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Select Target Host</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
             {recipeToRun?.recipe.target && (
-              <div className="mb-4 p-3 bg-default-100 rounded-lg">
-                <p className="text-sm text-foreground/70 mb-2">Recipe requires:</p>
+              <div className="mb-4 p-3 bg-primary/10 border border-primary/20 rounded-lg">
+                <p className="text-sm text-muted-foreground mb-2">Recipe requires:</p>
                 <div className="flex flex-wrap gap-2">
-                  <Chip size="sm" variant="flat">{recipeToRun.recipe.target.type}</Chip>
+                  <Badge variant="secondary">{recipeToRun.recipe.target.type}</Badge>
                   {recipeToRun.recipe.target.gpu_type && (
-                    <Chip size="sm" variant="flat">GPU: {recipeToRun.recipe.target.gpu_type}</Chip>
+                    <Badge variant="secondary">GPU: {recipeToRun.recipe.target.gpu_type}</Badge>
                   )}
                   {recipeToRun.recipe.target.min_gpus && (
-                    <Chip size="sm" variant="flat">Min GPUs: {recipeToRun.recipe.target.min_gpus}</Chip>
+                    <Badge variant="secondary">Min GPUs: {recipeToRun.recipe.target.min_gpus}</Badge>
                   )}
                 </div>
               </div>
             )}
-            
-            <p className="text-sm text-foreground/70 mb-2">Select a compatible host:</p>
-            
+
+            <p className="text-sm text-muted-foreground mb-2">Select a compatible host:</p>
+
             {compatibleHosts.length === 0 && !showLocalOption ? (
-              <div className="text-center py-8 text-foreground/50">
+              <div className="text-center py-8 text-muted-foreground">
                 <p>No compatible hosts found.</p>
                 <p className="text-sm mt-1">Add a {recipeToRun?.recipe.target?.type} host first.</p>
               </div>
@@ -1452,19 +1379,19 @@ export function RecipesPage() {
                 {/* Local option */}
                 {showLocalOption && (
                   <div
-                    key="__local__"
-                    className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                    className={cn(
+                      "p-3 rounded-lg border cursor-pointer transition-colors",
                       selectedHostId === "__local__"
                         ? "border-primary bg-primary/10"
-                        : "border-default-200 hover:border-default-400"
-                    }`}
+                        : "border-border hover:border-muted-foreground"
+                    )}
                     onClick={() => setSelectedHostId("__local__")}
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium">Local</span>
-                      <Chip size="sm" color="success" variant="flat">ready</Chip>
+                      <Badge variant="secondary">ready</Badge>
                     </div>
-                    <p className="text-sm text-foreground/60 mt-1">
+                    <p className="text-sm text-muted-foreground mt-1">
                       Run on this machine (no SSH)
                     </p>
                   </div>
@@ -1473,19 +1400,20 @@ export function RecipesPage() {
                 {compatibleHosts.map((host: Host) => (
                   <div
                     key={host.id}
-                    className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                    className={cn(
+                      "p-3 rounded-lg border cursor-pointer transition-colors",
                       selectedHostId === host.id
                         ? "border-primary bg-primary/10"
-                        : "border-default-200 hover:border-default-400"
-                    }`}
+                        : "border-border hover:border-muted-foreground"
+                    )}
                     onClick={() => setSelectedHostId(host.id)}
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium">{host.name}</span>
-                      <Chip size="sm" variant="flat">{host.type}</Chip>
+                      <Badge variant="secondary">{host.type}</Badge>
                     </div>
                     {host.gpu_name && (
-                      <p className="text-sm text-foreground/60 mt-1">
+                      <p className="text-sm text-muted-foreground mt-1">
                         {host.num_gpus}x {host.gpu_name}
                       </p>
                     )}
@@ -1493,36 +1421,37 @@ export function RecipesPage() {
                 ))}
               </div>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onHostSelectClose}>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsHostSelectOpen(false)}>
               Cancel
             </Button>
             <Button
-              color="primary"
-              onPress={handleConfirmRun}
-              isDisabled={!selectedHostId}
-              isLoading={isRunning}
+              onClick={handleConfirmRun}
+              disabled={!selectedHostId || isRunning}
             >
+              {isRunning && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               {selectedHostId === "__local__" ? "Run Locally" : "Run Recipe"}
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <Modal isOpen={isRunErrorOpen} onClose={onRunErrorClose} size="lg">
-        <ModalContent>
-          <ModalHeader>Failed to run recipe</ModalHeader>
-          <ModalBody>
-            <p className="text-sm text-danger whitespace-pre-wrap">{runError ?? "Unknown error"}</p>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onRunErrorClose}>
+      <Dialog open={isRunErrorOpen} onOpenChange={setIsRunErrorOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Failed to run recipe</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-destructive whitespace-pre-wrap">{runError ?? "Unknown error"}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsRunErrorOpen(false)}>
               Close
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     </div>
   );

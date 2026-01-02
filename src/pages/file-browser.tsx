@@ -1,32 +1,31 @@
 import {
-  Breadcrumbs,
-  BreadcrumbItem,
+  Badge,
+  Button,
   Card,
-  CardBody,
+  CardContent,
   Checkbox,
-  Chip,
-  Dropdown,
-  DropdownItem,
-  DropdownMenu,
-  DropdownTrigger,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
+  Label,
   Select,
+  SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
   Skeleton,
-  Spinner,
-  useDisclosure,
-} from "@nextui-org/react";
-import { Button } from "../components/ui";
+} from "@/components/ui";
 import { AppIcon } from "../components/AppIcon";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import {
   storageApi,
   transferApi,
@@ -51,7 +50,7 @@ function IconFolder() {
 
 function IconFile() {
   return (
-    <svg className="w-5 h-5 text-default-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
     </svg>
   );
@@ -176,8 +175,6 @@ function TransferModal({
   const [operation, setOperation] = useState<TransferOperation>("copy");
   const [error, setError] = useState<string | null>(null);
 
-  const destStorageQuery = useStorage(destStorageId);
-
   const createTransfer = useMutation({
     mutationFn: transferApi.create,
     onSuccess: () => {
@@ -208,78 +205,90 @@ function TransferModal({
   );
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} isDismissable={true} size="lg">
-      <ModalContent>
-        {(onClose) => (
-          <>
-            <ModalHeader>Transfer Files</ModalHeader>
-            <ModalBody>
-              <div className="space-y-4">
-                <div>
-                  <p className="text-sm text-foreground/60 mb-2">
-                    Selected {selectedFiles.length} item(s) from{" "}
-                    <span className="font-medium">{srcStorage?.name}</span>
-                  </p>
-                  <div className="max-h-32 overflow-auto bg-content2 rounded-lg p-2">
-                    {selectedFiles.map((f) => (
-                      <div key={f.path} className="text-xs font-mono truncate">
-                        {f.path}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Transfer Files</DialogTitle>
+          <DialogDescription>
+            Selected {selectedFiles.length} item(s) from{" "}
+            <span className="font-medium text-foreground">{srcStorage?.name}</span>
+          </DialogDescription>
+        </DialogHeader>
 
-                <Select labelPlacement="inside" label="Destination Storage"
-                placeholder="Select destination"
-                selectedKeys={destStorageId ? [destStorageId] : []}
-                onSelectionChange={(keys) => {
-                  const id = Array.from(keys)[0] as string;
-                  setDestStorageId(id);
-                }}
-                isRequired>{otherStorages.map((s) => (
-                  <SelectItem key={s.id}>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label>Selected paths</Label>
+            <div className="max-h-32 overflow-auto rounded-lg border border-border bg-muted/50 p-2">
+              {selectedFiles.map((f) => (
+                <div key={f.path} className="text-xs font-mono truncate">
+                  {f.path}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <Label>Destination Storage</Label>
+            <Select value={destStorageId} onValueChange={setDestStorageId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select destination" />
+              </SelectTrigger>
+              <SelectContent>
+                {otherStorages.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
                     <span className="flex items-center gap-2">
                       {getStorageIconNode(s, "w-4 h-4")}
                       {s.name}
                     </span>
                   </SelectItem>
-                ))}</Select>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-                <Input labelPlacement="inside" label="Destination Path"
-                placeholder="/"
-                value={destPath}
-                onValueChange={setDestPath}
-                description="Path on destination storage" />
+          <div className="grid gap-2">
+            <Label htmlFor="transfer-dest-path">Destination Path</Label>
+            <Input
+              id="transfer-dest-path"
+              placeholder="/"
+              value={destPath}
+              onChange={(e) => setDestPath(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">Path on destination storage</p>
+          </div>
 
-                <Select labelPlacement="inside" label="Operation"
-                selectedKeys={[operation]}
-                onSelectionChange={(keys) => {
-                  setOperation(Array.from(keys)[0] as TransferOperation);
-                }}><SelectItem key="copy">Copy (keep source)</SelectItem>
-                <SelectItem key="move">Move (delete source after)</SelectItem>
-                <SelectItem key="sync">Sync (mirror with delete)</SelectItem>
-                <SelectItem key="sync_no_delete">Sync (no delete)</SelectItem></Select>
+          <div className="grid gap-2">
+            <Label>Operation</Label>
+            <Select value={operation} onValueChange={(value) => setOperation(value as TransferOperation)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="copy">Copy (keep source)</SelectItem>
+                <SelectItem value="move">Move (delete source after)</SelectItem>
+                <SelectItem value="sync">Sync (mirror with delete)</SelectItem>
+                <SelectItem value="sync_no_delete">Sync (no delete)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
-                {error && <p className="text-sm text-danger">{error}</p>}
-              </div>
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={onClose}>
-                Cancel
-              </Button>
-              <Button
-                color="primary"
-                onPress={handleTransfer}
-                isLoading={createTransfer.isPending}
-                isDisabled={!destStorageId || selectedFiles.length === 0}
-              >
-                Start Transfer
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+          {error && <p className="text-sm text-danger">{error}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleTransfer}
+            disabled={!destStorageId || selectedFiles.length === 0 || createTransfer.isPending}
+          >
+            {createTransfer.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            Start Transfer
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -319,37 +328,38 @@ function NewFolderModal({
   });
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} isDismissable={true}>
-      <ModalContent>
-        {(onClose) => (
-          <>
-            <ModalHeader>New Folder</ModalHeader>
-            <ModalBody>
-              <Input labelPlacement="inside" label="Folder Name"
-              placeholder="my-folder"
-              value={name}
-              onValueChange={setName}
-              autoFocus
-              isRequired />
-              {error && <p className="text-sm text-danger">{error}</p>}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={onClose}>
-                Cancel
-              </Button>
-              <Button
-                color="primary"
-                onPress={() => createMutation.mutate()}
-                isLoading={createMutation.isPending}
-                isDisabled={!name.trim()}
-              >
-                Create
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New Folder</DialogTitle>
+        </DialogHeader>
+
+        <div className="grid gap-2">
+          <Label htmlFor="new-folder-name">Folder Name</Label>
+          <Input
+            id="new-folder-name"
+            placeholder="my-folder"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+          {error && <p className="text-sm text-danger">{error}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => createMutation.mutate()}
+            disabled={!name.trim() || createMutation.isPending}
+          >
+            {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -363,8 +373,8 @@ export function FileBrowserPage() {
   const [currentPath, setCurrentPath] = useState("/");
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
 
-  const newFolderModal = useDisclosure();
-  const transferModal = useDisclosure();
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   const storageQuery = useStorage(id);
   const filesQuery = useStorageFiles(id, currentPath);
@@ -459,17 +469,18 @@ export function FileBrowserPage() {
       key: "select",
       header: (
         <Checkbox
-          isSelected={allSelected}
-          isIndeterminate={selectedPaths.size > 0 && !allSelected}
-          onValueChange={toggleSelectAll}
+          checked={allSelected ? true : selectedPaths.size > 0 ? "indeterminate" : false}
+          onCheckedChange={() => toggleSelectAll()}
+          aria-label="Select all"
         />
       ),
       width: "40px",
       render: (entry) => (
         <Checkbox
-          isSelected={selectedPaths.has(entry.path)}
-          onValueChange={() => toggleSelection(entry.path)}
+          checked={selectedPaths.has(entry.path)}
+          onCheckedChange={() => toggleSelection(entry.path)}
           onClick={(e) => e.stopPropagation()}
+          aria-label={`Select ${entry.name}`}
         />
       ),
     },
@@ -501,7 +512,7 @@ export function FileBrowserPage() {
       header: "Modified",
       width: "180px",
       render: (entry) => (
-        <span className="text-sm text-foreground/60">
+        <span className="text-sm text-muted-foreground">
           {formatDate(entry.modified_at)}
         </span>
       ),
@@ -512,7 +523,7 @@ export function FileBrowserPage() {
     return (
       <div className="h-full flex flex-col">
         {/* Skeleton Header */}
-        <div className="flex-shrink-0 p-4 border-b border-divider">
+        <div className="flex-shrink-0 p-4 border-b border-border">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
               <Skeleton className="w-9 h-9 rounded-lg" />
@@ -538,7 +549,7 @@ export function FileBrowserPage() {
         <div className="flex-1 p-4">
           <div className="space-y-2">
             {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-divider">
+              <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border">
                 <Skeleton className="w-8 h-8 rounded" />
                 <Skeleton className="h-5 flex-1 rounded-lg" />
                 <Skeleton className="h-4 w-20 rounded-lg" />
@@ -562,20 +573,21 @@ export function FileBrowserPage() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex-shrink-0 p-4 border-b border-divider">
+      <div className="flex-shrink-0 p-4 border-b border-border">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <Button
-              isIconOnly
-              variant="light"
-              onPress={() => navigate({ to: "/storage" })}
+              size="icon"
+              variant="ghost"
+              onClick={() => navigate({ to: "/storage" })}
+              aria-label="Back"
             >
               <IconArrowLeft />
             </Button>
             {getStorageIconNode(storage)}
             <div>
               <h1 className="text-lg font-semibold">{storage.name}</h1>
-              <p className="text-xs text-foreground/60">
+              <p className="text-xs text-muted-foreground">
                 {storage.backend.type === "local" && storage.backend.root_path}
                 {storage.backend.type === "ssh_remote" && `SSH: ${storage.backend.host_id}`}
                 {storage.backend.type === "cloudflare_r2" && `R2: ${storage.backend.bucket}`}
@@ -585,20 +597,20 @@ export function FileBrowserPage() {
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              variant="flat"
-              startContent={<IconRefresh />}
-              onPress={() => filesQuery.refetch()}
-              isLoading={filesQuery.isFetching}
+              variant="outline"
+              onClick={() => filesQuery.refetch()}
+              disabled={filesQuery.isFetching}
             >
+              {filesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <IconRefresh />}
               Refresh
             </Button>
             {!storage.readonly && (
               <Button
                 size="sm"
-                variant="flat"
-                startContent={<IconNewFolder />}
-                onPress={newFolderModal.onOpen}
+                variant="outline"
+                onClick={() => setNewFolderOpen(true)}
               >
+                <IconNewFolder />
                 New Folder
               </Button>
             )}
@@ -608,25 +620,39 @@ export function FileBrowserPage() {
         {/* Breadcrumbs */}
         <div className="flex items-center gap-2">
           <Button
-            isIconOnly
-            size="sm"
-            variant="flat"
-            onPress={navigateUp}
-            isDisabled={currentPath === "/"}
+            size="icon"
+            variant="outline"
+            className="h-8 w-8"
+            onClick={navigateUp}
+            disabled={currentPath === "/"}
+            aria-label="Up"
           >
             <IconArrowUp />
           </Button>
-          <Breadcrumbs size="sm">
-            {breadcrumbs.map((b) => (
-              <BreadcrumbItem
-                key={b.path}
-                onPress={() => navigateToPath(b.path)}
-                isCurrent={b.path === currentPath}
-              >
-                {b.name}
-              </BreadcrumbItem>
+          <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-xs">
+            {breadcrumbs.map((b, idx) => (
+              <div key={b.path} className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigateToPath(b.path)}
+                  disabled={b.path === currentPath}
+                  className={cn(
+                    "h-auto px-1.5 py-0.5 rounded text-xs font-normal transition-colors disabled:opacity-100",
+                    b.path === currentPath
+                      ? "text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  {b.name}
+                </Button>
+                {idx < breadcrumbs.length - 1 && (
+                  <span className="text-muted-foreground/40">/</span>
+                )}
+              </div>
             ))}
-          </Breadcrumbs>
+          </nav>
         </div>
       </div>
 
@@ -636,35 +662,33 @@ export function FileBrowserPage() {
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: "auto", opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
-          className="flex-shrink-0 px-4 py-2 bg-primary/10 border-b border-divider"
+          className="flex-shrink-0 px-4 py-2 bg-primary/10 border-b border-border"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Chip size="sm" variant="flat">
-                {selectedFiles.length} selected
-              </Chip>
-              <Button size="sm" variant="light" onPress={clearSelection}>
+              <Badge variant="outline">{selectedFiles.length} selected</Badge>
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
                 Clear
               </Button>
             </div>
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
-                variant="flat"
-                startContent={<IconCopy />}
-                onPress={transferModal.onOpen}
+                variant="outline"
+                onClick={() => setTransferOpen(true)}
               >
+                <IconCopy />
                 Copy/Move to...
               </Button>
               {!storage.readonly && (
                 <Button
                   size="sm"
-                  variant="flat"
-                  color="danger"
-                  startContent={<IconTrash />}
-                  onPress={handleDelete}
-                  isLoading={deleteMutation.isPending}
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending}
                 >
+                  {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+                  <IconTrash />
                   Delete
                 </Button>
               )}
@@ -677,11 +701,11 @@ export function FileBrowserPage() {
       <div className="flex-1 overflow-auto p-4">
         {filesQuery.isLoading ? (
           <div className="flex items-center justify-center py-12">
-            <Spinner />
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
         ) : filesQuery.error ? (
           <Card>
-            <CardBody>
+            <CardContent className="pt-6">
               <p className="text-danger whitespace-pre-wrap">
                 Error loading files: {
                   typeof filesQuery.error === 'object' && filesQuery.error !== null && 'message' in filesQuery.error
@@ -689,13 +713,13 @@ export function FileBrowserPage() {
                     : String(filesQuery.error)
                 }
               </p>
-            </CardBody>
+            </CardContent>
           </Card>
         ) : files.length === 0 ? (
           <Card>
-            <CardBody className="text-center py-12">
-              <p className="text-foreground/60">This folder is empty</p>
-            </CardBody>
+            <CardContent className="text-center py-12">
+              <p className="text-muted-foreground">This folder is empty</p>
+            </CardContent>
           </Card>
         ) : (
           <DataTable
@@ -711,16 +735,16 @@ export function FileBrowserPage() {
 
       {/* Modals */}
       <NewFolderModal
-        isOpen={newFolderModal.isOpen}
-        onOpenChange={newFolderModal.onOpenChange}
+        isOpen={newFolderOpen}
+        onOpenChange={setNewFolderOpen}
         storageId={id}
         currentPath={currentPath}
         onSuccess={() => filesQuery.refetch()}
       />
 
       <TransferModal
-        isOpen={transferModal.isOpen}
-        onOpenChange={transferModal.onOpenChange}
+        isOpen={transferOpen}
+        onOpenChange={setTransferOpen}
         sourceStorage={storage}
         selectedFiles={selectedFiles}
         currentPath={currentPath}

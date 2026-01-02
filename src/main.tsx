@@ -1,8 +1,8 @@
-import { NextUIProvider } from "@nextui-org/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { router } from "./router";
 import "./styles.css";
 
@@ -16,12 +16,10 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <NextUIProvider>
+    <TooltipProvider>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
-    </NextUIProvider>
+    </TooltipProvider>
   </React.StrictMode>
 );
-
-

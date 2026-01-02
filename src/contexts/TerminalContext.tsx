@@ -43,10 +43,6 @@ type TerminalContextType = {
   createNewTab: () => void;
   /** Remove the current placeholder tab (if any) */
   removeCurrentPlaceholder: () => void;
-  /** Whether the sidebar is collapsed */
-  sidebarCollapsed: boolean;
-  setSidebarCollapsed: (collapsed: boolean) => void;
-  toggleSidebar: () => void;
 };
 
 const TerminalContext = createContext<TerminalContextType | null>(null);
@@ -69,7 +65,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [recipeDetailsExpanded, setRecipeDetailsExpanded] = useState(false);
   const [workspaceVisible, setWorkspaceVisible] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const lastSessionCount = useRef(0);
 
   // Check if current terminal has an associated recipe
@@ -79,10 +74,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   const toggleRecipeDetails = useCallback(() => {
     setRecipeDetailsExpanded((prev) => !prev);
-  }, []);
-
-  const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed((prev) => !prev);
   }, []);
 
   // Show workspace panel (hides terminal, shows host connection UI)
@@ -308,9 +299,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         showWorkspace,
         createNewTab,
         removeCurrentPlaceholder,
-        sidebarCollapsed,
-        setSidebarCollapsed,
-        toggleSidebar,
       }}
     >
       {children}

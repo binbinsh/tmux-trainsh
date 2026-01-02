@@ -1,20 +1,24 @@
-import {
-  Card,
-  CardBody,
-  CardHeader,
-  Divider,
-  Input,
-  Spinner,
-  Switch,
-  Textarea
-} from "@nextui-org/react";
-import { Button } from "../components/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { copyText } from "../lib/clipboard";
-import { getConfig, sshPublicKey, termOpenSshTmux } from "../lib/tauri-api";
-import type { SshSpec, TrainshConfig } from "../lib/types";
-import { DataTable, ActionButton, type ColumnDef } from "../components/shared/DataTable";
+import { Loader2 } from "lucide-react";
+import { copyText } from "@/lib/clipboard";
+import { getConfig, sshPublicKey, termOpenSshTmux } from "@/lib/tauri-api";
+import type { SshSpec } from "@/lib/types";
+import { DataTable, ActionButton, type ColumnDef } from "@/components/shared/DataTable";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  Button,
+  Input,
+  Textarea,
+  Separator,
+  Badge,
+  Label,
+} from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 type ColabSession = {
   id: string;
@@ -58,7 +62,6 @@ export function ColabPage() {
     queryFn: getConfig
   });
 
-  // Colab sessions
   const [sessions, setSessions] = useState<ColabSession[]>([]);
   const [newTitle, setNewTitle] = useState("colab");
   const [newHostname, setNewHostname] = useState("");
@@ -84,7 +87,6 @@ export function ColabPage() {
 
   const sshKeyPath = useMemo(() => cfgQuery.data?.vast.ssh_key_path ?? null, [cfgQuery.data]);
 
-  // Handler for opening terminal
   const handleOpenTerminal = async (s: ColabSession) => {
     if (!sshKeyPath) return;
     setOpeningId(s.id);
@@ -109,7 +111,6 @@ export function ColabPage() {
     }
   };
 
-  // DataTable columns for sessions
   const sessionColumns: ColumnDef<ColabSession>[] = useMemo(() => [
     {
       key: "title",
@@ -133,16 +134,15 @@ export function ColabPage() {
         <div className="flex flex-wrap gap-2">
           <ActionButton
             label="Open in Terminal"
-            color="primary"
-            variant="flat"
-            isDisabled={!sshKeyPath}
+            variant="default"
+            disabled={!sshKeyPath}
             isLoading={openingId === s.id}
-            onPress={() => void handleOpenTerminal(s)}
+            onClick={() => void handleOpenTerminal(s)}
           />
           <ActionButton
             label="Copy SSH Config"
-            variant="flat"
-            onPress={async () => {
+            variant="outline"
+            onClick={async () => {
               const snippet = [
                 `Host ${s.hostname}`,
                 `  User ${s.user}`,
@@ -153,9 +153,8 @@ export function ColabPage() {
           />
           <ActionButton
             label="Remove"
-            color="danger"
-            variant="flat"
-            onPress={() => setSessions((prev) => prev.filter((x) => x.id !== s.id))}
+            variant="destructive"
+            onClick={() => setSessions((prev) => prev.filter((x) => x.id !== s.id))}
           />
         </div>
       ),
@@ -205,41 +204,58 @@ tail -n 30 /content/cloudflared.log || true
   }, [manualPubKey, manualToken]);
 
   return (
-    <div className="h-full p-6 overflow-auto">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="doppio-page">
+      <div className="doppio-page-content space-y-6">
         <Card>
-          <CardHeader className="flex items-start justify-between gap-4">
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
             <div>
-              <div className="text-lg font-semibold">Colab sessions</div>
-              <div className="text-sm text-foreground/70">
-                用 cloudflared + SSH 把 Colab 当作“远端机”（可在 Terminal 里直接 attach tmux）。
-              </div>
+              <CardTitle>Colab sessions</CardTitle>
+              <CardDescription>
+                用 cloudflared + SSH 把 Colab 当作"远端机"（可在 Terminal 里直接 attach tmux）。
+              </CardDescription>
             </div>
-            <div className="text-xs text-foreground/60">
+            <div className="text-xs text-muted-foreground">
               SSH key: <span className="font-mono">{sshKeyPath ?? "(not set)"}</span>
             </div>
           </CardHeader>
-          <Divider />
-          <CardBody className="gap-4">
+          <Separator />
+          <CardContent className="space-y-4 pt-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-              <Input labelPlacement="inside" label="Title" value={newTitle} onValueChange={setNewTitle} placeholder="colab" />
-              <Input labelPlacement="inside" label="Hostname"
-              value={newHostname}
-              onValueChange={setNewHostname}
-              placeholder="colab-ssh.example.com"
-              description="Cloudflare Tunnel 的 SSH hostname" />
-              <Input labelPlacement="inside" label="User" value={newUser} onValueChange={setNewUser} placeholder="root" />
-              <Input labelPlacement="inside" label="tmux session" value={newTmux} onValueChange={setNewTmux} placeholder="doppio" />
-              <Input labelPlacement="inside" label="cloudflared path"
-              value={newCloudflared}
-              onValueChange={setNewCloudflared}
-              placeholder="/opt/homebrew/bin/cloudflared" />
+              <div className="space-y-1">
+                <Label htmlFor="colab-title" className="text-sm font-medium">Title</Label>
+                <Input id="colab-title" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="colab" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="colab-hostname" className="text-sm font-medium">Hostname</Label>
+                <Input
+                  id="colab-hostname"
+                  value={newHostname}
+                  onChange={(e) => setNewHostname(e.target.value)}
+                  placeholder="colab-ssh.example.com"
+                />
+                <p className="text-xs text-muted-foreground">Cloudflare Tunnel 的 SSH hostname</p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="colab-user" className="text-sm font-medium">User</Label>
+                <Input id="colab-user" value={newUser} onChange={(e) => setNewUser(e.target.value)} placeholder="root" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="colab-tmux" className="text-sm font-medium">tmux session</Label>
+                <Input id="colab-tmux" value={newTmux} onChange={(e) => setNewTmux(e.target.value)} placeholder="doppio" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="colab-cloudflared" className="text-sm font-medium">cloudflared path</Label>
+                <Input
+                  id="colab-cloudflared"
+                  value={newCloudflared}
+                  onChange={(e) => setNewCloudflared(e.target.value)}
+                  placeholder="/opt/homebrew/bin/cloudflared"
+                />
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
-                color="primary"
-                variant="flat"
-                onPress={() => {
+                onClick={() => {
                   setSessError(null);
                   if (!newHostname.trim()) {
                     setSessError("Hostname is required.");
@@ -259,7 +275,7 @@ tail -n 30 /content/cloudflared.log || true
               >
                 Add session
               </Button>
-              {sessError ? <div className="text-sm text-danger">{sessError}</div> : null}
+              {sessError ? <div className="text-sm text-destructive">{sessError}</div> : null}
             </div>
 
             <DataTable
@@ -270,25 +286,24 @@ tail -n 30 /content/cloudflared.log || true
               compact
             />
 
-            <div className="text-xs text-foreground/60">
+            <div className="text-xs text-muted-foreground">
               Setup manual 在本页下方（包含 sshd + cloudflared + 本地 ProxyCommand）。
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex items-start justify-between gap-4">
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
             <div>
-              <div className="text-lg font-semibold">Setup manual (cloudflared SSH)</div>
-              <div className="text-sm text-foreground/70">
+              <CardTitle>Setup manual (cloudflared SSH)</CardTitle>
+              <CardDescription>
                 目标：让 Colab 暴露一个 SSH 服务（sshd:2222），通过 Cloudflare Tunnel + Access 从本地连接。
-              </div>
+              </CardDescription>
             </div>
             <Button
-              variant="flat"
-              isDisabled={!sshKeyPath || manualLoadingKey}
-              isLoading={manualLoadingKey}
-              onPress={async () => {
+              variant="outline"
+              disabled={!sshKeyPath || manualLoadingKey}
+              onClick={async () => {
                 if (!sshKeyPath) return;
                 setManualError(null);
                 setManualLoadingKey(true);
@@ -303,26 +318,37 @@ tail -n 30 /content/cloudflared.log || true
                 }
               }}
             >
+              {manualLoadingKey && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Load public key from Settings
             </Button>
           </CardHeader>
-          <Divider />
-          <CardBody className="gap-4">
-            {manualError ? <div className="text-sm text-danger">Manual error: {manualError}</div> : null}
+          <Separator />
+          <CardContent className="space-y-4 pt-4">
+            {manualError ? <div className="text-sm text-destructive">Manual error: {manualError}</div> : null}
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Input labelPlacement="inside" label="SSH public key (authorized_keys)"
-              value={manualPubKey}
-              onValueChange={setManualPubKey}
-              placeholder="ssh-ed25519 AAAA... user@host" />
-              <Input labelPlacement="inside" label="Cloudflared tunnel token (optional, not stored)"
-              type="password"
-              value={manualToken}
-              onValueChange={setManualToken}
-              placeholder="PASTE_TUNNEL_TOKEN" />
+              <div className="space-y-1">
+                <Label htmlFor="colab-ssh-pubkey" className="text-sm font-medium">SSH public key (authorized_keys)</Label>
+                <Input
+                  id="colab-ssh-pubkey"
+                  value={manualPubKey}
+                  onChange={(e) => setManualPubKey(e.target.value)}
+                  placeholder="ssh-ed25519 AAAA... user@host"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="colab-tunnel-token" className="text-sm font-medium">Cloudflared tunnel token (optional, not stored)</Label>
+                <Input
+                  id="colab-tunnel-token"
+                  type="password"
+                  value={manualToken}
+                  onChange={(e) => setManualToken(e.target.value)}
+                  placeholder="PASTE_TUNNEL_TOKEN"
+                />
+              </div>
             </div>
 
-            <div className="text-sm text-foreground/70 grid gap-2">
+            <div className="text-sm text-muted-foreground space-y-2">
               <div className="font-semibold">1) Cloudflare Dashboard（一次性）</div>
               <div className="text-xs">
                 在 Cloudflare Zero Trust 创建 Tunnel，并添加 SSH route：Hostname 例如 <span className="font-mono">colab-ssh.example.com</span>，
@@ -330,17 +356,21 @@ tail -n 30 /content/cloudflared.log || true
               </div>
             </div>
 
-            <div className="grid gap-2">
+            <div className="space-y-2">
               <div className="text-sm font-semibold">2) Colab Notebook（每次会话）</div>
-              <Textarea labelPlacement="inside" label="One cell (bash)"
-              value={manualColabCell}
-              minRows={12}
-              classNames={{ input: "font-mono text-xs" }}
-              readOnly />
+              <div className="space-y-1">
+                <Label htmlFor="colab-one-cell" className="text-sm font-medium">One cell (bash)</Label>
+                <Textarea
+                  id="colab-one-cell"
+                  value={manualColabCell}
+                  readOnly
+                  className="font-mono text-xs min-h-[300px]"
+                />
+              </div>
               <div className="flex gap-2">
                 <Button
-                  variant="flat"
-                  onPress={async () => {
+                  variant="outline"
+                  onClick={async () => {
                     await copyText(manualColabCell);
                   }}
                 >
@@ -349,17 +379,16 @@ tail -n 30 /content/cloudflared.log || true
               </div>
             </div>
 
-            <div className="text-sm text-foreground/70 grid gap-2">
+            <div className="text-sm text-muted-foreground space-y-2">
               <div className="font-semibold">3) 本地连接</div>
               <div className="text-xs">
                 安装 <span className="font-mono">cloudflared</span>，并按 session 的 "Copy ssh config" 把 ProxyCommand 写入{" "}
                 <span className="font-mono">~/.ssh/config</span>，然后 <span className="font-mono">ssh root@&lt;hostname&gt;</span>。
               </div>
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
     </div>
   );
 }
-

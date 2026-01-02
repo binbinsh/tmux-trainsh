@@ -1,25 +1,31 @@
 import {
+  Badge,
+  Button,
   Card,
-  CardBody,
+  CardContent,
   CardHeader,
-  Chip,
-  Divider,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Input,
-  Skeleton,
-  Spinner,
-  Tab,
-  Tabs,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  useDisclosure,
-  Textarea,
+  Label,
   Progress,
+  Separator,
+  Skeleton,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Textarea,
   Tooltip,
-} from "@nextui-org/react";
-import { Button } from "../components/ui";
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../components/ui";
+import { Loader2 } from "lucide-react";
 import { AppIcon } from "../components/AppIcon";
 import type {
   GpuInfo,
@@ -38,23 +44,18 @@ import { copyText } from "../lib/clipboard";
 import {
   getConfig,
   hostApi,
-  termOpenSshTmux,
   useHostCostBreakdown,
   usePricingSettings,
   useStorages,
   useSyncVastPricing,
   useVastInstances,
-  sshCheck,
-  vastAttachSshKey,
   vastFetchSystemInfo,
   vastGetInstance,
   vastStartInstance,
   vastStopInstance,
   vastTestConnection,
   gpuLookupCapability,
-  type RemoteTmuxSession,
 } from "../lib/tauri-api";
-import { TmuxSessionSelectModal } from "../components/host/TmuxSessionSelectModal";
 import { StatusBadge } from "../components/shared/StatusBadge";
 import { formatPriceWithRates } from "../lib/currency";
 
@@ -306,20 +307,20 @@ function VastPricingCard({
 
   return (
     <Card>
-      <CardHeader className="flex justify-between items-center">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <span className="font-semibold">💰 Vast.ai Instance & Pricing</span>
         <Button
           size="sm"
-          variant="flat"
-          color="primary"
-          isLoading={syncMutation.isPending}
-          onPress={handleSync}
+          variant="outline"
+          onClick={handleSync}
+          disabled={syncMutation.isPending}
         >
+          {syncMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Sync Pricing
         </Button>
       </CardHeader>
-      <Divider />
-      <CardBody className="gap-4">
+      <Separator />
+      <CardContent className="space-y-4">
         <div>
           <p className="text-sm text-foreground/60">Instance ID</p>
           <p className="font-mono">{vastInstanceId}</p>
@@ -327,7 +328,7 @@ function VastPricingCard({
 
         {isLoading ? (
           <div className="flex justify-center py-4">
-            <Spinner size="sm" />
+            <Loader2 className="w-5 h-5 animate-spin" />
           </div>
         ) : cost ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -362,7 +363,7 @@ function VastPricingCard({
             Source: {cost.source === "vast_api" ? "Vast.ai API" : cost.source === "manual" ? "Manual" : "Colab"}
           </div>
         )}
-      </CardBody>
+      </CardContent>
     </Card>
   );
 }
@@ -380,36 +381,37 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
   const cap = gpu.capability;
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={(open) => !open && onClose()} isDismissable={true} size="2xl" scrollBehavior="inside">
-      <ModalContent>
-        <ModalHeader className="flex items-center gap-3">
-          <IconGpu />
-          <div className="flex-1">
-            <div className="text-lg">{gpu.name}</div>
-            <div className="flex items-center gap-3 text-sm text-foreground/60 font-normal">
-              <span>GPU {gpu.index}</span>
-              {cap && (
-                <>
-                  <span>•</span>
-                  <span>{cap.architecture}</span>
-                  <span>•</span>
-                  <span>SM {cap.compute_capability}</span>
-                </>
-              )}
-            </div>
-          </div>
-        </ModalHeader>
-        <ModalBody className="gap-4 pb-6">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader className="space-y-2">
+          <DialogTitle className="flex items-center gap-3">
+            <IconGpu />
+            <span>{gpu.name}</span>
+          </DialogTitle>
+          <DialogDescription className="flex items-center gap-3 text-sm">
+            <span>GPU {gpu.index}</span>
+            {cap && (
+              <>
+                <span>•</span>
+                <span>{cap.architecture}</span>
+                <span>•</span>
+                <span>SM {cap.compute_capability}</span>
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pb-2">
           {/* Architecture & Cores */}
           {cap && (
             <>
               <div className="grid grid-cols-5 gap-3">
-                <div className="p-3 rounded-lg bg-content2 text-center">
+                <div className="p-3 rounded-lg bg-muted text-center">
                   <p className="text-xs text-foreground/60 mb-1">CUDA Cores</p>
                   <p className="text-xl font-bold text-primary">{cap.cuda_cores.toLocaleString()}</p>
                 </div>
                 {cap.tensor_cores && (
-                  <div className="p-3 rounded-lg bg-content2 text-center">
+                  <div className="p-3 rounded-lg bg-muted text-center">
                     <p className="text-xs text-foreground/60 mb-1">Tensor Cores</p>
                     <p className="text-xl font-bold text-secondary">{cap.tensor_cores}</p>
                     {cap.tensor_core_gen && (
@@ -418,7 +420,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                   </div>
                 )}
                 {cap.rt_cores && (
-                  <div className="p-3 rounded-lg bg-content2 text-center">
+                  <div className="p-3 rounded-lg bg-muted text-center">
                     <p className="text-xs text-foreground/60 mb-1">RT Cores</p>
                     <p className="text-xl font-bold text-warning">{cap.rt_cores}</p>
                     {cap.rt_core_gen && (
@@ -427,27 +429,27 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                   </div>
                 )}
                 {cap.memory_bandwidth_gbps && (
-                  <div className="p-3 rounded-lg bg-content2 text-center">
+                  <div className="p-3 rounded-lg bg-muted text-center">
                     <p className="text-xs text-foreground/60 mb-1">Bandwidth</p>
                     <p className="text-xl font-bold">{cap.memory_bandwidth_gbps}</p>
                     <p className="text-xs text-foreground/60">GB/s</p>
                   </div>
                 )}
-                <div className="p-3 rounded-lg bg-content2 text-center">
+                <div className="p-3 rounded-lg bg-muted text-center">
                   <p className="text-xs text-foreground/60 mb-1">VRAM</p>
                   <p className="text-xl font-bold">{(gpu.memory_total_mb / 1024).toFixed(0)}</p>
                   <p className="text-xs text-foreground/60">GB</p>
                 </div>
               </div>
 
-              <Divider />
+              <Separator />
 
               {/* Compute Performance */}
               <div>
                 <p className="text-sm font-medium mb-3">Theoretical Peak Performance (TFLOPS)</p>
                 <div className="grid grid-cols-4 gap-3">
                   {cap.fp32_tflops && (
-                    <div className="p-2 rounded-lg bg-content2">
+                    <div className="p-2 rounded-lg bg-muted">
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-medium">FP32</span>
                         <span className="text-sm font-bold">{cap.fp32_tflops}</span>
@@ -455,7 +457,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                     </div>
                   )}
                   {cap.tf32_tflops && (
-                    <div className="p-2 rounded-lg bg-content2">
+                    <div className="p-2 rounded-lg bg-muted">
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-medium">TF32</span>
                         <span className="text-sm font-bold">{cap.tf32_tflops}</span>
@@ -471,7 +473,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                     </div>
                   )}
                   {cap.bf16_tflops && (
-                    <div className="p-2 rounded-lg bg-content2">
+                    <div className="p-2 rounded-lg bg-muted">
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-medium">BF16</span>
                         <span className="text-sm font-bold">{cap.bf16_tflops}</span>
@@ -495,7 +497,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                     </div>
                   )}
                   {cap.int8_tops && (
-                    <div className="p-2 rounded-lg bg-content2">
+                    <div className="p-2 rounded-lg bg-muted">
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-medium">INT8</span>
                         <span className="text-sm font-bold">{cap.int8_tops}</span>
@@ -506,7 +508,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                 <p className="text-xs text-foreground/50 mt-2">* With sparsity where applicable (Blackwell FP4 is new in 5th Gen Tensor Cores)</p>
               </div>
 
-              <Divider />
+              <Separator />
             </>
           )}
 
@@ -528,10 +530,12 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                   )}
                 </span>
               </div>
-              <Progress 
-                value={memUsedPct} 
-                color={memUsedPct > 90 ? "danger" : memUsedPct > 70 ? "warning" : "primary"}
+              <Progress
+                value={memUsedPct}
                 className="h-2"
+                indicatorClassName={
+                  memUsedPct > 90 ? "bg-destructive" : memUsedPct > 70 ? "bg-warning" : "bg-primary"
+                }
               />
               <div className="flex justify-between text-xs text-foreground/50 mt-1">
                 <span>Used: {gpu.memory_used_mb != null ? (gpu.memory_used_mb / 1024).toFixed(1) : 0} GB</span>
@@ -546,10 +550,16 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
                   <span className="text-xs text-foreground/60">GPU Utilization</span>
                   <span className="text-sm font-medium">{gpu.utilization}%</span>
                 </div>
-                <Progress 
-                  value={gpu.utilization} 
-                  color={gpu.utilization > 90 ? "success" : gpu.utilization > 50 ? "primary" : "default"}
+                <Progress
+                  value={gpu.utilization}
                   className="h-2"
+                  indicatorClassName={
+                    gpu.utilization > 90
+                      ? "bg-success"
+                      : gpu.utilization > 50
+                        ? "bg-primary"
+                        : "bg-muted-foreground"
+                  }
                 />
               </div>
             )}
@@ -558,7 +568,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
           {/* Quick Stats Grid */}
           <div className="grid grid-cols-4 gap-3">
             {/* Temperature */}
-            <div className="p-3 rounded-lg bg-content2 text-center">
+            <div className="p-3 rounded-lg bg-muted text-center">
               <p className="text-xs text-foreground/60 mb-1">Temp</p>
               <p className={`text-lg font-bold ${getTempColor(gpu.temperature)}`}>
                 {gpu.temperature != null ? `${gpu.temperature}°C` : "—"}
@@ -566,7 +576,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
             </div>
 
             {/* Power */}
-            <div className="p-3 rounded-lg bg-content2 text-center">
+            <div className="p-3 rounded-lg bg-muted text-center">
               <p className="text-xs text-foreground/60 mb-1">Power</p>
               <p className="text-lg font-bold">
                 {gpu.power_draw_w != null ? `${gpu.power_draw_w.toFixed(0)}W` : "—"}
@@ -577,7 +587,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
             </div>
 
             {/* GPU Clock */}
-            <div className="p-3 rounded-lg bg-content2 text-center">
+            <div className="p-3 rounded-lg bg-muted text-center">
               <p className="text-xs text-foreground/60 mb-1">GPU Clock</p>
               <p className="text-lg font-bold">
                 {gpu.clock_graphics_mhz != null ? `${gpu.clock_graphics_mhz}` : "—"}
@@ -586,7 +596,7 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
             </div>
 
             {/* Memory Clock */}
-            <div className="p-3 rounded-lg bg-content2 text-center">
+            <div className="p-3 rounded-lg bg-muted text-center">
               <p className="text-xs text-foreground/60 mb-1">Mem Clock</p>
               <p className="text-lg font-bold">
                 {gpu.clock_memory_mhz != null ? `${gpu.clock_memory_mhz}` : "—"}
@@ -598,33 +608,33 @@ function GpuDetailModal({ gpu, isOpen, onClose }: { gpu: GpuInfo | null; isOpen:
           {/* Additional Info */}
           <div className="grid grid-cols-4 gap-3 text-sm">
             {gpu.fan_speed != null && (
-              <div className="p-2 rounded bg-content2">
+              <div className="p-2 rounded bg-muted">
                 <span className="text-xs text-foreground/60">Fan: </span>
                 <span className="font-medium">{gpu.fan_speed}%</span>
               </div>
             )}
             {gpu.pcie_gen != null && gpu.pcie_width != null && (
-              <div className="p-2 rounded bg-content2">
+              <div className="p-2 rounded bg-muted">
                 <span className="text-xs text-foreground/60">PCIe: </span>
                 <span className="font-medium">Gen{gpu.pcie_gen} x{gpu.pcie_width}</span>
               </div>
             )}
             {gpu.compute_mode && (
-              <div className="p-2 rounded bg-content2">
+              <div className="p-2 rounded bg-muted">
                 <span className="text-xs text-foreground/60">Mode: </span>
                 <span className="font-medium">{gpu.compute_mode}</span>
               </div>
             )}
             {gpu.driver_version && (
-              <div className="p-2 rounded bg-content2">
+              <div className="p-2 rounded bg-muted">
                 <span className="text-xs text-foreground/60">Driver: </span>
                 <span className="font-mono text-xs">{gpu.driver_version}</span>
               </div>
             )}
           </div>
-        </ModalBody>
-      </ModalContent>
-    </Modal>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -654,10 +664,9 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
   const isVast = mode === "vast";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const editModal = useDisclosure();
-  const gpuModal = useDisclosure();
-  const tmuxModal = useDisclosure();
-  const deleteModal = useDisclosure();
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isGpuOpen, setIsGpuOpen] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
   // GPU detail state
   const [selectedGpuIndex, setSelectedGpuIndex] = useState<number | null>(null);
@@ -667,10 +676,6 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
   const exchangeRates = pricingSettingsQuery.data?.exchange_rates;
   const formatUsd = (value: number, decimals = 3) =>
     formatPriceWithRates(value, "USD", displayCurrency, exchangeRates, decimals);
-
-  // Tmux session selection state
-  const [remoteTmuxSessions, setRemoteTmuxSessions] = useState<RemoteTmuxSession[]>([]);
-  const [isLoadingTmuxSessions, setIsLoadingTmuxSessions] = useState(false);
 
   // Edit form state
   const [editName, setEditName] = useState("");
@@ -1031,7 +1036,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["hosts", hostId] });
       queryClient.invalidateQueries({ queryKey: ["hosts"] });
-      editModal.onClose();
+      setIsEditOpen(false);
     },
   });
 
@@ -1059,169 +1064,6 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
       setTestResult(result);
     } catch (e) {
       setTestResult({ success: false, message: getErrorMessage(e) });
-    }
-  }
-
-  async function handleOpenTerminal() {
-    const host = isVast ? vastHost : hostQuery.data;
-    if (!host?.ssh) {
-      alert("No SSH configuration for this host");
-      return;
-    }
-
-    if (isVast) {
-      setIsLoadingTmuxSessions(true);
-      try {
-        if (!cfgQuery.data?.vast.ssh_key_path) {
-          throw new Error("Missing Vast SSH key path. Configure it in Settings → Vast.ai → SSH Key Path.");
-        }
-        const vastUser = cfgQuery.data.vast.ssh_user?.trim() || "root";
-        const latest = await vastGetInstance(vastInstanceId);
-        queryClient.setQueryData(["vastInstance", vastInstanceId], latest);
-        const keyPath = hasValidVastId
-          ? await vastAttachSshKey(vastInstanceId, cfgQuery.data.vast.ssh_key_path)
-          : null;
-        await new Promise((r) => setTimeout(r, 1200));
-
-        const sshExtraArgs = [
-          "-o",
-          "IdentitiesOnly=yes",
-          "-o",
-          "PreferredAuthentications=publickey",
-          "-o",
-          "PasswordAuthentication=no",
-          "-o",
-          "BatchMode=yes",
-        ];
-
-        const candidates: Array<{ mode: "proxy" | "direct"; host: string; port: number }> = [];
-        const addCandidate = (mode: "proxy" | "direct") => {
-          if (mode === "proxy") {
-            const sshIdx = latest.ssh_idx ?? null;
-            const normalizedSshIdx = sshIdx
-              ? String(sshIdx).startsWith("ssh")
-                ? String(sshIdx)
-                : `ssh${sshIdx}`
-              : null;
-            const proxyHostFromApi = latest.ssh_host ?? null;
-            const proxyHost = proxyHostFromApi?.includes("vast.ai")
-              ? proxyHostFromApi
-              : normalizedSshIdx
-                ? `${normalizedSshIdx}.vast.ai`
-                : null;
-            const h = proxyHost?.trim();
-            const p = latest.ssh_port ?? null;
-            if (h && p) candidates.push({ mode, host: h, port: p });
-            return;
-          }
-          const h = latest.public_ipaddr?.trim();
-          const p = latest.machine_dir_ssh_port ?? null;
-          if (h && p) candidates.push({ mode, host: h, port: p });
-        };
-
-        const pref = cfgQuery.data.vast.ssh_connection_preference === "direct" ? "direct" : "proxy";
-        addCandidate(pref);
-        addCandidate(pref === "direct" ? "proxy" : "direct");
-
-        if (candidates.length === 0) {
-          throw new Error("No available SSH route for this instance (proxy/direct SSH not available yet).");
-        }
-
-        let lastError: unknown = null;
-        const attempts: string[] = [];
-        for (const cand of candidates) {
-          try {
-            await sshCheck({
-              host: cand.host,
-              port: cand.port,
-              user: vastUser,
-              keyPath,
-              extraArgs: sshExtraArgs,
-            });
-            await connectToTmuxSession("main", {
-              host: cand.host,
-              port: cand.port,
-              user: vastUser,
-              keyPath,
-              extraArgs: sshExtraArgs,
-            });
-            return;
-          } catch (e) {
-            lastError = e;
-            attempts.push(`${cand.mode.toUpperCase()} ${vastUser}@${cand.host}:${cand.port}: ${getErrorMessage(e)}`);
-          }
-        }
-
-        if (attempts.length > 0) {
-          throw new Error(`SSH connection failed.\n\n${attempts.join("\n\n")}`);
-        }
-        throw lastError ?? new Error("SSH connection failed");
-      } catch (e) {
-        console.error("Failed to open Vast terminal:", e);
-        setIsLoadingTmuxSessions(false);
-        alert(`Failed to open terminal: ${getErrorMessage(e)}`);
-      }
-      return;
-    }
-
-    try {
-      setIsLoadingTmuxSessions(true);
-      // Check for existing tmux sessions
-      const sessions = await hostApi.listTmuxSessions(hostId);
-
-      if (sessions.length === 0) {
-        // No existing sessions, create a new one directly
-        await connectToTmuxSession("main");
-      } else if (sessions.length === 1) {
-        // Only one session, attach to it directly
-        await connectToTmuxSession(sessions[0].name);
-      } else {
-        // Multiple sessions, show modal for selection
-        setRemoteTmuxSessions(sessions);
-        setIsLoadingTmuxSessions(false);
-        tmuxModal.onOpen();
-      }
-    } catch (e) {
-      console.error("Failed to check tmux sessions:", e);
-      setIsLoadingTmuxSessions(false);
-      // If we can't list sessions (e.g., tmux not installed), just create a new one
-      await connectToTmuxSession("main");
-    }
-  }
-
-  async function connectToTmuxSession(
-    sessionName: string,
-    sshOverride?: { host?: string; port?: number; user?: string; keyPath?: string | null; extraArgs?: string[] }
-  ) {
-    const host = isVast ? vastHost : hostQuery.data;
-    if (!host?.ssh) return;
-
-    try {
-      const sshSpec = {
-        host: sshOverride?.host ?? host.ssh.host,
-        port: sshOverride?.port ?? host.ssh.port,
-        user: sshOverride?.user ?? host.ssh.user,
-        keyPath: sshOverride?.keyPath !== undefined ? sshOverride.keyPath : (host.ssh.keyPath ?? host.ssh.key_path ?? null),
-        extraArgs: sshOverride?.extraArgs ?? host.ssh.extraArgs ?? host.ssh.extra_args ?? [],
-      };
-      console.log("Opening terminal for host:", host.name, "session:", sessionName);
-      await termOpenSshTmux({
-        ssh: sshSpec,
-        tmuxSession: sessionName,
-        title: `${host.name} · ${sessionName}`,
-        cols: 120,
-        rows: 32,
-        envVars: host.env_vars,
-      });
-      // Close modal if open
-      tmuxModal.onClose();
-      setIsLoadingTmuxSessions(false);
-      // Navigate to terminal page
-      navigate({ to: "/terminal" });
-    } catch (e) {
-      console.error("Failed to open terminal:", e);
-      setIsLoadingTmuxSessions(false);
-      alert(`Failed to open terminal: ${e}`);
     }
   }
 
@@ -1368,20 +1210,26 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
     return (
       <div>
         <p className="text-sm text-foreground/60 mb-2">GPUs ({gpuList.length})</p>
-        <div className="space-y-2">
-          {gpuList.map((gpu) => {
-            const memUsedPct = gpu.memory_used_mb != null && gpu.memory_total_mb > 0
-              ? Math.round((gpu.memory_used_mb / gpu.memory_total_mb) * 100)
-              : 0;
-            return (
-              <Tooltip key={gpu.index} content="Click for details" delay={500}>
-                <div
-                  className="p-3 rounded-lg bg-content2 cursor-pointer hover:bg-content3 transition-colors border border-transparent hover:border-primary/30"
-                  onClick={() => {
-                    setSelectedGpuIndex(gpu.index);
-                    gpuModal.onOpen();
-                  }}
-                >
+        <TooltipProvider delayDuration={500}>
+          <div className="space-y-2">
+            {gpuList.map((gpu) => {
+              const memUsedPct = gpu.memory_used_mb != null && gpu.memory_total_mb > 0
+                ? Math.round((gpu.memory_used_mb / gpu.memory_total_mb) * 100)
+                : 0;
+              const indicatorClassName =
+                memUsedPct > 90 ? "bg-destructive" : memUsedPct > 70 ? "bg-warning" : "bg-primary";
+              return (
+                <Tooltip key={gpu.index}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full h-auto p-3 rounded-lg bg-muted text-left hover:bg-accent transition-colors border border-transparent hover:border-primary/30 flex flex-col items-stretch justify-start gap-0 whitespace-normal"
+                      onClick={() => {
+                        setSelectedGpuIndex(gpu.index);
+                        setIsGpuOpen(true);
+                      }}
+                    >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <IconGpu />
@@ -1393,7 +1241,9 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                           {gpu.temperature}°C
                         </span>
                       )}
-                      <Chip size="sm" variant="flat">GPU {gpu.index}</Chip>
+                      <Badge variant="secondary" className="h-5 text-[11px]">
+                        GPU {gpu.index}
+                      </Badge>
                     </div>
                   </div>
                   <div className="mb-2">
@@ -1411,9 +1261,8 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                     </div>
                     <Progress
                       value={memUsedPct}
-                      size="sm"
-                      color={memUsedPct > 90 ? "danger" : memUsedPct > 70 ? "warning" : "primary"}
                       className="h-1.5"
+                      indicatorClassName={indicatorClassName}
                     />
                   </div>
                   <div className="flex gap-4 text-xs">
@@ -1436,11 +1285,14 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       </div>
                     )}
                   </div>
-                </div>
-              </Tooltip>
-            );
-          })}
-        </div>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Click for details</TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </div>
+        </TooltipProvider>
       </div>
     );
   };
@@ -1482,12 +1334,12 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
     return (
       <div className="h-full p-6">
         <Card>
-          <CardBody>
-            <p className="text-danger">Host not found or failed to load</p>
-            <Button as={Link} to="/hosts" className="mt-4">
-              Back to Hosts
+          <CardContent className="pt-6 space-y-3">
+            <p className="text-destructive">Host not found or failed to load</p>
+            <Button asChild className="w-fit">
+              <Link to="/hosts">Back to Hosts</Link>
             </Button>
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
     );
@@ -1500,95 +1352,104 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
-          <Button
-            as={Link}
-            to="/hosts"
-            isIconOnly
-            variant="flat"
-            size="sm"
-          >
-            <IconArrowLeft />
+          <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+            <Link to="/hosts" aria-label="Back to hosts">
+              <IconArrowLeft />
+            </Link>
           </Button>
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold">{host.name}</h1>
               <StatusBadge status={host.status} />
-              <Chip size="sm" variant="flat">{host.type}</Chip>
+              <Badge variant="secondary" className="h-5">
+                {host.type}
+              </Badge>
             </div>
-            <p className="text-sm text-foreground/60">
+            <p className="text-sm text-muted-foreground">
               {isVast ? "Vast.ai instance" : `Created ${new Date(host.created_at).toLocaleDateString()}`}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 justify-end">
             <Button
-              variant="flat"
-              startContent={<IconTerminal />}
-              onPress={() => {
+              onClick={() => {
                 const label = host.name;
                 if (isVast) {
                   if (!hasValidVastId) return;
                   navigate({
                     to: "/terminal",
-                    search: { connectVastInstanceId: String(vastInstanceId), connectLabel: label },
+                    search: { connectHostId: undefined, connectVastInstanceId: String(vastInstanceId), connectLabel: label },
                   });
                   return;
                 }
-                navigate({ to: "/terminal", search: { connectHostId: hostId, connectLabel: label } });
+                navigate({ to: "/terminal", search: { connectHostId: hostId, connectVastInstanceId: undefined, connectLabel: label } });
               }}
-              isDisabled={!host.ssh || (isVast && !canVastConnect)}
+              disabled={!host.ssh || (isVast && !canVastConnect)}
             >
+              <IconTerminal />
               Terminal
             </Button>
             {isVast && canStartVast && (
               <Button
-                variant="flat"
-                color="success"
-                startContent={<IconPlay />}
-                onPress={() => vastStartMutation.mutate()}
-                isLoading={vastStartMutation.isPending || vastStatusTarget === "online"}
-                isDisabled={vastStatusTarget === "online"}
+                variant="default"
+                className="bg-green-600 hover:bg-green-700 text-white"
+                onClick={() => vastStartMutation.mutate()}
+                disabled={vastStartMutation.isPending || vastStatusTarget === "online"}
               >
+                {(vastStartMutation.isPending || vastStatusTarget === "online") ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <IconPlay />
+                )}
                 Start
               </Button>
             )}
             {isVast && canStopVast && (
               <Button
-                variant="flat"
-                color="warning"
-                startContent={<IconStop />}
-                onPress={() => vastStopMutation.mutate()}
-                isLoading={vastStopMutation.isPending || vastStatusTarget === "offline"}
-                isDisabled={vastStatusTarget === "offline"}
+                variant="outline"
+                className="border-yellow-600 text-yellow-600 hover:bg-yellow-50 dark:hover:bg-yellow-950"
+                onClick={() => vastStopMutation.mutate()}
+                disabled={vastStopMutation.isPending || vastStatusTarget === "offline"}
               >
+                {(vastStopMutation.isPending || vastStatusTarget === "offline") ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <IconStop />
+                )}
                 Stop
               </Button>
             )}
             {!isVast && (
               <Button
-                variant="flat"
-                startContent={<IconEdit />}
-                onPress={editModal.onOpen}
+                variant="outline"
+                onClick={() => setIsEditOpen(true)}
               >
+                <IconEdit />
                 Edit
               </Button>
             )}
             <Button
-              variant="flat"
-              startContent={<IconRefresh />}
-              onPress={() => refreshMutation.mutate()}
-              isLoading={refreshMutation.isPending}
-              isDisabled={isVast && !canVastExecute}
+              variant="outline"
+              onClick={() => refreshMutation.mutate()}
+              disabled={refreshMutation.isPending || (isVast && !canVastExecute)}
             >
+              {refreshMutation.isPending ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <IconRefresh />
+              )}
               Refresh
             </Button>
             {!isVast && (
               <Button
-                color="danger"
-                variant="flat"
-                startContent={<IconTrash />}
-                onPress={deleteModal.onOpen}
-                isLoading={deleteMutation.isPending}
+                variant="destructive"
+                onClick={() => setIsDeleteOpen(true)}
+                disabled={deleteMutation.isPending}
               >
+                {deleteMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <IconTrash />
+                )}
                 Delete
               </Button>
             )}
@@ -1596,9 +1457,14 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
         </div>
 
         {/* Tabs */}
-        <Tabs aria-label="Host details">
-          <Tab key="overview" title="Overview">
-            <div className="grid gap-4 mt-4">
+        <Tabs defaultValue="overview" className="w-full">
+          <TabsList className="w-full justify-start">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="sessions">Sessions</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview" className="mt-4">
+            <div className="grid gap-4">
               {/* Connection Card */}
               <Card>
                 <CardHeader>
@@ -1606,17 +1472,17 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                     <span className="font-semibold">SSH Connection</span>
                     <Button
                       size="sm"
-                      variant="flat"
-                      onPress={handleTest}
-                      isLoading={testMutation.isPending}
-                      isDisabled={isVast && !canVastExecute}
+                      variant="outline"
+                      onClick={handleTest}
+                      disabled={testMutation.isPending || (isVast && !canVastExecute)}
                     >
+                      {testMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                       Test Connection
                     </Button>
                   </div>
                 </CardHeader>
-                <Divider />
-                <CardBody className="gap-4">
+                <Separator />
+                <CardContent className="space-y-4">
                   {host.ssh ? (
                     <div className="grid grid-cols-2 gap-4">
                       {!isVast && (
@@ -1627,15 +1493,15 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                               <p className="font-mono select-text">{sshAddress}</p>
                             </div>
                             <Button
-                              isIconOnly
-                              size="sm"
-                              variant="light"
-                              onPress={async () => {
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              onClick={async () => {
                                 await copyText(sshAddress);
-                              setCopiedSsh("address");
-                              setTimeout(() => setCopiedSsh(null), 1200);
-                            }}
-                          >
+                                setCopiedSsh("address");
+                                setTimeout(() => setCopiedSsh(null), 1200);
+                              }}
+                            >
                               {copiedSsh === "address" ? <IconCheck /> : <IconCopy />}
                             </Button>
                           </div>
@@ -1648,10 +1514,10 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                             <p className="font-mono select-text">{directSsh}</p>
                           </div>
                           <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            onPress={async () => {
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={async () => {
                               await copyText(directSsh);
                               setCopiedSsh("direct");
                               setTimeout(() => setCopiedSsh(null), 1200);
@@ -1668,10 +1534,10 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                             <p className="font-mono select-text">{proxySsh}</p>
                           </div>
                           <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            onPress={async () => {
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={async () => {
                               await copyText(proxySsh);
                               setCopiedSsh("proxy");
                               setTimeout(() => setCopiedSsh(null), 1200);
@@ -1720,7 +1586,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       {getErrorMessage(refreshMutation.error)}
                     </div>
                   )}
-                </CardBody>
+                </CardContent>
               </Card>
 
               {/* Scamalytics Card */}
@@ -1731,17 +1597,17 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       <span className="font-semibold">Scamalytics</span>
                       <Button
                         size="sm"
-                        variant="flat"
-                        onPress={() => scamalyticsQuery.refetch()}
-                        isLoading={scamalyticsQuery.isFetching}
-                        isDisabled={!scamalyticsTarget || !scamalyticsEnabled}
+                        variant="outline"
+                        onClick={() => scamalyticsQuery.refetch()}
+                        disabled={scamalyticsQuery.isFetching || !scamalyticsTarget || !scamalyticsEnabled}
                       >
+                        {scamalyticsQuery.isFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                         Refresh
                       </Button>
                     </div>
                   </CardHeader>
-                  <Divider />
-                  <CardBody className="gap-4">
+                  <Separator />
+                  <CardContent className="space-y-4">
                     {host?.status !== "online" ? (
                       <p className="text-foreground/60">Host is offline. Scamalytics data is available when online.</p>
                     ) : !scamalyticsTarget ? (
@@ -1843,7 +1709,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                     ) : (
                       <p className="text-foreground/60">No Scamalytics data available.</p>
                     )}
-                  </CardBody>
+                  </CardContent>
                 </Card>
               )}
 
@@ -1855,18 +1721,18 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                     {!hasFullSystemInfo && (
                       <Button
                         size="sm"
-                        variant="flat"
-                        onPress={() => refreshMutation.mutate()}
-                        isLoading={refreshMutation.isPending}
-                        isDisabled={isVast && !canVastExecute}
+                        variant="outline"
+                        onClick={() => refreshMutation.mutate()}
+                        disabled={refreshMutation.isPending || (isVast && !canVastExecute)}
                       >
+                        {refreshMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                         Fetch Info
                       </Button>
                     )}
                   </div>
                 </CardHeader>
-                <Divider />
-                <CardBody className="gap-4">
+                <Separator />
+                <CardContent className="space-y-4">
                   {displaySystemInfo ? (
                     <>
                       {isVast && !hasFullSystemInfo && (
@@ -1922,14 +1788,14 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                           </p>
                           <div className="space-y-2">
                             {displaySystemInfo.disks.map((disk) => (
-                              <div key={disk.mount_point} className="p-3 rounded-lg bg-content2">
+                              <div key={disk.mount_point} className="p-3 rounded-lg bg-muted">
                                 <div className="flex items-center justify-between mb-2">
                                   <span className="font-mono text-sm font-medium">{disk.mount_point}</span>
                                   <span className="text-xs text-foreground/60">
                                     {((disk.used_gb / disk.total_gb) * 100).toFixed(0)}% used
                                   </span>
                                 </div>
-                                <div className="w-full bg-content3 rounded-full h-1.5 mb-2">
+                                <div className="w-full bg-primary/20 rounded-full h-1.5 mb-2">
                                   <div
                                     className="bg-primary h-1.5 rounded-full"
                                     style={{ width: `${Math.min((disk.used_gb / disk.total_gb) * 100, 100)}%` }}
@@ -1973,7 +1839,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       )}
                     </>
                   )}
-                </CardBody>
+                </CardContent>
               </Card>
 
               {/* Type-specific Info */}
@@ -1982,8 +1848,8 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                   <CardHeader>
                     <span className="font-semibold">Vast.ai Rates</span>
                   </CardHeader>
-                  <Divider />
-                  <CardBody className="grid grid-cols-2 gap-4">
+                  <Separator />
+                  <CardContent className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-foreground/60">{displayCurrency}/hr</p>
                       <p className="font-mono">
@@ -2010,7 +1876,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       <p className="text-sm text-foreground/60">Download</p>
                       <p className="font-mono">{downloadPerTb != null ? `${formatUsd(downloadPerTb, 3)}/TB` : "-"}</p>
                     </div>
-                  </CardBody>
+                  </CardContent>
                 </Card>
               )}
 
@@ -2023,31 +1889,26 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                   <CardHeader>
                     <span className="font-semibold">Colab Connection</span>
                   </CardHeader>
-                  <Divider />
-                  <CardBody>
+                  <Separator />
+                  <CardContent>
                     <div>
                       <p className="text-sm text-foreground/60">Cloudflared Hostname</p>
                       <p className="font-mono text-sm">{host.cloudflared_hostname}</p>
                     </div>
-                  </CardBody>
+                  </CardContent>
                 </Card>
               )}
 
               {/* Linked Storages */}
               <Card>
-                <CardHeader className="flex justify-between items-center">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <span className="font-semibold">Storage Locations</span>
-                  <Button 
-                    as={Link} 
-                    to="/storage" 
-                    size="sm" 
-                    variant="flat"
-                  >
-                    Manage
+                  <Button asChild size="sm" variant="outline">
+                    <Link to="/storage">Manage</Link>
                   </Button>
                 </CardHeader>
-                <Divider />
-                <CardBody>
+                <Separator />
+                <CardContent>
                   {linkedStorages.length === 0 ? (
                     <p className="text-foreground/60 text-sm">
                       No storage locations linked to this host.
@@ -2057,7 +1918,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       {linkedStorages.map((storage) => (
                         <div 
                           key={storage.id} 
-                          className="flex items-center justify-between p-2 rounded-lg bg-default-100 hover:bg-default-200 transition-colors"
+                          className="flex items-center justify-between p-2 rounded-lg bg-muted hover:bg-accent transition-colors"
                         >
                           <div className="flex items-center gap-2">
                             {getStorageIconNode(storage)}
@@ -2068,52 +1929,45 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                               </p>
                             </div>
                           </div>
-                          <Button 
-                            as={Link} 
-                            to={`/storage/${storage.id}`}
-                            size="sm" 
-                            variant="light"
-                          >
-                            Browse
+                          <Button asChild size="sm" variant="outline">
+                            <Link to="/storage/$id" params={{ id: storage.id }}>Browse</Link>
                           </Button>
                         </div>
                       ))}
                     </div>
                   )}
-                </CardBody>
+                </CardContent>
               </Card>
             </div>
-          </Tab>
+          </TabsContent>
 
-          <Tab key="sessions" title="Sessions">
-            <div className="mt-4">
-              <Card>
-                <CardBody className="text-center py-8">
-                  <p className="text-foreground/60 mb-4">No sessions on this host</p>
-                  <Button as={Link} to="/tasks/new" color="primary">
-                    Create New Task
-                  </Button>
-                </CardBody>
-              </Card>
-            </div>
-          </Tab>
+          <TabsContent value="sessions" className="mt-4">
+            <Card>
+              <CardContent className="text-center py-8">
+                <p className="text-muted-foreground mb-4">No sessions on this host</p>
+                <Button asChild>
+                  <Link to="/tasks/new">Create New Task</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-          <Tab key="settings" title="Settings">
-            <div className="grid gap-4 mt-4">
+          <TabsContent value="settings" className="mt-4">
+            <div className="grid gap-4">
               <Card>
-                <CardHeader className="flex justify-between items-center">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <span className="font-semibold">Host Settings</span>
                   <Button
                     size="sm"
-                    variant="flat"
-                    startContent={<IconEdit />}
-                    onPress={editModal.onOpen}
+                    variant="outline"
+                    onClick={() => setIsEditOpen(true)}
                   >
+                    <IconEdit />
                     Edit
                   </Button>
                 </CardHeader>
-                <Divider />
-                <CardBody className="gap-4">
+                <Separator />
+                <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-foreground/60">Name</p>
@@ -2158,7 +2012,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       {Object.keys(host.env_vars || {}).length > 0 ? (
                         <div className="mt-1 space-y-1">
                           {Object.entries(host.env_vars).map(([k, v]) => (
-                            <div key={k} className="font-mono text-sm bg-content2 rounded px-2 py-1">
+                            <div key={k} className="font-mono text-sm bg-muted rounded px-2 py-1">
                               <span className="text-primary">{k}</span>=<span className="text-foreground/70 break-all">{v}</span>
                             </div>
                           ))}
@@ -2168,143 +2022,172 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
                       )}
                     </div>
                   </div>
-                </CardBody>
+                </CardContent>
               </Card>
             </div>
-          </Tab>
+          </TabsContent>
         </Tabs>
       </div>
 
-      {/* Edit Modal */}
+      {/* Edit Host Dialog */}
       {!isVast && (
-        <Modal isOpen={editModal.isOpen} onOpenChange={(open) => !open && editModal.onClose()} isDismissable={true} size="lg">
-          <ModalContent>
-            <ModalHeader>Edit Host: {host.name}</ModalHeader>
-            <ModalBody className="gap-4">
-              <Input labelPlacement="inside" label="Host Name"
-              value={editName}
-              onValueChange={setEditName}
-              placeholder="My Server" />
-              
-              <Divider />
-              <p className="text-sm font-medium">SSH Connection</p>
-              
-              <div className="grid grid-cols-2 gap-3">
-                <Input labelPlacement="inside" label="SSH Host"
-                value={editSshHost}
-                onValueChange={setEditSshHost}
-                placeholder="hostname or IP"
-                className="col-span-2" />
-                <Input labelPlacement="inside" label="SSH Port"
-                value={editSshPort}
-                onValueChange={setEditSshPort}
-                placeholder="22"
-                type="number" />
-                <Input labelPlacement="inside" label="SSH User"
-                value={editSshUser}
-                onValueChange={setEditSshUser}
-                placeholder="root" />
-                <Input labelPlacement="inside" label="SSH Key Path"
-                value={editSshKeyPath}
-                onValueChange={setEditSshKeyPath}
-                placeholder="~/.ssh/id_rsa"
-                description="Leave empty for default key"
-                className="col-span-2" />
+        <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Edit Host: {host.name}</DialogTitle>
+              <DialogDescription>Update the saved host connection settings.</DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="host-name">Host Name</Label>
+                <Input
+                  id="host-name"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="My Server"
+                />
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <p className="text-sm font-medium">SSH Connection</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="ssh-host">SSH Host</Label>
+                    <Input
+                      id="ssh-host"
+                      value={editSshHost}
+                      onChange={(e) => setEditSshHost(e.target.value)}
+                      placeholder="hostname or IP"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-port">SSH Port</Label>
+                    <Input
+                      id="ssh-port"
+                      value={editSshPort}
+                      onChange={(e) => setEditSshPort(e.target.value)}
+                      placeholder="22"
+                      inputMode="numeric"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-user">SSH User</Label>
+                    <Input
+                      id="ssh-user"
+                      value={editSshUser}
+                      onChange={(e) => setEditSshUser(e.target.value)}
+                      placeholder="root"
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="ssh-key-path">SSH Key Path</Label>
+                    <Input
+                      id="ssh-key-path"
+                      value={editSshKeyPath}
+                      onChange={(e) => setEditSshKeyPath(e.target.value)}
+                      placeholder="~/.ssh/id_rsa"
+                    />
+                    <p className="text-xs text-muted-foreground">Leave empty to use the default key.</p>
+                  </div>
+                </div>
               </div>
 
               {host.type === "colab" && (
                 <>
-                  <Divider />
-                  <p className="text-sm font-medium">Colab Connection</p>
-                  <Input labelPlacement="inside" label="Cloudflared Hostname"
-                  value={editCloudflaredHostname}
-                  onValueChange={setEditCloudflaredHostname}
-                  placeholder="xxx-xxx-xxx.trycloudflare.com"
-                  description="Run cloudflared tunnel in Colab to get this" />
+                  <Separator />
+                  <div className="space-y-2">
+                    <Label htmlFor="cloudflared-hostname">Cloudflared Hostname</Label>
+                    <Input
+                      id="cloudflared-hostname"
+                      value={editCloudflaredHostname}
+                      onChange={(e) => setEditCloudflaredHostname(e.target.value)}
+                      placeholder="xxx-xxx-xxx.trycloudflare.com"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Run a cloudflared tunnel in Colab to get this hostname.
+                    </p>
+                  </div>
                 </>
               )}
 
-              <Divider />
-              <p className="text-sm font-medium">Environment Variables</p>
-              <Textarea labelPlacement="inside" label="Environment Variables"
-              value={editEnvVars}
-              onValueChange={setEditEnvVars}
-              placeholder="LD_LIBRARY_PATH=/usr/lib64-nvidia:$LD_LIBRARY_PATH&#10;PATH=/usr/local/cuda/bin:$PATH"
-              description="One variable per line: KEY=value. Lines starting with # are ignored."
-              minRows={3}
-              maxRows={8}
-              classNames={{ input: "font-mono text-sm" }} />
+              <Separator />
+
+              <div className="space-y-2">
+                <Label htmlFor="env-vars">Environment Variables</Label>
+                <Textarea
+                  id="env-vars"
+                  value={editEnvVars}
+                  onChange={(e) => setEditEnvVars(e.target.value)}
+                  placeholder={"LD_LIBRARY_PATH=/usr/lib64-nvidia:$LD_LIBRARY_PATH\nPATH=/usr/local/cuda/bin:$PATH"}
+                  rows={6}
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  One variable per line: KEY=value. Lines starting with # are ignored.
+                </p>
+              </div>
 
               {updateMutation.error && (
-                <p className="text-sm text-danger">
+                <p className="text-sm text-destructive">
                   Error: {updateMutation.error instanceof Error ? updateMutation.error.message : String(updateMutation.error)}
                 </p>
               )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={editModal.onClose}>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsEditOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={() => updateMutation.mutate()} disabled={updateMutation.isPending}>
+                {updateMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* GPU Detail Dialog */}
+      <GpuDetailModal
+        gpu={selectedGpu}
+        isOpen={isGpuOpen}
+        onClose={() => {
+          setIsGpuOpen(false);
+          setSelectedGpuIndex(null);
+        }}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      {!isVast && (
+        <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Host</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete "{host.name}"? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
                 Cancel
               </Button>
               <Button
-                color="primary"
-                onPress={() => updateMutation.mutate()}
-                isLoading={updateMutation.isPending}
-              >
-                Save Changes
-              </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-      )}
-
-      {/* GPU Detail Modal */}
-      <GpuDetailModal 
-        gpu={selectedGpu} 
-        isOpen={gpuModal.isOpen} 
-        onClose={() => {
-          gpuModal.onClose();
-          setSelectedGpuIndex(null);
-        }} 
-      />
-
-      {/* Tmux Session Select Modal */}
-      <TmuxSessionSelectModal
-        sessions={remoteTmuxSessions}
-        isOpen={tmuxModal.isOpen}
-        onClose={() => {
-          tmuxModal.onClose();
-          setIsLoadingTmuxSessions(false);
-        }}
-        onSelect={(name) => void connectToTmuxSession(name)}
-        onCreate={(name) => void connectToTmuxSession(name)}
-        isLoading={isLoadingTmuxSessions}
-      />
-      
-      {/* Delete Confirmation Modal */}
-      {!isVast && (
-        <Modal isOpen={deleteModal.isOpen} onClose={deleteModal.onClose}>
-          <ModalContent>
-            <ModalHeader>Delete Host</ModalHeader>
-            <ModalBody>
-              <p>Are you sure you want to delete "{host.name}"? This action cannot be undone.</p>
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={deleteModal.onClose}>
-                Cancel
-              </Button>
-              <Button 
-                color="danger" 
-                onPress={() => {
+                variant="destructive"
+                onClick={() => {
                   deleteMutation.mutate();
-                  deleteModal.onClose();
+                  setIsDeleteOpen(false);
                 }}
-                isLoading={deleteMutation.isPending}
+                disabled={deleteMutation.isPending}
               >
+                {deleteMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Delete
               </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

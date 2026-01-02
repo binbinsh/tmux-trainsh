@@ -1,25 +1,31 @@
 import {
+  Badge,
+  Button,
   Card,
-  CardBody,
-  Chip,
+  CardContent,
+  Checkbox,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Radio,
+  Label,
   RadioGroup,
-  ScrollShadow,
+  RadioGroupItem,
+  ScrollArea,
   Select,
+  SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
   Skeleton,
-  Spinner,
   Textarea,
   Tooltip,
-  useDisclosure,
-} from "@nextui-org/react";
-import { Button } from "../components/ui";
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui";
+import { Loader2 } from "lucide-react";
 import { AppIcon } from "../components/AppIcon";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
@@ -40,6 +46,7 @@ import { useTerminalOptional } from "../contexts/TerminalContext";
 import type { Host, Recipe, Step, Storage, TargetHostType, TargetRequirements, ValidationResult } from "../lib/types";
 import { vastInstanceToHostCandidate } from "../lib/vast-host";
 import { FilePicker, type EndpointType, type SelectedEndpoint } from "../components/FilePicker";
+import { cn } from "@/lib/utils";
 
 // Icons
 function IconArrowLeft() {
@@ -74,17 +81,17 @@ function IconTrash() {
   );
 }
 
-function IconCheck() {
+function IconCheck({ className }: { className?: string }) {
   return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <svg className={cn("w-4 h-4", className)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
     </svg>
   );
 }
 
-function IconWarning() {
+function IconWarning({ className }: { className?: string }) {
   return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <svg className={cn("w-4 h-4", className)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
     </svg>
   );
@@ -160,17 +167,24 @@ function ExternalEditorButton({ content, onChange }: { content: string; onChange
   };
   
   return (
-    <Tooltip content="Open in external editor ($EDITOR)">
-      <Button
-        size="sm"
-        variant="light"
-        className="h-6 px-2 text-xs gap-1"
-        onPress={handleOpenEditor}
-        isLoading={isLoading}
-        startContent={!isLoading && <IconExternalEditor />}
-      >
-        External Editor
-      </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs gap-1"
+          onClick={handleOpenEditor}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <IconExternalEditor />
+          )}
+          External Editor
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Open in external editor ($EDITOR)</TooltipContent>
     </Tooltip>
   );
 }
@@ -537,28 +551,21 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
     }
   };
 
-  const inputClasses = {
-    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-    input: "text-black placeholder:text-black/40",
-  };
-  
-  const selectClasses = {
-    trigger: "bg-white/80 border-black/10 hover:border-black/20",
-    value: "text-black",
-  };
-  
   // Browse button component
   const BrowseButton = ({ target }: { target: 'source' | 'destination' }) => (
-    <Tooltip content="Browse files">
-      <Button
-        isIconOnly
-        size="sm"
-        variant="flat"
-        className="min-w-8 h-8"
-        onPress={() => openPicker(target)}
-      >
-        <IconFolderOpen />
-      </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          size="icon"
+          variant="outline"
+          className="h-8 w-8"
+          onClick={() => openPicker(target)}
+          aria-label="Browse files"
+        >
+          <IconFolderOpen />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Browse files</TooltipContent>
     </Tooltip>
   );
 
@@ -567,44 +574,49 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
       {/* Source */}
       <div className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-black/60 w-20">Source</span>
-          <Select labelPlacement="inside" selectedKeys={[getSourceType()]}
-          onSelectionChange={(keys) => {
-            const type = Array.from(keys)[0] as string;
-            if (type === 'local') updateOp('source', { local: { path: '' } });
-            else if (type === 'target') updateOp('source', { host: { host_id: null, path: '' } });
-            else if (type === 'host') updateOp('source', { host: { host_id: '', path: '' } });
-            else if (type === 'storage') updateOp('source', { storage: { storage_id: '', path: '' } });
-          }}
-          size="sm"
-          variant="bordered"
-          classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}><SelectItem key="local">Local</SelectItem>
-          <SelectItem key="target">Target Host</SelectItem>
-          <SelectItem key="host">Host</SelectItem>
-          <SelectItem key="storage">Storage</SelectItem></Select>
+          <span className="text-sm text-muted-foreground w-20">Source</span>
+          <Select
+            value={getSourceType()}
+            onValueChange={(type) => {
+              if (type === "local") updateOp("source", { local: { path: "" } });
+              else if (type === "target") updateOp("source", { host: { host_id: null, path: "" } });
+              else if (type === "host") updateOp("source", { host: { host_id: "", path: "" } });
+              else if (type === "storage") updateOp("source", { storage: { storage_id: "", path: "" } });
+            }}
+          >
+            <SelectTrigger className="max-w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="local">Local</SelectItem>
+              <SelectItem value="target">Target Host</SelectItem>
+              <SelectItem value="host">Host</SelectItem>
+              <SelectItem value="storage">Storage</SelectItem>
+            </SelectContent>
+          </Select>
           
           {/* Target: just path input */}
           {getSourceType() === 'target' && (
-            <Input labelPlacement="inside" placeholder="/workspace/data"
-            value={source?.host?.path ?? ''}
-            onValueChange={(v) => updateSource('target', { path: v })}
-            size="sm"
-            variant="bordered"
-            className="flex-1 min-w-[200px]"
-            classNames={inputClasses}
-            startContent={<span className="text-xs text-primary whitespace-nowrap">${"{target}"}:</span>} />
+            <div className="relative flex-1 min-w-[200px]">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-primary whitespace-nowrap">${"{target}"}:</span>
+              <Input
+                placeholder="/workspace/data"
+                value={source?.host?.path ?? ""}
+                onChange={(e) => updateSource("target", { path: e.target.value })}
+                className="pl-24"
+              />
+            </div>
           )}
           
           {/* Local: path input + browse */}
           {getSourceType() === 'local' && (
             <>
-              <Input labelPlacement="inside" placeholder="/path/to/local"
-              value={source?.local?.path ?? ''}
-              onValueChange={(v) => updateSource('local', { path: v })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[200px]"
-              classNames={inputClasses} />
+              <Input
+                placeholder="/path/to/local"
+                value={source?.local?.path ?? ""}
+                onChange={(e) => updateSource("local", { path: e.target.value })}
+                className="flex-1 min-w-[200px]"
+              />
               <BrowseButton target="source" />
             </>
           )}
@@ -612,25 +624,31 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Host: dropdown + path + browse */}
           {getSourceType() === 'host' && (
             <>
-              <Select labelPlacement="inside" selectedKeys={source?.host?.host_id ? [source.host.host_id] : []}
-              onSelectionChange={(keys) => {
-                const hostId = Array.from(keys)[0] as string;
-                updateOp('source', { host: { ...source?.host, host_id: hostId || '' } });
-              }}
-              placeholder="Select host..."
-              size="sm"
-              variant="bordered"
-              className="w-40"
-              classNames={selectClasses}>{hosts.map((h: Host) => (
-                <SelectItem key={h.id}>{h.name}</SelectItem>
-              ))}</Select>
-              <Input labelPlacement="inside" placeholder="/remote/path"
-              value={source?.host?.path ?? ''}
-              onValueChange={(v) => updateOp('source', { host: { ...source?.host, path: v } })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[150px]"
-              classNames={inputClasses} />
+              <Select
+                value={source?.host?.host_id || "__none__"}
+                onValueChange={(value) => {
+                  const hostId = value === "__none__" ? "" : value;
+                  updateOp("source", { host: { ...source?.host, host_id: hostId } });
+                }}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Select host..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Select host...</SelectItem>
+                  {hosts.map((h: Host) => (
+                    <SelectItem key={h.id} value={h.id}>
+                      {h.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="/remote/path"
+                value={source?.host?.path ?? ""}
+                onChange={(e) => updateOp("source", { host: { ...source?.host, path: e.target.value } })}
+                className="flex-1 min-w-[150px]"
+              />
               <BrowseButton target="source" />
             </>
           )}
@@ -638,25 +656,31 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Storage: dropdown + path + browse */}
           {getSourceType() === 'storage' && (
             <>
-              <Select labelPlacement="inside" selectedKeys={source?.storage?.storage_id ? [source.storage.storage_id] : []}
-              onSelectionChange={(keys) => {
-                const storageId = Array.from(keys)[0] as string;
-                updateOp('source', { storage: { ...source?.storage, storage_id: storageId || '' } });
-              }}
-              placeholder="Select storage..."
-              size="sm"
-              variant="bordered"
-              className="w-40"
-              classNames={selectClasses}>{storages.map((s: Storage) => (
-                <SelectItem key={s.id}>{s.name}</SelectItem>
-              ))}</Select>
-              <Input labelPlacement="inside" placeholder="/path/in/storage"
-              value={source?.storage?.path ?? ''}
-              onValueChange={(v) => updateOp('source', { storage: { ...source?.storage, path: v } })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[150px]"
-              classNames={inputClasses} />
+              <Select
+                value={source?.storage?.storage_id || "__none__"}
+                onValueChange={(value) => {
+                  const storageId = value === "__none__" ? "" : value;
+                  updateOp("source", { storage: { ...source?.storage, storage_id: storageId } });
+                }}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Select storage..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Select storage...</SelectItem>
+                  {storages.map((s: Storage) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="/path/in/storage"
+                value={source?.storage?.path ?? ""}
+                onChange={(e) => updateOp("source", { storage: { ...source?.storage, path: e.target.value } })}
+                className="flex-1 min-w-[150px]"
+              />
               <BrowseButton target="source" />
             </>
           )}
@@ -666,44 +690,49 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
       {/* Destination */}
       <div className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-black/60 w-20">Destination</span>
-          <Select labelPlacement="inside" selectedKeys={[getDestType()]}
-          onSelectionChange={(keys) => {
-            const type = Array.from(keys)[0] as string;
-            if (type === 'local') updateOp('destination', { local: { path: '' } });
-            else if (type === 'target') updateOp('destination', { host: { host_id: null, path: '' } });
-            else if (type === 'host') updateOp('destination', { host: { host_id: '', path: '' } });
-            else if (type === 'storage') updateOp('destination', { storage: { storage_id: '', path: '' } });
-          }}
-          size="sm"
-          variant="bordered"
-          classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}><SelectItem key="local">Local</SelectItem>
-          <SelectItem key="target">Target Host</SelectItem>
-          <SelectItem key="host">Host</SelectItem>
-          <SelectItem key="storage">Storage</SelectItem></Select>
+          <span className="text-sm text-muted-foreground w-20">Destination</span>
+          <Select
+            value={getDestType()}
+            onValueChange={(type) => {
+              if (type === "local") updateOp("destination", { local: { path: "" } });
+              else if (type === "target") updateOp("destination", { host: { host_id: null, path: "" } });
+              else if (type === "host") updateOp("destination", { host: { host_id: "", path: "" } });
+              else if (type === "storage") updateOp("destination", { storage: { storage_id: "", path: "" } });
+            }}
+          >
+            <SelectTrigger className="max-w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="local">Local</SelectItem>
+              <SelectItem value="target">Target Host</SelectItem>
+              <SelectItem value="host">Host</SelectItem>
+              <SelectItem value="storage">Storage</SelectItem>
+            </SelectContent>
+          </Select>
           
           {/* Target: just path input */}
           {getDestType() === 'target' && (
-            <Input labelPlacement="inside" placeholder="/workspace/data"
-            value={destination?.host?.path ?? ''}
-            onValueChange={(v) => updateDest('target', { path: v })}
-            size="sm"
-            variant="bordered"
-            className="flex-1 min-w-[200px]"
-            classNames={inputClasses}
-            startContent={<span className="text-xs text-primary whitespace-nowrap">${"{target}"}:</span>} />
+            <div className="relative flex-1 min-w-[200px]">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-primary whitespace-nowrap">${"{target}"}:</span>
+              <Input
+                placeholder="/workspace/data"
+                value={destination?.host?.path ?? ""}
+                onChange={(e) => updateDest("target", { path: e.target.value })}
+                className="pl-24"
+              />
+            </div>
           )}
           
           {/* Local: path input + browse */}
           {getDestType() === 'local' && (
             <>
-              <Input labelPlacement="inside" placeholder="/path/to/local"
-              value={destination?.local?.path ?? ''}
-              onValueChange={(v) => updateDest('local', { path: v })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[200px]"
-              classNames={inputClasses} />
+              <Input
+                placeholder="/path/to/local"
+                value={destination?.local?.path ?? ""}
+                onChange={(e) => updateDest("local", { path: e.target.value })}
+                className="flex-1 min-w-[200px]"
+              />
               <BrowseButton target="destination" />
             </>
           )}
@@ -711,25 +740,31 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Host: dropdown + path + browse */}
           {getDestType() === 'host' && (
             <>
-              <Select labelPlacement="inside" selectedKeys={destination?.host?.host_id ? [destination.host.host_id] : []}
-              onSelectionChange={(keys) => {
-                const hostId = Array.from(keys)[0] as string;
-                updateOp('destination', { host: { ...destination?.host, host_id: hostId || '' } });
-              }}
-              placeholder="Select host..."
-              size="sm"
-              variant="bordered"
-              className="w-40"
-              classNames={selectClasses}>{hosts.map((h: Host) => (
-                <SelectItem key={h.id}>{h.name}</SelectItem>
-              ))}</Select>
-              <Input labelPlacement="inside" placeholder="/remote/path"
-              value={destination?.host?.path ?? ''}
-              onValueChange={(v) => updateOp('destination', { host: { ...destination?.host, path: v } })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[150px]"
-              classNames={inputClasses} />
+              <Select
+                value={destination?.host?.host_id || "__none__"}
+                onValueChange={(value) => {
+                  const hostId = value === "__none__" ? "" : value;
+                  updateOp("destination", { host: { ...destination?.host, host_id: hostId } });
+                }}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Select host..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Select host...</SelectItem>
+                  {hosts.map((h: Host) => (
+                    <SelectItem key={h.id} value={h.id}>
+                      {h.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="/remote/path"
+                value={destination?.host?.path ?? ""}
+                onChange={(e) => updateOp("destination", { host: { ...destination?.host, path: e.target.value } })}
+                className="flex-1 min-w-[150px]"
+              />
               <BrowseButton target="destination" />
             </>
           )}
@@ -737,25 +772,31 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
           {/* Storage: dropdown + path + browse */}
           {getDestType() === 'storage' && (
             <>
-              <Select labelPlacement="inside" selectedKeys={destination?.storage?.storage_id ? [destination.storage.storage_id] : []}
-              onSelectionChange={(keys) => {
-                const storageId = Array.from(keys)[0] as string;
-                updateOp('destination', { storage: { ...destination?.storage, storage_id: storageId || '' } });
-              }}
-              placeholder="Select storage..."
-              size="sm"
-              variant="bordered"
-              className="w-40"
-              classNames={selectClasses}>{storages.map((s: Storage) => (
-                <SelectItem key={s.id}>{s.name}</SelectItem>
-              ))}</Select>
-              <Input labelPlacement="inside" placeholder="/path/in/storage"
-              value={destination?.storage?.path ?? ''}
-              onValueChange={(v) => updateOp('destination', { storage: { ...destination?.storage, path: v } })}
-              size="sm"
-              variant="bordered"
-              className="flex-1 min-w-[150px]"
-              classNames={inputClasses} />
+              <Select
+                value={destination?.storage?.storage_id || "__none__"}
+                onValueChange={(value) => {
+                  const storageId = value === "__none__" ? "" : value;
+                  updateOp("destination", { storage: { ...destination?.storage, storage_id: storageId } });
+                }}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Select storage..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Select storage...</SelectItem>
+                  {storages.map((s: Storage) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="/path/in/storage"
+                value={destination?.storage?.path ?? ""}
+                onChange={(e) => updateOp("destination", { storage: { ...destination?.storage, path: e.target.value } })}
+                className="flex-1 min-w-[150px]"
+              />
               <BrowseButton target="destination" />
             </>
           )}
@@ -767,45 +808,41 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
         {/* Include paths */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-black/60 font-medium">Include Paths</span>
+            <span className="text-xs text-muted-foreground font-medium">Include Paths</span>
             <Button
               size="sm"
-              variant="flat"
+              variant="outline"
               className="h-6 px-2 text-xs"
-              onPress={() => updateOp('include_paths', [...includePaths, ''])}
+              onClick={() => updateOp('include_paths', [...includePaths, ''])}
             >
               + Add
             </Button>
           </div>
           <div className="space-y-1 max-h-32 overflow-y-auto">
             {includePaths.length === 0 ? (
-              <p className="text-xs text-black/40 italic">All files (no filter)</p>
+              <p className="text-xs text-muted-foreground italic">All files (no filter)</p>
             ) : (
               includePaths.map((p, i) => (
                 <div key={i} className="flex items-center gap-1">
-                  <Input labelPlacement="inside" placeholder="src/"
-                  value={p}
-                  onValueChange={(v) => {
-                    const newPaths = [...includePaths];
-                    newPaths[i] = v;
-                    updateOp('include_paths', newPaths);
-                  }}
-                  size="sm"
-                  variant="bordered"
-                  className="flex-1"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 h-7",
-                    input: "text-black placeholder:text-black/40 text-xs",
-                  }} />
+                  <Input
+                    placeholder="src/"
+                    value={p}
+                    onChange={(e) => {
+                      const newPaths = [...includePaths];
+                      newPaths[i] = e.target.value;
+                      updateOp("include_paths", newPaths);
+                    }}
+                    className="flex-1 h-7 text-xs"
+                  />
                   <Button
-                    isIconOnly
-                    size="sm"
-                    variant="light"
+                    size="icon"
+                    variant="ghost"
                     className="h-6 w-6 min-w-6"
-                    onPress={() => {
+                    onClick={() => {
                       const newPaths = includePaths.filter((_, idx) => idx !== i);
                       updateOp('include_paths', newPaths);
                     }}
+                    aria-label="Remove include path"
                   >
                     <IconTrash />
                   </Button>
@@ -818,45 +855,41 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
         {/* Exclude patterns */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-black/60 font-medium">Exclude Patterns</span>
+            <span className="text-xs text-muted-foreground font-medium">Exclude Patterns</span>
             <Button
               size="sm"
-              variant="flat"
+              variant="outline"
               className="h-6 px-2 text-xs"
-              onPress={() => updateOp('exclude_patterns', [...excludePatterns, ''])}
+              onClick={() => updateOp('exclude_patterns', [...excludePatterns, ''])}
             >
               + Add
             </Button>
           </div>
           <div className="space-y-1 max-h-32 overflow-y-auto">
             {excludePatterns.length === 0 ? (
-              <p className="text-xs text-black/40 italic">No exclusions</p>
+              <p className="text-xs text-muted-foreground italic">No exclusions</p>
             ) : (
               excludePatterns.map((p, i) => (
                 <div key={i} className="flex items-center gap-1">
-                  <Input labelPlacement="inside" placeholder="*.pyc"
-                  value={p}
-                  onValueChange={(v) => {
-                    const newPatterns = [...excludePatterns];
-                    newPatterns[i] = v;
-                    updateOp('exclude_patterns', newPatterns);
-                  }}
-                  size="sm"
-                  variant="bordered"
-                  className="flex-1"
-                  classNames={{
-                    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 h-7",
-                    input: "text-black placeholder:text-black/40 text-xs",
-                  }} />
+                  <Input
+                    placeholder="*.pyc"
+                    value={p}
+                    onChange={(e) => {
+                      const newPatterns = [...excludePatterns];
+                      newPatterns[i] = e.target.value;
+                      updateOp("exclude_patterns", newPatterns);
+                    }}
+                    className="flex-1 h-7 text-xs"
+                  />
                   <Button
-                    isIconOnly
-                    size="sm"
-                    variant="light"
+                    size="icon"
+                    variant="ghost"
                     className="h-6 w-6 min-w-6"
-                    onPress={() => {
+                    onClick={() => {
                       const newPatterns = excludePatterns.filter((_, idx) => idx !== i);
                       updateOp('exclude_patterns', newPatterns);
                     }}
+                    aria-label="Remove exclude pattern"
                   >
                     <IconTrash />
                   </Button>
@@ -869,24 +902,20 @@ function TransferOpFields({ opData, updateOp }: { opData: Record<string, unknown
 
       {/* Options */}
       <div className="flex items-center gap-4 pt-2">
-        <label className="flex items-center gap-2 text-xs text-black/60 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={opData.use_gitignore as boolean ?? false}
-            onChange={(e) => updateOp('use_gitignore', e.target.checked)}
-            className="rounded"
+        <Label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+          <Checkbox
+            checked={(opData.use_gitignore as boolean) ?? false}
+            onCheckedChange={(checked) => updateOp("use_gitignore", checked === true)}
           />
           Use .gitignore
-        </label>
-        <label className="flex items-center gap-2 text-xs text-black/60 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={opData.delete as boolean ?? false}
-            onChange={(e) => updateOp('delete', e.target.checked)}
-            className="rounded"
+        </Label>
+        <Label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+          <Checkbox
+            checked={(opData.delete as boolean) ?? false}
+            onCheckedChange={(checked) => updateOp("delete", checked === true)}
           />
           Delete extraneous
-        </label>
+        </Label>
       </div>
       
       {/* File Picker Modal */}
@@ -984,16 +1013,6 @@ function VastCopyOpFields({ opData, updateOp }: { opData: Record<string, unknown
   const srcState = parseVastCopyLocation(srcValue, vastHosts);
   const dstState = parseVastCopyLocation(dstValue, vastHosts);
 
-  const inputClasses = {
-    inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-    input: "text-black placeholder:text-black/40",
-  };
-
-  const selectClasses = {
-    trigger: "bg-white/80 border-black/10 hover:border-black/20",
-    value: "text-black",
-  };
-
   const updateEndpoint = (field: "src" | "dst", next: VastCopyEndpointState) => {
     const value = buildVastCopyLocation(next, vastHosts);
     updateOp(field, value);
@@ -1036,19 +1055,32 @@ function VastCopyOpFields({ opData, updateOp }: { opData: Record<string, unknown
 
   const renderHostSelect = (field: "src" | "dst", state: VastCopyEndpointState) => (
     <Select
-      labelPlacement="inside"
-      selectedKeys={state.hostId ? [state.hostId] : []}
-      onSelectionChange={(keys) => updateHost(field, Array.from(keys)[0] as string)}
-      placeholder={vastHosts.length === 0 ? "No Vast hosts" : "Select Vast host"}
-      size="sm"
-      variant="bordered"
-      className="w-40"
-      isDisabled={vastHosts.length === 0}
-      classNames={selectClasses}
+      value={state.hostId ?? "__none__"}
+      onValueChange={(value) => {
+        if (value === "__none__") return;
+        updateHost(field, value);
+      }}
+      disabled={vastHosts.length === 0}
     >
-      {vastHosts.map((host) => (
-        <SelectItem key={host.id}>{host.name}</SelectItem>
-      ))}
+      <SelectTrigger className="w-40">
+        <SelectValue placeholder={vastHosts.length === 0 ? "No Vast hosts" : "Select Vast host"} />
+      </SelectTrigger>
+      <SelectContent>
+        {vastHosts.length === 0 ? (
+          <SelectItem value="__none__" disabled>
+            No Vast hosts
+          </SelectItem>
+        ) : (
+          <>
+            <SelectItem value="__none__">Select Vast host</SelectItem>
+            {vastHosts.map((host) => (
+              <SelectItem key={host.id} value={host.id}>
+                {host.name}
+              </SelectItem>
+            ))}
+          </>
+        )}
+      </SelectContent>
     </Select>
   );
 
@@ -1064,62 +1096,50 @@ function VastCopyOpFields({ opData, updateOp }: { opData: Record<string, unknown
 
       <div className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-black/60 w-20">Source</span>
-          <Select
-            labelPlacement="inside"
-            selectedKeys={[srcState.type]}
-            onSelectionChange={(keys) => updateType("src", Array.from(keys)[0] as VastCopyEndpointType)}
-            size="sm"
-            variant="bordered"
-            classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}
-          >
-            <SelectItem key="target">Target Host</SelectItem>
-            <SelectItem key="host">Vast Host</SelectItem>
-            <SelectItem key="local">Local</SelectItem>
+          <span className="text-sm text-muted-foreground w-20">Source</span>
+          <Select value={srcState.type} onValueChange={(value) => updateType("src", value as VastCopyEndpointType)}>
+            <SelectTrigger className="max-w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="target">Target Host</SelectItem>
+              <SelectItem value="host">Vast Host</SelectItem>
+              <SelectItem value="local">Local</SelectItem>
+            </SelectContent>
           </Select>
 
           {srcState.type === "host" && renderHostSelect("src", srcState)}
 
           <Input
-            labelPlacement="inside"
             placeholder={srcState.type === "local" ? "/path/to/local" : "/workspace/data"}
             value={srcState.path}
-            onValueChange={(v) => updatePath("src", v)}
-            size="sm"
-            variant="bordered"
+            onChange={(e) => updatePath("src", e.target.value)}
             className="flex-1 min-w-[200px]"
-            classNames={inputClasses}
           />
         </div>
       </div>
 
       <div className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-black/60 w-20">Destination</span>
-          <Select
-            labelPlacement="inside"
-            selectedKeys={[dstState.type]}
-            onSelectionChange={(keys) => updateType("dst", Array.from(keys)[0] as VastCopyEndpointType)}
-            size="sm"
-            variant="bordered"
-            classNames={{ ...selectClasses, trigger: selectClasses.trigger + " max-w-[120px]" }}
-          >
-            <SelectItem key="target">Target Host</SelectItem>
-            <SelectItem key="host">Vast Host</SelectItem>
-            <SelectItem key="local">Local</SelectItem>
+          <span className="text-sm text-muted-foreground w-20">Destination</span>
+          <Select value={dstState.type} onValueChange={(value) => updateType("dst", value as VastCopyEndpointType)}>
+            <SelectTrigger className="max-w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="target">Target Host</SelectItem>
+              <SelectItem value="host">Vast Host</SelectItem>
+              <SelectItem value="local">Local</SelectItem>
+            </SelectContent>
           </Select>
 
           {dstState.type === "host" && renderHostSelect("dst", dstState)}
 
           <Input
-            labelPlacement="inside"
             placeholder={dstState.type === "local" ? "/path/to/local" : "/workspace/data"}
             value={dstState.path}
-            onValueChange={(v) => updatePath("dst", v)}
-            size="sm"
-            variant="bordered"
+            onChange={(e) => updatePath("dst", e.target.value)}
             className="flex-1 min-w-[200px]"
-            classNames={inputClasses}
           />
         </div>
       </div>
@@ -1189,20 +1209,19 @@ function ConditionEditor({ condition, onChange }: { condition: unknown; onChange
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-sm text-black/60 w-20">Condition</span>
-        <Select labelPlacement="inside" selectedKeys={[conditionType]}
-        onSelectionChange={(keys) => {
-          const type = Array.from(keys)[0] as ConditionType;
-          updateConditionType(type);
-        }}
-        size="sm"
-        variant="bordered"
-        classNames={{
-          trigger: "bg-white/80 border-black/10 hover:border-black/20",
-          value: "text-black",
-        }}>{CONDITION_TYPES.map(c => (
-          <SelectItem key={c.key}>{c.label}</SelectItem>
-        ))}</Select>
+        <span className="text-sm text-muted-foreground w-20">Condition</span>
+        <Select value={conditionType} onValueChange={(value) => updateConditionType(value as ConditionType)}>
+          <SelectTrigger className="max-w-[260px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CONDITION_TYPES.map((c) => (
+              <SelectItem key={c.key} value={c.key}>
+                {c.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Render fields based on condition type */}
@@ -1210,42 +1229,31 @@ function ConditionEditor({ condition, onChange }: { condition: unknown; onChange
         <div className="space-y-2 pl-[88px]">
           {CONDITION_TYPES.find(c => c.key === conditionType)?.fields.map(field => (
             <div key={field} className="flex items-center gap-2">
-              <span className="text-xs text-black/50 w-20 capitalize">{field.replace('_', ' ')}</span>
+              <span className="text-xs text-muted-foreground w-20 capitalize">{field.replace('_', ' ')}</span>
               {field === 'min_count' ? (
-                <Input labelPlacement="inside" type="number"
-                placeholder="1"
-                value={String(conditionData[field] ?? 1)}
-                onValueChange={(v) => updateField(field, parseInt(v) || 1)}
-                size="sm"
-                variant="bordered"
-                className="max-w-[100px]"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }} />
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="1"
+                  value={String(conditionData[field] ?? 1)}
+                  onChange={(e) => updateField(field, parseInt(e.target.value, 10) || 1)}
+                  className="max-w-[100px]"
+                />
               ) : field === 'command' ? (
-                <Textarea labelPlacement="inside" placeholder="command to run"
-                value={(conditionData[field] as string) ?? ''}
-                onValueChange={(v) => updateField(field, v)}
-                minRows={1}
-                size="sm"
-                variant="bordered"
-                className="flex-1"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40 font-mono text-xs",
-                }} />
+                <Textarea
+                  placeholder="command to run"
+                  value={(conditionData[field] as string) ?? ""}
+                  onChange={(e) => updateField(field, e.target.value)}
+                  className="flex-1 font-mono text-xs"
+                  rows={2}
+                />
               ) : (
-                <Input labelPlacement="inside" placeholder={field === 'host_id' ? '${target}' : field === 'pattern' ? 'regex pattern' : field}
-                value={(conditionData[field] as string) ?? ''}
-                onValueChange={(v) => updateField(field, v)}
-                size="sm"
-                variant="bordered"
-                className="flex-1"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }} />
+                <Input
+                  placeholder={field === "host_id" ? "${target}" : field === "pattern" ? "regex pattern" : field}
+                  value={(conditionData[field] as string) ?? ""}
+                  onChange={(e) => updateField(field, e.target.value)}
+                  className="flex-1"
+                />
               )}
             </div>
           ))}
@@ -1375,30 +1383,23 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${target} (uses recipe target)"
-              value={(opData.host_id as string) ?? ""}
-              onValueChange={(v) => updateOp("host_id", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${target} (uses recipe target)"
+                value={(opData.host_id as string) ?? ""}
+                onChange={(e) => updateOp("host_id", e.target.value.trim() ? e.target.value : null)}
+              />
             </div>
             <div className="flex items-start gap-2">
-              <span className="text-sm text-black/60 w-20 pt-2">Commands</span>
+              <span className="text-sm text-muted-foreground w-20 pt-2">Commands</span>
               <div className="flex-1 flex flex-col gap-1">
-                <Textarea labelPlacement="inside" placeholder="cd /workspace&#10;pip install -r requirements.txt&#10;python train.py"
-                value={opData.commands as string}
-                onValueChange={(v) => updateOp("commands", v)}
-                minRows={4}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40 font-mono text-sm",
-                }} />
+                <Textarea
+                  placeholder={"cd /workspace\npip install -r requirements.txt\npython train.py"}
+                  value={opData.commands as string}
+                  onChange={(e) => updateOp("commands", e.target.value)}
+                  rows={4}
+                  className="font-mono text-sm"
+                />
                 <div className="flex justify-end">
                   <ExternalEditorButton 
                     content={opData.commands as string}
@@ -1408,46 +1409,38 @@ function StepBlock({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Tmux Mode</span>
-              <Select labelPlacement="inside" selectedKeys={[(opData.tmux_mode as string) || "none"]}
-              onSelectionChange={(keys) => {
-                const mode = Array.from(keys)[0] as string;
-                updateOp("tmux_mode", mode);
-              }}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[180px]",
-                value: "text-black",
-              }}><SelectItem key="none">Direct (blocks)</SelectItem>
-              <SelectItem key="new">New tmux session</SelectItem>
-              <SelectItem key="existing">Existing tmux</SelectItem></Select>
+              <span className="text-sm text-muted-foreground w-20">Tmux Mode</span>
+              <Select
+                value={(opData.tmux_mode as string) || "none"}
+                onValueChange={(value) => updateOp("tmux_mode", value)}
+              >
+                <SelectTrigger className="max-w-[220px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Direct (blocks)</SelectItem>
+                  <SelectItem value="new">New tmux session</SelectItem>
+                  <SelectItem value="existing">Existing tmux</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             {((opData.tmux_mode as string) === "new" || (opData.tmux_mode as string) === "existing") && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-black/60 w-20">Session</span>
-                <Input labelPlacement="inside" placeholder="train"
-                value={(opData.session_name as string) ?? ""}
-                onValueChange={(v) => updateOp("session_name", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }} />
+                <span className="text-sm text-muted-foreground w-20">Session</span>
+                <Input
+                  placeholder="train"
+                  value={(opData.session_name as string) ?? ""}
+                  onChange={(e) => updateOp("session_name", e.target.value.trim() ? e.target.value : null)}
+                />
               </div>
             )}
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Directory</span>
-              <Input labelPlacement="inside" placeholder="/workspace"
-              value={(opData.workdir as string) ?? ""}
-              onValueChange={(v) => updateOp("workdir", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Directory</span>
+              <Input
+                placeholder="/workspace"
+                value={(opData.workdir as string) ?? ""}
+                onChange={(e) => updateOp("workdir", e.target.value.trim() ? e.target.value : null)}
+              />
             </div>
           </div>
         );
@@ -1461,64 +1454,45 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${target} (uses recipe target)"
-              value={(opData.host_id as string) ?? ""}
-              onValueChange={(v) => updateOp("host_id", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${target} (uses recipe target)"
+                value={(opData.host_id as string) ?? ""}
+                onChange={(e) => updateOp("host_id", e.target.value.trim() ? e.target.value : null)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Repo URL</span>
-              <Input labelPlacement="inside" placeholder="https://github.com/user/repo.git"
-              value={opData.repo_url as string}
-              onValueChange={(v) => updateOp("repo_url", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Repo URL</span>
+              <Input
+                placeholder="https://github.com/user/repo.git"
+                value={opData.repo_url as string}
+                onChange={(e) => updateOp("repo_url", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Destination</span>
-              <Input labelPlacement="inside" placeholder="/workspace/project"
-              value={opData.destination as string}
-              onValueChange={(v) => updateOp("destination", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Destination</span>
+              <Input
+                placeholder="/workspace/project"
+                value={opData.destination as string}
+                onChange={(e) => updateOp("destination", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Branch</span>
-              <Input labelPlacement="inside" placeholder="main (optional)"
-              value={(opData.branch as string) ?? ""}
-              onValueChange={(v) => updateOp("branch", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[200px]",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Branch</span>
+              <Input
+                placeholder="main (optional)"
+                value={(opData.branch as string) ?? ""}
+                onChange={(e) => updateOp("branch", e.target.value.trim() ? e.target.value : null)}
+                className="max-w-[200px]"
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Auth Token</span>
-              <Input labelPlacement="inside" placeholder="${secret:github/token}"
-              value={(opData.auth_token as string) ?? ""}
-              onValueChange={(v) => updateOp("auth_token", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Auth Token</span>
+              <Input
+                placeholder="${secret:github/token}"
+                value={(opData.auth_token as string) ?? ""}
+                onChange={(e) => updateOp("auth_token", e.target.value.trim() ? e.target.value : null)}
+              />
             </div>
           </div>
         );
@@ -1528,68 +1502,52 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${target} (uses recipe target)"
-              value={(opData.host_id as string) ?? ""}
-              onValueChange={(v) => updateOp("host_id", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${target} (uses recipe target)"
+                value={(opData.host_id as string) ?? ""}
+                onChange={(e) => updateOp("host_id", e.target.value.trim() ? e.target.value : null)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Repo ID</span>
-              <Input labelPlacement="inside" placeholder="meta-llama/Llama-2-7b"
-              value={opData.repo_id as string}
-              onValueChange={(v) => updateOp("repo_id", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Repo ID</span>
+              <Input
+                placeholder="meta-llama/Llama-2-7b"
+                value={opData.repo_id as string}
+                onChange={(e) => updateOp("repo_id", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Destination</span>
-              <Input labelPlacement="inside" placeholder="/workspace/models/llama2"
-              value={opData.destination as string}
-              onValueChange={(v) => updateOp("destination", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Destination</span>
+              <Input
+                placeholder="/workspace/models/llama2"
+                value={opData.destination as string}
+                onChange={(e) => updateOp("destination", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Type</span>
-              <Select labelPlacement="inside" selectedKeys={[(opData.repo_type as string) || "model"]}
-              onSelectionChange={(keys) => {
-                const type = Array.from(keys)[0] as string;
-                updateOp("repo_type", type);
-              }}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[150px]",
-                value: "text-black",
-              }}><SelectItem key="model">Model</SelectItem>
-              <SelectItem key="dataset">Dataset</SelectItem>
-              <SelectItem key="space">Space</SelectItem></Select>
+              <span className="text-sm text-muted-foreground w-20">Type</span>
+              <Select
+                value={(opData.repo_type as string) || "model"}
+                onValueChange={(value) => updateOp("repo_type", value)}
+              >
+                <SelectTrigger className="max-w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="model">Model</SelectItem>
+                  <SelectItem value="dataset">Dataset</SelectItem>
+                  <SelectItem value="space">Space</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Auth Token</span>
-              <Input labelPlacement="inside" placeholder="${secret:huggingface/token}"
-              value={(opData.auth_token as string) ?? ""}
-              onValueChange={(v) => updateOp("auth_token", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Auth Token</span>
+              <Input
+                placeholder="${secret:huggingface/token}"
+                value={(opData.auth_token as string) ?? ""}
+                onChange={(e) => updateOp("auth_token", e.target.value.trim() ? e.target.value : null)}
+              />
             </div>
           </div>
         );
@@ -1599,42 +1557,31 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${host}"
-              value={opData.host_id as string}
-              onValueChange={(v) => updateOp("host_id", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${host}"
+                value={opData.host_id as string}
+                onChange={(e) => updateOp("host_id", e.target.value)}
+              />
             </div>
             <div className="flex items-start gap-2">
-              <span className="text-sm text-black/60 w-20 pt-2">Command</span>
-              <Textarea labelPlacement="inside" placeholder="python train.py"
-              value={opData.command as string}
-              onValueChange={(v) => updateOp("command", v)}
-              minRows={2}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40 font-mono text-sm",
-              }} />
+              <span className="text-sm text-muted-foreground w-20 pt-2">Command</span>
+              <Textarea
+                placeholder="python train.py"
+                value={opData.command as string}
+                onChange={(e) => updateOp("command", e.target.value)}
+                rows={2}
+                className="flex-1 font-mono text-sm"
+              />
             </div>
             {opData.workdir !== undefined && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-black/60 w-20">Directory</span>
-                <Input labelPlacement="inside" placeholder="/workspace"
-                value={(opData.workdir as string) ?? ""}
-                onValueChange={(v) => updateOp("workdir", v || null)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                  input: "text-black placeholder:text-black/40",
-                }} />
+                <span className="text-sm text-muted-foreground w-20">Directory</span>
+                <Input
+                  placeholder="/workspace"
+                  value={(opData.workdir as string) ?? ""}
+                  onChange={(e) => updateOp("workdir", e.target.value.trim() ? e.target.value : null)}
+                />
               </div>
             )}
           </div>
@@ -1645,40 +1592,28 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${host}"
-              value={opData.host_id as string}
-              onValueChange={(v) => updateOp("host_id", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${host}"
+                value={opData.host_id as string}
+                onChange={(e) => updateOp("host_id", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Local</span>
-              <Input labelPlacement="inside" placeholder="/path/to/local"
-              value={opData.local_path as string}
-              onValueChange={(v) => updateOp("local_path", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Local</span>
+              <Input
+                placeholder="/path/to/local"
+                value={opData.local_path as string}
+                onChange={(e) => updateOp("local_path", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Remote</span>
-              <Input labelPlacement="inside" placeholder="/workspace/remote"
-              value={opData.remote_path as string}
-              onValueChange={(v) => updateOp("remote_path", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Remote</span>
+              <Input
+                placeholder="/workspace/remote"
+                value={opData.remote_path as string}
+                onChange={(e) => updateOp("remote_path", e.target.value)}
+              />
             </div>
           </div>
         );
@@ -1693,16 +1628,12 @@ function StepBlock({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-24">Mount Path</span>
-              <Input labelPlacement="inside" placeholder="/content/drive/MyDrive"
-              value={(opData.mount_path as string) || "/content/drive/MyDrive"}
-              onValueChange={(v) => updateOp("mount_path", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-24">Mount Path</span>
+              <Input
+                placeholder="/content/drive/MyDrive"
+                value={(opData.mount_path as string) || "/content/drive/MyDrive"}
+                onChange={(e) => updateOp("mount_path", e.target.value)}
+              />
             </div>
           </div>
         );
@@ -1711,28 +1642,20 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${target}"
-              value={opData.host_id as string}
-              onValueChange={(v) => updateOp("host_id", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${target}"
+                value={opData.host_id as string}
+                onChange={(e) => updateOp("host_id", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Mount Path</span>
-              <Input labelPlacement="inside" placeholder="/mnt/gdrive"
-              value={opData.mount_path as string}
-              onValueChange={(v) => updateOp("mount_path", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Mount Path</span>
+              <Input
+                placeholder="/mnt/gdrive"
+                value={opData.mount_path as string}
+                onChange={(e) => updateOp("mount_path", e.target.value)}
+              />
             </div>
           </div>
         );
@@ -1755,41 +1678,30 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${host}"
-              value={opData.host_id as string}
-              onValueChange={(v) => updateOp("host_id", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${host}"
+                value={opData.host_id as string}
+                onChange={(e) => updateOp("host_id", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Session</span>
-              <Input labelPlacement="inside" placeholder="train"
-              value={opData.session_name as string}
-              onValueChange={(v) => updateOp("session_name", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Session</span>
+              <Input
+                placeholder="train"
+                value={opData.session_name as string}
+                onChange={(e) => updateOp("session_name", e.target.value)}
+              />
             </div>
             <div className="flex items-start gap-2">
-              <span className="text-sm text-black/60 w-20 pt-2">Command</span>
-              <Textarea labelPlacement="inside" placeholder="Optional initial command"
-              value={(opData.command as string) ?? ""}
-              onValueChange={(v) => updateOp("command", v || null)}
-              minRows={2}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40 font-mono text-sm",
-              }} />
+              <span className="text-sm text-muted-foreground w-20 pt-2">Command</span>
+              <Textarea
+                placeholder="Optional initial command"
+                value={(opData.command as string) ?? ""}
+                onChange={(e) => updateOp("command", e.target.value.trim() ? e.target.value : null)}
+                rows={2}
+                className="flex-1 font-mono text-sm"
+              />
             </div>
           </div>
         );
@@ -1798,40 +1710,29 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Host</span>
-              <Input labelPlacement="inside" placeholder="${host}"
-              value={opData.host_id as string}
-              onValueChange={(v) => updateOp("host_id", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Host</span>
+              <Input
+                placeholder="${host}"
+                value={opData.host_id as string}
+                onChange={(e) => updateOp("host_id", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Session</span>
-              <Input labelPlacement="inside" placeholder="train"
-              value={opData.session_name as string}
-              onValueChange={(v) => updateOp("session_name", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Session</span>
+              <Input
+                placeholder="train"
+                value={opData.session_name as string}
+                onChange={(e) => updateOp("session_name", e.target.value)}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Keys</span>
-              <Input labelPlacement="inside" placeholder="C-c or Enter"
-              value={opData.keys as string}
-              onValueChange={(v) => updateOp("keys", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40 font-mono",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Keys</span>
+              <Input
+                placeholder="C-c or Enter"
+                value={opData.keys as string}
+                onChange={(e) => updateOp("keys", e.target.value)}
+                className="font-mono"
+              />
             </div>
           </div>
         );
@@ -1839,18 +1740,18 @@ function StepBlock({
       case "sleep":
         return (
           <div className="flex items-center gap-2">
-            <span className="text-sm text-black/60 w-20">Duration</span>
-            <Input labelPlacement="inside" type="number"
-            placeholder="60"
-            value={String(opData.duration_secs ?? 5)}
-            onValueChange={(v) => updateOp("duration_secs", parseInt(v) || 5)}
-            size="sm"
-            variant="bordered"
-            classNames={{
-              inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[120px]",
-              input: "text-black placeholder:text-black/40",
-            }}
-            endContent={<span className="text-black/50 text-sm">sec</span>} />
+            <span className="text-sm text-muted-foreground w-20">Duration</span>
+            <div className="relative max-w-[120px]">
+              <Input
+                type="number"
+                inputMode="numeric"
+                placeholder="60"
+                value={String(opData.duration_secs ?? 5)}
+                onChange={(e) => updateOp("duration_secs", parseInt(e.target.value, 10) || 5)}
+                className="pr-10"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">sec</span>
+            </div>
           </div>
         );
 
@@ -1863,32 +1764,32 @@ function StepBlock({
             />
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-black/60 w-20">Timeout</span>
-                <Input labelPlacement="inside" type="number"
-                placeholder="300"
-                value={String(opData.timeout_secs ?? 300)}
-                onValueChange={(v) => updateOp("timeout_secs", parseInt(v) || 300)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[100px]",
-                  input: "text-black placeholder:text-black/40",
-                }}
-                endContent={<span className="text-black/50 text-xs">sec</span>} />
+                <span className="text-sm text-muted-foreground w-20">Timeout</span>
+                <div className="relative max-w-[100px]">
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="300"
+                    value={String(opData.timeout_secs ?? 300)}
+                    onChange={(e) => updateOp("timeout_secs", parseInt(e.target.value, 10) || 300)}
+                    className="pr-10"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">sec</span>
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-black/60">Poll every</span>
-                <Input labelPlacement="inside" type="number"
-                placeholder="10"
-                value={String(opData.poll_interval_secs ?? 10)}
-                onValueChange={(v) => updateOp("poll_interval_secs", parseInt(v) || 10)}
-                size="sm"
-                variant="bordered"
-                classNames={{
-                  inputWrapper: "bg-white/80 border-black/10 hover:border-black/20 max-w-[80px]",
-                  input: "text-black placeholder:text-black/40",
-                }}
-                endContent={<span className="text-black/50 text-xs">sec</span>} />
+                <span className="text-sm text-muted-foreground">Poll every</span>
+                <div className="relative max-w-[80px]">
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="10"
+                    value={String(opData.poll_interval_secs ?? 10)}
+                    onChange={(e) => updateOp("poll_interval_secs", parseInt(e.target.value, 10) || 10)}
+                    className="pr-10"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">sec</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1902,16 +1803,12 @@ function StepBlock({
               onChange={(c) => updateOp("condition", c)}
             />
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Message</span>
-              <Input labelPlacement="inside" placeholder="Error message if assertion fails"
-              value={(opData.message as string) ?? ""}
-              onValueChange={(v) => updateOp("message", v || null)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Message</span>
+              <Input
+                placeholder="Error message if assertion fails"
+                value={(opData.message as string) ?? ""}
+                onChange={(e) => updateOp("message", e.target.value.trim() ? e.target.value : null)}
+              />
             </div>
           </div>
         );
@@ -1920,28 +1817,21 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Name</span>
-              <Input labelPlacement="inside" placeholder="my_var"
-              value={opData.name as string}
-              onValueChange={(v) => updateOp("name", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40 font-mono",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Name</span>
+              <Input
+                placeholder="my_var"
+                value={opData.name as string}
+                onChange={(e) => updateOp("name", e.target.value)}
+                className="font-mono"
+              />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Value</span>
-              <Input labelPlacement="inside" placeholder="value"
-              value={opData.value as string}
-              onValueChange={(v) => updateOp("value", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Value</span>
+              <Input
+                placeholder="value"
+                value={opData.value as string}
+                onChange={(e) => updateOp("value", e.target.value)}
+              />
             </div>
           </div>
         );
@@ -1950,34 +1840,27 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Method</span>
-              <Select labelPlacement="inside" selectedKeys={[opData.method as string]}
-              onSelectionChange={(keys) => {
-                const method = Array.from(keys)[0] as string;
-                updateOp("method", method);
-              }}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                trigger: "bg-white/80 border-black/10 hover:border-black/20 max-w-[120px]",
-                value: "text-black",
-              }}><SelectItem key="GET">GET</SelectItem>
-              <SelectItem key="POST">POST</SelectItem>
-              <SelectItem key="PUT">PUT</SelectItem>
-              <SelectItem key="DELETE">DELETE</SelectItem>
-              <SelectItem key="PATCH">PATCH</SelectItem></Select>
+              <span className="text-sm text-muted-foreground w-20">Method</span>
+              <Select value={(opData.method as string) || "GET"} onValueChange={(value) => updateOp("method", value)}>
+                <SelectTrigger className="max-w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="GET">GET</SelectItem>
+                  <SelectItem value="POST">POST</SelectItem>
+                  <SelectItem value="PUT">PUT</SelectItem>
+                  <SelectItem value="DELETE">DELETE</SelectItem>
+                  <SelectItem value="PATCH">PATCH</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">URL</span>
-              <Input labelPlacement="inside" placeholder="https://api.example.com"
-              value={opData.url as string}
-              onValueChange={(v) => updateOp("url", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">URL</span>
+              <Input
+                placeholder="https://api.example.com"
+                value={opData.url as string}
+                onChange={(e) => updateOp("url", e.target.value)}
+              />
             </div>
           </div>
         );
@@ -1986,35 +1869,28 @@ function StepBlock({
         return (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-black/60 w-20">Title</span>
-              <Input labelPlacement="inside" placeholder="Training Complete"
-              value={opData.title as string}
-              onValueChange={(v) => updateOp("title", v)}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20">Title</span>
+              <Input
+                placeholder="Training Complete"
+                value={opData.title as string}
+                onChange={(e) => updateOp("title", e.target.value)}
+              />
             </div>
             <div className="flex items-start gap-2">
-              <span className="text-sm text-black/60 w-20 pt-2">Message</span>
-              <Textarea labelPlacement="inside" placeholder="Optional message body"
-              value={(opData.message as string) ?? ""}
-              onValueChange={(v) => updateOp("message", v || null)}
-              minRows={2}
-              size="sm"
-              variant="bordered"
-              classNames={{
-                inputWrapper: "bg-white/80 border-black/10 hover:border-black/20",
-                input: "text-black placeholder:text-black/40",
-              }} />
+              <span className="text-sm text-muted-foreground w-20 pt-2">Message</span>
+              <Textarea
+                placeholder="Optional message body"
+                value={(opData.message as string) ?? ""}
+                onChange={(e) => updateOp("message", e.target.value.trim() ? e.target.value : null)}
+                rows={2}
+                className="flex-1"
+              />
             </div>
           </div>
         );
         
       default:
-        return <p className="text-sm text-black/50">No parameters</p>;
+        return <p className="text-sm text-muted-foreground">No parameters</p>;
     }
   };
   
@@ -2085,17 +1961,20 @@ function StepBlock({
           
           {/* Actions */}
           <div className="flex items-center gap-1">
-            <Tooltip content="Delete step">
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                className="hover:bg-black/5"
-                style={{ color: category.color + "80" }}
-                onPress={onDelete}
-              >
-                <IconTrash />
-              </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 hover:bg-black/5"
+                  style={{ color: category.color + "80" }}
+                  onClick={onDelete}
+                  aria-label="Delete step"
+                >
+                  <IconTrash />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete step</TooltipContent>
             </Tooltip>
             
             <motion.div
@@ -2130,18 +2009,17 @@ function StepBlock({
               >
                 <span className="text-xs" style={{ color: category.color + "80" }}>Depends on:</span>
                 {step.depends_on.map((dep) => (
-                  <Chip 
+                  <Badge
                     key={dep} 
-                    size="sm" 
-                    variant="flat" 
-                    className="text-xs"
+                    variant="outline"
+                    className="text-xs border-transparent"
                     style={{ 
                       backgroundColor: category.color + "20",
                       color: category.color,
                     }}
                   >
                     {dep}
-                  </Chip>
+                  </Badge>
                 ))}
               </div>
             )}
@@ -2176,9 +2054,11 @@ function ActionPalette({ onSelect }: { onSelect: (opType: string) => void }) {
           </h4>
           <div className="space-y-1">
             {ops.map((op) => (
-              <button
+              <Button
                 key={op.key}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-default-100 transition-colors text-left group"
+                type="button"
+                variant="ghost"
+                className="w-full justify-start h-auto gap-3 px-3 py-2.5 rounded-xl hover:bg-accent transition-colors text-left group"
                 onClick={() => onSelect(op.key)}
               >
                 <span 
@@ -2191,7 +2071,7 @@ function ActionPalette({ onSelect }: { onSelect: (opType: string) => void }) {
                   <p className="font-medium text-sm">{op.label}</p>
                   <p className="text-xs text-foreground/50 truncate">{op.description}</p>
                 </div>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -2216,10 +2096,19 @@ export function RecipeEditorPage() {
   const saveMutation = useSaveRecipe();
   const validateMutation = useValidateRecipe();
   
-  const { isOpen: isVarsOpen, onOpen: onVarsOpen, onClose: onVarsClose } = useDisclosure();
-  const { isOpen: isTargetOpen, onOpen: onTargetOpen, onClose: onTargetClose } = useDisclosure();
-  const { isOpen: isHostSelectOpen, onOpen: onHostSelectOpen, onClose: onHostSelectClose } = useDisclosure();
-  const { isOpen: isRunErrorOpen, onOpen: onRunErrorOpen, onClose: onRunErrorClose } = useDisclosure();
+  const [isVarsOpen, setIsVarsOpen] = useState(false);
+  const [isTargetOpen, setIsTargetOpen] = useState(false);
+  const [isHostSelectOpen, setIsHostSelectOpen] = useState(false);
+  const [isRunErrorOpen, setIsRunErrorOpen] = useState(false);
+
+  const onVarsOpen = () => setIsVarsOpen(true);
+  const onVarsClose = () => setIsVarsOpen(false);
+  const onTargetOpen = () => setIsTargetOpen(true);
+  const onTargetClose = () => setIsTargetOpen(false);
+  const onHostSelectOpen = () => setIsHostSelectOpen(true);
+  const onHostSelectClose = () => setIsHostSelectOpen(false);
+  const onRunErrorOpen = () => setIsRunErrorOpen(true);
+  const onRunErrorClose = () => setIsRunErrorOpen(false);
   
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
@@ -2387,7 +2276,7 @@ export function RecipeEditorPage() {
       }
       
       // Navigate to terminal page
-      navigate({ to: "/terminal" });
+      navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
     } catch (e) {
       console.error("Failed to run recipe:", e);
       const msg =
@@ -2541,7 +2430,7 @@ export function RecipeEditorPage() {
     return (
       <div className="h-full flex flex-col overflow-hidden">
         {/* Skeleton Header */}
-        <header className="flex items-center gap-4 px-4 h-14 border-b border-divider bg-content1">
+        <header className="flex items-center gap-4 px-4 h-14 border-b border-border bg-background">
           <Skeleton className="w-8 h-8 rounded-lg" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3">
@@ -2562,7 +2451,7 @@ export function RecipeEditorPage() {
           <div className="flex-1 overflow-auto">
             <div className="p-8 max-w-2xl mx-auto space-y-6">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="rounded-2xl overflow-hidden shadow-md border border-divider p-4">
+                <div key={i} className="rounded-2xl overflow-hidden shadow-md border border-border p-4">
                   <div className="flex items-center gap-3 mb-4">
                     <Skeleton className="w-6 h-6 rounded" />
                     <Skeleton className="w-10 h-10 rounded-lg" />
@@ -2582,8 +2471,8 @@ export function RecipeEditorPage() {
           </div>
 
           {/* Action Palette Sidebar Skeleton */}
-          <div className="w-72 border-l border-divider bg-content1 flex flex-col">
-            <div className="p-4 border-b border-divider">
+          <div className="w-72 border-l border-border bg-background flex flex-col">
+            <div className="p-4 border-b border-border">
               <Skeleton className="h-5 w-20 rounded-lg mb-1" />
               <Skeleton className="h-3 w-32 rounded-lg" />
             </div>
@@ -2614,44 +2503,49 @@ export function RecipeEditorPage() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex items-center gap-4 px-4 h-14 border-b border-divider bg-content1">
+      <header className="flex items-center gap-4 px-4 h-14 border-b border-border bg-background">
         {/* Left: Back button */}
-        <Button as={Link} to="/recipes" isIconOnly variant="light" size="sm">
-          <IconArrowLeft />
+        <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+          <Link to="/recipes">
+            <IconArrowLeft />
+          </Link>
         </Button>
         
         {/* Center: Title and info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3">
-            <input
+            <Input
               type="text"
               value={recipe.name}
               onChange={(e) => updateRecipe({ name: e.target.value })}
-              className="text-lg font-semibold bg-transparent border-none outline-none focus:ring-0 min-w-0 max-w-[300px]"
+              className="h-9 px-0 py-0 text-lg font-semibold bg-transparent border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 min-w-0 max-w-[300px]"
               placeholder="Recipe name"
             />
             {saveStatus === 'saving' && (
-              <Chip size="sm" color="primary" variant="flat" className="gap-1">
-                <Spinner size="sm" className="w-3 h-3" />
+              <Badge variant="outline" className="gap-1 bg-primary/10 border-primary/20 text-primary">
+                <Loader2 className="w-3 h-3 animate-spin" />
                 Saving...
-              </Chip>
+              </Badge>
             )}
             {saveStatus === 'error' && (
-              <Chip size="sm" color="danger" variant="flat">Save failed</Chip>
+              <Badge variant="destructive">Save failed</Badge>
             )}
-            <span className="text-xs text-foreground/50 flex items-center gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
               {recipe.steps.length} steps •
-              <Tooltip content="Recipe version (for tracking changes)">
-                <span className="inline-flex items-center">
-                  v
-                  <input
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex items-center gap-1">
+                    <span>v</span>
+                  <Input
                     type="text"
                     value={recipe.version}
                     onChange={(e) => updateRecipe({ version: e.target.value })}
-                    className="w-12 text-xs bg-transparent border-none outline-none focus:ring-0 hover:bg-default-100 focus:bg-default-100 rounded px-1"
+                    className="h-6 w-12 text-xs bg-transparent border-0 shadow-none px-1 py-0 hover:bg-muted focus:bg-muted focus-visible:ring-0 focus-visible:ring-offset-0"
                     placeholder="1.0.0"
                   />
-                </span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>Recipe version (for tracking changes)</TooltipContent>
               </Tooltip>
             </span>
           </div>
@@ -2660,47 +2554,47 @@ export function RecipeEditorPage() {
         {/* Right: Status and actions */}
         <div className="flex items-center gap-2">
           {validation && !validation.valid && (
-            <Chip color="danger" variant="flat" size="sm" startContent={<IconWarning />}>
+            <Badge variant="destructive" className="gap-1">
+              <IconWarning className="w-3.5 h-3.5" />
               {validation.errors.length} errors
-            </Chip>
+            </Badge>
           )}
           {validation?.valid && (
-            <Chip color="success" variant="flat" size="sm" startContent={<IconCheck />}>
+            <Badge className="gap-1 bg-green-500 text-white border-transparent">
+              <IconCheck className="w-3.5 h-3.5" />
               Valid
-            </Chip>
+            </Badge>
           )}
           
           <Button
-            variant="flat"
             size="sm"
-            startContent={<IconTarget />}
-            onPress={onTargetOpen}
+            variant="outline"
+            onClick={onTargetOpen}
           >
+            <IconTarget />
             Target
             {recipe?.target && (
-              <Chip size="sm" variant="flat" color="primary" className="ml-1">
+              <Badge variant="outline" className="ml-1">
                 {recipe.target.type}
-              </Chip>
+              </Badge>
             )}
           </Button>
           
           <Button
-            variant="flat"
             size="sm"
-            startContent={<IconVariable />}
-            onPress={onVarsOpen}
+            variant="outline"
+            onClick={onVarsOpen}
           >
+            <IconVariable />
             Variables
           </Button>
           
           <Button
-            color="primary"
             size="sm"
-            startContent={<IconPlay />}
-            onPress={handleRunClick}
-            isLoading={isRunning}
-            isDisabled={!validation?.valid}
+            onClick={handleRunClick}
+            disabled={!validation?.valid || isRunning}
           >
+            {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <IconPlay />}
             Run
           </Button>
         </div>
@@ -2713,11 +2607,11 @@ export function RecipeEditorPage() {
           <div className="p-8 max-w-2xl mx-auto">
             {recipe.steps.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20">
-                <div className="w-20 h-20 rounded-3xl bg-default-100 flex items-center justify-center mb-4">
+                <div className="w-20 h-20 rounded-3xl bg-muted/50 border border-border flex items-center justify-center mb-4">
                   <span className="text-4xl">📜</span>
                 </div>
                 <h3 className="text-lg font-semibold mb-2">No steps yet</h3>
-                <p className="text-foreground/60 text-center mb-6 max-w-sm">
+                <p className="text-muted-foreground text-center mb-6 max-w-sm">
                   Add actions from the palette on the right to build your recipe workflow.
                 </p>
               </div>
@@ -2744,7 +2638,7 @@ export function RecipeEditorPage() {
             {/* Validation Errors */}
             {validation && validation.errors.length > 0 && (
               <Card className="mt-8 border border-danger/50 bg-danger/5">
-                <CardBody className="p-4">
+                <div className="p-4">
                   <h3 className="font-semibold text-danger mb-2 flex items-center gap-2">
                     <IconWarning />
                     Validation Errors
@@ -2756,44 +2650,49 @@ export function RecipeEditorPage() {
                       </li>
                     ))}
                   </ul>
-                </CardBody>
+                </div>
               </Card>
             )}
           </div>
         </div>
         
         {/* Action Palette Sidebar */}
-        <div className="w-72 border-l border-divider bg-content1 flex flex-col">
-          <div className="p-4 border-b border-divider">
+        <div className="w-72 border-l border-border bg-background flex flex-col">
+          <div className="p-4 border-b border-border">
             <h3 className="font-semibold">Actions</h3>
-            <p className="text-xs text-foreground/60">Click to add to recipe</p>
+            <p className="text-xs text-muted-foreground">Click to add to recipe</p>
           </div>
-          <ScrollShadow className="flex-1 p-3">
+          <ScrollArea className="flex-1 p-3">
             <ActionPalette onSelect={addStep} />
-          </ScrollShadow>
+          </ScrollArea>
         </div>
       </div>
       
       {/* Variables Modal */}
-      <Modal isOpen={isVarsOpen} onClose={onVarsClose} size="lg">
-        <ModalContent>
-          <ModalHeader className="flex items-center gap-2">
-            <IconVariable />
-            Variables
-          </ModalHeader>
-          <ModalBody>
-            <p className="text-sm text-foreground/60 mb-4">
-              Define variables that can be used in step parameters with <code className="bg-default-100 px-1 rounded">${"{name}"}</code> syntax.
+      <Dialog open={isVarsOpen} onOpenChange={setIsVarsOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <IconVariable />
+              Variables
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            <p className="text-sm text-muted-foreground">
+              Define variables that can be used in step parameters with{" "}
+              <code className="rounded bg-muted px-1 font-mono text-xs">${"{name}"}</code> syntax.
             </p>
             
             {Object.keys(recipe.variables).length === 0 ? (
               <div className="text-center py-8">
-                <p className="text-foreground/60 mb-4">No variables defined yet.</p>
+                <p className="text-muted-foreground mb-4">No variables defined yet.</p>
                 <Button
                   size="sm"
-                  startContent={<IconPlus />}
-                  onPress={() => updateVariable(`var_${Object.keys(recipe.variables).length + 1}`, "")}
+                  variant="outline"
+                  onClick={() => updateVariable(`var_${Object.keys(recipe.variables).length + 1}`, "")}
                 >
+                  <IconPlus />
                   Add Variable
                 </Button>
               </div>
@@ -2801,32 +2700,37 @@ export function RecipeEditorPage() {
               <div className="space-y-3">
                 {Object.entries(recipe.variables).map(([key, value]) => (
                   <div key={key} className="flex items-center gap-2">
-                    <Input labelPlacement="inside" placeholder="name"
-                    value={key}
-                    onValueChange={(newKey) => {
-                      const vars = { ...recipe.variables };
-                      delete vars[key];
-                      vars[newKey] = value;
-                      updateRecipe({ variables: vars });
-                    }}
-                    size="sm"
-                    className="flex-1"
-                    startContent={<span className="text-foreground/50">$</span>} />
-                    <Input labelPlacement="inside" placeholder="value"
-                    value={value}
-                    onValueChange={(v) => updateVariable(key, v)}
-                    size="sm"
-                    className="flex-1" />
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                      <Input
+                        placeholder="name"
+                        value={key}
+                        onChange={(e) => {
+                          const newKey = e.target.value;
+                          const vars = { ...recipe.variables };
+                          delete vars[key];
+                          vars[newKey] = value;
+                          updateRecipe({ variables: vars });
+                        }}
+                        className="pl-7"
+                      />
+                    </div>
+                    <Input
+                      placeholder="value"
+                      value={value}
+                      onChange={(e) => updateVariable(key, e.target.value)}
+                      className="flex-1"
+                    />
                     <Button
-                      isIconOnly
-                      size="sm"
-                      variant="light"
-                      color="danger"
-                      onPress={() => {
+                      size="icon"
+                      variant="ghost"
+                      className="text-danger hover:text-danger"
+                      onClick={() => {
                         const vars = { ...recipe.variables };
                         delete vars[key];
                         updateRecipe({ variables: vars });
                       }}
+                      aria-label={`Delete variable ${key}`}
                     >
                       <IconTrash />
                     </Button>
@@ -2835,33 +2739,35 @@ export function RecipeEditorPage() {
                 
                 <Button
                   size="sm"
-                  variant="flat"
-                  startContent={<IconPlus />}
-                  onPress={() => updateVariable(`var_${Object.keys(recipe.variables).length + 1}`, "")}
+                  variant="outline"
+                  onClick={() => updateVariable(`var_${Object.keys(recipe.variables).length + 1}`, "")}
                   className="w-full mt-2"
                 >
+                  <IconPlus />
                   Add Variable
                 </Button>
               </div>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button onPress={onVarsClose}>
-              Done
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={onVarsClose}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       
       {/* Target Requirements Modal */}
-      <Modal isOpen={isTargetOpen} onClose={onTargetClose} size="lg">
-        <ModalContent>
-          <ModalHeader className="flex items-center gap-2">
-            <IconTarget />
-            Target Host Requirements
-          </ModalHeader>
-          <ModalBody>
-            <p className="text-sm text-foreground/60 mb-4">
+      <Dialog open={isTargetOpen} onOpenChange={setIsTargetOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <IconTarget />
+              Target Host Requirements
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            <p className="text-sm text-muted-foreground">
               Define requirements for the target host. The actual host will be selected when running the recipe.
             </p>
             
@@ -2869,34 +2775,40 @@ export function RecipeEditorPage() {
               {/* Host Type */}
               <div className="flex items-center gap-4">
                 <span className="text-sm font-medium w-24">Host Type</span>
-                <Select labelPlacement="inside" selectedKeys={recipe?.target?.type ? [recipe.target.type] : []}
-                onSelectionChange={(keys) => {
-                  const type = Array.from(keys)[0] as TargetHostType | undefined;
-                  if (type) {
-                    updateRecipe({ 
-                      target: { 
-                        ...(recipe?.target ?? {}), 
-                        type 
-                      } as TargetRequirements 
+                <Select
+                  value={recipe?.target?.type ?? "__none__"}
+                  onValueChange={(value) => {
+                    if (value === "__none__") {
+                      updateRecipe({ target: null });
+                      return;
+                    }
+
+                    updateRecipe({
+                      target: {
+                        ...(recipe?.target ?? {}),
+                        type: value as TargetHostType,
+                      } as TargetRequirements,
                     });
-                  } else {
-                    updateRecipe({ target: null });
-                  }
-                }}
-                placeholder="Select host type..."
-                size="sm"
-                variant="bordered"
-                className="flex-1"><SelectItem key="any">Any (All hosts + Local)</SelectItem>
-                <SelectItem key="local">Local</SelectItem>
-                <SelectItem key="colab">Colab</SelectItem>
-                <SelectItem key="vast">Vast.ai</SelectItem>
-                <SelectItem key="custom">Custom SSH</SelectItem></Select>
+                  }}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Select host type..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    <SelectItem value="any">Any (All hosts + Local)</SelectItem>
+                    <SelectItem value="local">Local</SelectItem>
+                    <SelectItem value="colab">Colab</SelectItem>
+                    <SelectItem value="vast">Vast.ai</SelectItem>
+                    <SelectItem value="custom">Custom SSH</SelectItem>
+                  </SelectContent>
+                </Select>
                 {recipe?.target && (
                   <Button
                     size="sm"
-                    variant="light"
-                    color="danger"
-                    onPress={() => updateRecipe({ target: null })}
+                    variant="ghost"
+                    className="text-danger hover:text-danger"
+                    onClick={() => updateRecipe({ target: null })}
                   >
                     Clear
                   </Button>
@@ -2908,170 +2820,234 @@ export function RecipeEditorPage() {
                   {/* GPU Type */}
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-medium w-24">GPU Type</span>
-                    <Input labelPlacement="inside" placeholder="Any (e.g., T4, A100, H100)"
-                    value={recipe.target.gpu_type ?? ""}
-                    onValueChange={(v) => updateRecipe({
-                      target: { ...recipe.target!, gpu_type: v || null }
-                    })}
-                    size="sm"
-                    variant="bordered"
-                    className="flex-1" />
+                    <Input
+                      placeholder="Any (e.g., T4, A100, H100)"
+                      value={recipe.target.gpu_type ?? ""}
+                      onChange={(e) =>
+                        updateRecipe({
+                          target: {
+                            ...recipe.target!,
+                            gpu_type: e.target.value.trim() ? e.target.value : null,
+                          },
+                        })
+                      }
+                      className="flex-1"
+                    />
                   </div>
                   
                   {/* Min GPUs */}
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-medium w-24">Min GPUs</span>
-                    <Input labelPlacement="inside" type="number"
-                    placeholder="1"
-                    value={recipe.target.min_gpus?.toString() ?? ""}
-                    onValueChange={(v) => updateRecipe({
-                      target: { ...recipe.target!, min_gpus: v ? parseInt(v) : null }
-                    })}
-                    size="sm"
-                    variant="bordered"
-                    className="max-w-[100px]" />
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="1"
+                      value={recipe.target.min_gpus?.toString() ?? ""}
+                      onChange={(e) =>
+                        updateRecipe({
+                          target: {
+                            ...recipe.target!,
+                            min_gpus: e.target.value ? parseInt(e.target.value, 10) : null,
+                          },
+                        })
+                      }
+                      className="max-w-[100px]"
+                    />
                   </div>
                   
                   {/* Min Memory */}
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-medium w-24">Min Memory</span>
-                    <Input labelPlacement="inside" type="number"
-                    placeholder="16"
-                    value={recipe.target.min_memory_gb?.toString() ?? ""}
-                    onValueChange={(v) => updateRecipe({
-                      target: { ...recipe.target!, min_memory_gb: v ? parseFloat(v) : null }
-                    })}
-                    size="sm"
-                    variant="bordered"
-                    className="max-w-[100px]"
-                    endContent={<span className="text-foreground/50 text-xs">GB</span>} />
+                    <div className="relative max-w-[100px]">
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="16"
+                        value={recipe.target.min_memory_gb?.toString() ?? ""}
+                        onChange={(e) =>
+                          updateRecipe({
+                            target: {
+                              ...recipe.target!,
+                              min_memory_gb: e.target.value ? parseFloat(e.target.value) : null,
+                            },
+                          })
+                        }
+                        className="pr-10"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">GB</span>
+                    </div>
                   </div>
                 </>
               )}
             </div>
             
             {!recipe?.target && (
-              <div className="mt-4 p-4 bg-warning-50 border border-warning-200 rounded-lg">
-                <p className="text-sm text-warning-700">
-                  No target defined. Operations that use <code className="bg-warning-100 px-1 rounded">${"{target}"}</code> will require a host_id to be specified.
+              <div className="mt-2 p-4 bg-warning/10 border border-warning/20 rounded-lg">
+                <p className="text-sm text-warning">
+                  No target defined. Operations that use{" "}
+                  <code className="rounded bg-warning/15 px-1 font-mono text-xs">${"{target}"}</code>{" "}
+                  will require a host_id to be specified.
                 </p>
               </div>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button onPress={onTargetClose}>
-              Done
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={onTargetClose}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       
       {/* Host Selection Modal (shown when running a recipe with target) */}
-      <Modal isOpen={isHostSelectOpen} onClose={onHostSelectClose} size="lg">
-        <ModalContent>
-          <ModalHeader className="flex items-center gap-2">
-            <IconPlay />
-            Select Target Host
-          </ModalHeader>
-          <ModalBody>
+      <Dialog open={isHostSelectOpen} onOpenChange={setIsHostSelectOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <IconPlay />
+              Select Target Host
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-4">
             {recipe?.target && (
-              <div className="mb-4 p-3 bg-primary-50 border border-primary-200 rounded-lg">
-                <p className="text-sm font-medium text-primary-700 mb-1">Target Requirements</p>
-                <div className="text-sm text-primary-600 space-y-0.5">
-                  <p>Type: <span className="font-medium">{recipe.target.type}</span></p>
-                  {recipe.target.gpu_type && <p>GPU: <span className="font-medium">{recipe.target.gpu_type}</span></p>}
-                  {recipe.target.min_gpus && <p>Min GPUs: <span className="font-medium">{recipe.target.min_gpus}</span></p>}
-                  {recipe.target.min_memory_gb && <p>Min Memory: <span className="font-medium">{recipe.target.min_memory_gb} GB</span></p>}
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                <p className="text-sm font-medium text-primary mb-1">Target Requirements</p>
+                <div className="text-sm text-muted-foreground space-y-0.5">
+                  <p>
+                    Type: <span className="font-medium text-foreground">{recipe.target.type}</span>
+                  </p>
+                  {recipe.target.gpu_type && (
+                    <p>
+                      GPU: <span className="font-medium text-foreground">{recipe.target.gpu_type}</span>
+                    </p>
+                  )}
+                  {recipe.target.min_gpus && (
+                    <p>
+                      Min GPUs: <span className="font-medium text-foreground">{recipe.target.min_gpus}</span>
+                    </p>
+                  )}
+                  {recipe.target.min_memory_gb && (
+                    <p>
+                      Min Memory:{" "}
+                      <span className="font-medium text-foreground">{recipe.target.min_memory_gb} GB</span>
+                    </p>
+                  )}
                 </div>
               </div>
             )}
-            
+
             {compatibleHosts.length === 0 && !showLocalOption ? (
-              <div className="p-6 text-center text-foreground/60">
+              <div className="p-6 text-center text-muted-foreground">
                 <p className="mb-2">No compatible hosts found</p>
                 <p className="text-xs">Add a host that matches the target requirements, or modify the requirements.</p>
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-sm text-foreground/60 mb-2">
+                <p className="text-sm text-muted-foreground mb-2">
                   Select a target to run this recipe on:
                 </p>
                 <RadioGroup
-                  value={selectedHostId ?? undefined}
-                  onValueChange={setSelectedHostId}
+                  value={selectedHostId ?? ""}
+                  onValueChange={(value) => setSelectedHostId(value || null)}
                 >
                   {/* Local option */}
                   {showLocalOption && (
-                    <Radio key="__local__" value="__local__" className="p-3 bg-default-50 rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1">
-                          <p className="font-medium">Local</p>
-                          <p className="text-xs text-foreground/50">
-                            Run on this machine (no SSH)
-                          </p>
+                    <div
+                      className={cn(
+                        "flex items-start gap-3 rounded-lg border p-3 transition-colors",
+                        selectedHostId === "__local__"
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:bg-muted/50"
+                      )}
+                    >
+                      <RadioGroupItem value="__local__" id="recipe-target-local" className="mt-0.5" />
+                      <Label htmlFor="recipe-target-local" className="flex-1 cursor-pointer font-normal">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1">
+                            <p className="font-medium text-foreground">Local</p>
+                            <p className="text-xs text-muted-foreground">
+                              Run on this machine (no SSH)
+                            </p>
+                          </div>
+                          <Badge className="bg-green-500 text-white border-transparent">ready</Badge>
                         </div>
-                        <Chip size="sm" color="success" variant="flat">
-                          ready
-                        </Chip>
-                      </div>
-                    </Radio>
+                      </Label>
+                    </div>
                   )}
+
                   {/* Remote hosts */}
-                  {compatibleHosts.map((host: Host) => (
-                    <Radio key={host.id} value={host.id} className="p-3 bg-default-50 rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1">
-                          <p className="font-medium">{host.name}</p>
-                          <p className="text-xs text-foreground/50">
-                            {host.type}
-                            {host.gpu_name && ` • ${host.gpu_name}`}
-                            {host.num_gpus && host.num_gpus > 1 && ` (×${host.num_gpus})`}
-                            {host.system_info?.memory_total_gb && ` • ${host.system_info.memory_total_gb.toFixed(0)} GB RAM`}
-                          </p>
-                        </div>
-                        <Chip
-                          size="sm"
-                          color={host.status === "online" ? "success" : host.status === "offline" ? "danger" : "default"}
-                          variant="flat"
-                        >
-                          {host.status}
-                        </Chip>
+                  {compatibleHosts.map((host: Host) => {
+                    const id = `recipe-target-${host.id}`;
+                    const isSelected = selectedHostId === host.id;
+                    const statusVariant =
+                      host.status === "offline"
+                        ? ("destructive" as const)
+                        : ("outline" as const);
+                    const statusClassName =
+                      host.status === "online"
+                        ? "bg-green-500 text-white hover:bg-green-600 border-transparent"
+                        : "";
+
+                    return (
+                      <div
+                        key={host.id}
+                        className={cn(
+                          "flex items-start gap-3 rounded-lg border p-3 transition-colors",
+                          isSelected ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                        )}
+                      >
+                        <RadioGroupItem value={host.id} id={id} className="mt-0.5" />
+                        <Label htmlFor={id} className="flex-1 cursor-pointer font-normal">
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1">
+                              <p className="font-medium text-foreground">{host.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {host.type}
+                                {host.gpu_name && ` • ${host.gpu_name}`}
+                                {host.num_gpus && host.num_gpus > 1 && ` (×${host.num_gpus})`}
+                                {host.system_info?.memory_total_gb &&
+                                  ` • ${host.system_info.memory_total_gb.toFixed(0)} GB RAM`}
+                              </p>
+                            </div>
+                            <Badge variant={statusVariant} className={statusClassName}>{host.status}</Badge>
+                          </div>
+                        </Label>
                       </div>
-                    </Radio>
-                  ))}
+                    );
+                  })}
                 </RadioGroup>
               </div>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="light" onPress={onHostSelectClose}>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={onHostSelectClose}>
               Cancel
             </Button>
             <Button
-              color="primary"
-              onPress={handleConfirmRun}
-              isDisabled={!selectedHostId && recipe?.target !== undefined}
-              isLoading={isRunning}
+              onClick={handleConfirmRun}
+              disabled={(!selectedHostId && recipe?.target !== undefined) || isRunning}
             >
+              {isRunning && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
               {selectedHostId === "__local__" ? "Run Locally" : "Run on Selected Host"}
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <Modal isOpen={isRunErrorOpen} onClose={onRunErrorClose} size="lg">
-        <ModalContent>
-          <ModalHeader>Failed to run recipe</ModalHeader>
-          <ModalBody>
-            <p className="text-sm text-danger whitespace-pre-wrap">{runError ?? "Unknown error"}</p>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onRunErrorClose}>
+      <Dialog open={isRunErrorOpen} onOpenChange={setIsRunErrorOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Failed to run recipe</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-danger whitespace-pre-wrap">{runError ?? "Unknown error"}</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={onRunErrorClose}>
               Close
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

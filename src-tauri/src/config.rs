@@ -91,6 +91,29 @@ pub struct ColabConfig {
     pub hf_home: Option<String>,
 }
 
+/// Terminal theme options
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalTheme {
+    #[default]
+    TokyoNightLight,
+    TokyoNightDark,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalConfig {
+    pub theme: TerminalTheme,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            theme: TerminalTheme::TokyoNightLight,
+        }
+    }
+}
+
 impl Default for ColabConfig {
     fn default() -> Self {
         Self {
@@ -125,6 +148,7 @@ pub struct TrainshConfig {
     pub vast: VastConfig,
     pub colab: ColabConfig,
     pub scamalytics: ScamalyticsConfig,
+    pub terminal: TerminalConfig,
 }
 
 impl Default for TrainshConfig {
@@ -133,6 +157,7 @@ impl Default for TrainshConfig {
             vast: VastConfig::default(),
             colab: ColabConfig::default(),
             scamalytics: ScamalyticsConfig::default(),
+            terminal: TerminalConfig::default(),
         }
     }
 }

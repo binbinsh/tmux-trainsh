@@ -1,56 +1,33 @@
-import { Tooltip } from "@nextui-org/react";
-import { Button } from "../ui";
 import { useLocation } from "@tanstack/react-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { motion, AnimatePresence } from "framer-motion";
-import { useTerminalOptional, type TerminalSession } from "../../contexts/TerminalContext";
+import { motion, AnimatePresence, Reorder } from "framer-motion";
+import { Plus, X, Terminal, SquareTerminal, FlaskConical, GripVertical } from "lucide-react";
+import { useTerminalOptional, type TerminalSession } from "@/contexts/TerminalContext";
+import { Button } from "@/components/ui/button";
+import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
-function IconPlus() {
-  return (
-    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-    </svg>
-  );
-}
-
-function IconClose() {
-  return (
-    <svg className="w-2.5 h-2.5" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <path d="M2 2l6 6M8 2l-6 6" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function IconTerminal() {
-  return (
-    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-      <polyline points="4 17 10 11 4 5" />
-      <line x1="12" y1="19" x2="20" y2="19" />
-    </svg>
-  );
-}
-
-function IconSidebar() {
-  return (
-    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M9 3v18" />
-    </svg>
-  );
-}
-
-// Terminal tab component - pill style with icon/close button on left
 function TerminalTab({
   session,
   isActive,
   onClick,
-  onClose
+  onClose,
+  isDragging = false,
 }: {
   session: TerminalSession;
   isActive: boolean;
   onClick: () => void;
   onClose: () => void;
+  isDragging?: boolean;
 }) {
+  const isRecipe = !!session.recipeExecutionId;
+  const isPlaceholder = session.isPlaceholder;
+
+  // Determine icon based on session type
+  const TabIcon = isRecipe ? FlaskConical : isPlaceholder ? Plus : SquareTerminal;
+
   return (
     <motion.div
       layout
@@ -60,50 +37,48 @@ function TerminalTab({
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ duration: 0.15 }}
       onClick={onClick}
-      className={`
-        group relative flex items-center gap-2 pl-2.5 pr-3 h-7 w-52 flex-shrink-0 rounded-lg cursor-pointer
-        transition-all duration-150 border
-        ${isActive
-          ? "bg-[rgb(var(--doppio-titlebar-tab-active))] text-[rgb(var(--doppio-titlebar-text))] font-medium shadow-md border-[rgb(var(--doppio-titlebar-tab-border))]"
-          : "bg-[rgb(var(--doppio-titlebar-tab-inactive))] text-[rgb(var(--doppio-titlebar-text))]/50 hover:bg-[rgb(var(--doppio-titlebar-tab-hover))] hover:text-[rgb(var(--doppio-titlebar-text))]/70 border-[rgb(var(--doppio-titlebar-tab-border))]/50 hover:border-[rgb(var(--doppio-titlebar-tab-border))]"
-        }
-      `}
+      className={cn(
+        "group relative flex items-center gap-2 px-2.5 h-7 min-w-[140px] max-w-[220px] flex-shrink-0 rounded-md cursor-pointer",
+        "transition-all duration-150 select-none border",
+        isDragging && "opacity-50",
+        isActive
+          ? "bg-card text-foreground border-border shadow-sm"
+          : "bg-transparent text-[rgb(var(--doppio-titlebar-text))]/50 border-transparent hover:text-[rgb(var(--doppio-titlebar-text))]/80 hover:bg-[rgb(var(--doppio-titlebar-tab-hover))]"
+      )}
     >
-      {/* Icon/Close button area - shows terminal icon by default, close button on hover for inactive tabs */}
-      <div className="w-4 h-4 flex items-center justify-center flex-shrink-0 relative">
-        {isActive ? (
-          /* Active tab: always show close button */
-          <button
+      {/* Icon / Close Button Container */}
+      <div className="relative w-4 h-4 flex-shrink-0">
+        {/* Tab Icon - hidden when close button is visible */}
+        <TabIcon className={cn(
+          "w-4 h-4 absolute inset-0 transition-opacity duration-150",
+          isActive ? "text-foreground" : "text-[rgb(var(--doppio-titlebar-text))]/40",
+          !isPlaceholder && "group-hover:opacity-0"
+        )} />
+
+        {/* Close Button - shows on hover, replaces icon */}
+        {!isPlaceholder && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
             onClick={(e) => {
               e.stopPropagation();
               onClose();
             }}
-            className="w-4 h-4 rounded-full flex items-center justify-center transition-all duration-150 text-[rgb(var(--doppio-titlebar-text))]/50 hover:text-[rgb(var(--doppio-titlebar-text))] hover:bg-black/10"
+            className={cn(
+              "h-4 w-4 rounded-sm p-0 absolute inset-0 transition-opacity duration-150",
+              isActive
+                ? "opacity-0 group-hover:opacity-100 text-foreground/70 hover:text-foreground hover:bg-foreground/10"
+                : "opacity-0 group-hover:opacity-100 text-[rgb(var(--doppio-titlebar-text))]/50 hover:text-[rgb(var(--doppio-titlebar-text))] hover:bg-white/10"
+            )}
             aria-label="Close terminal"
           >
-            <IconClose />
-          </button>
-        ) : (
-          /* Inactive tab: show terminal icon, close button on hover */
-          <>
-            <span className="absolute inset-0 flex items-center justify-center text-[rgb(var(--doppio-titlebar-text))]/30 group-hover:opacity-0 transition-opacity duration-150">
-              <IconTerminal />
-            </span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose();
-              }}
-              className="absolute inset-0 rounded-full flex items-center justify-center transition-all duration-150 text-[rgb(var(--doppio-titlebar-text))]/30 hover:text-[rgb(var(--doppio-titlebar-text))] hover:bg-black/10 opacity-0 group-hover:opacity-100"
-              aria-label="Close terminal"
-            >
-              <IconClose />
-            </button>
-          </>
+            <X className="w-3 h-3" />
+          </Button>
         )}
       </div>
 
-      {/* Title */}
+      {/* Tab Title */}
       <span className="text-xs font-medium truncate min-w-0 flex-1">{session.title}</span>
     </motion.div>
   );
@@ -113,14 +88,13 @@ export function TitleBar() {
   const location = useLocation();
   const isTerminalPage = location.pathname.startsWith("/terminal");
   const terminal = useTerminalOptional();
+  const sidebar = useSidebar();
   const titleBarClassName = "h-9 flex items-center bg-[rgb(var(--doppio-titlebar-bg))] text-[rgb(var(--doppio-titlebar-text))] pr-3 border-b border-[rgb(var(--doppio-titlebar-tab-border))]/50";
+  const sidebarCollapsed = sidebar.state === "collapsed";
 
-  // Handle drag on mousedown - more reliable than data-tauri-drag-region
   const handleMouseDown = async (e: React.MouseEvent) => {
-    // Only start dragging on primary button (left click)
     if (e.buttons === 1) {
       if (e.detail === 2) {
-        // Double click - toggle maximize
         const win = getCurrentWindow();
         if (await win.isMaximized()) {
           await win.unmaximize();
@@ -128,7 +102,6 @@ export function TitleBar() {
           await win.maximize();
         }
       } else {
-        // Single click - start dragging
         await getCurrentWindow().startDragging();
       }
     }
@@ -138,28 +111,21 @@ export function TitleBar() {
     <div
       data-tauri-drag-region
       onMouseDown={handleMouseDown}
-      className={`${titleBarClassName} backdrop-blur-md`}
-      style={{ paddingLeft: 80 }} // Space for native macOS traffic lights
+      className={cn(titleBarClassName, "backdrop-blur-md")}
+      style={{ paddingLeft: 80 }}
     >
-      {/* Sidebar toggle button - always visible */}
       <div onMouseDown={(e) => e.stopPropagation()}>
-        <Tooltip content={terminal?.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"} delay={500}>
-          <Button
-            isIconOnly
-            size="sm"
-            variant="light"
-            onPress={terminal?.toggleSidebar}
-            className={`min-w-7 w-7 h-7 mr-2 ${terminal?.sidebarCollapsed ? "text-[rgb(var(--doppio-titlebar-text))]/40" : "text-[rgb(var(--doppio-titlebar-text))]/60"} hover:text-[rgb(var(--doppio-titlebar-text))]`}
-          >
-            <IconSidebar />
-          </Button>
-        </Tooltip>
+        <SidebarTrigger
+          className={cn(
+            "min-w-7 w-7 h-7 mr-2",
+            sidebarCollapsed ? "text-[rgb(var(--doppio-titlebar-text))]/40" : "text-[rgb(var(--doppio-titlebar-text))]/60",
+            "hover:text-[rgb(var(--doppio-titlebar-text))]"
+          )}
+        />
       </div>
 
-      {/* Terminal tabs - only show on terminal page */}
       {isTerminalPage && terminal && terminal.sessions.length > 0 ? (
         <>
-          {/* Tabs area - NOT draggable, stop propagation */}
           <div
             className="flex items-center gap-2 overflow-x-auto shrink-0 py-0.5"
             onMouseDown={(e) => e.stopPropagation()}
@@ -176,25 +142,27 @@ export function TitleBar() {
               ))}
             </AnimatePresence>
 
-            {/* New terminal button */}
-            <Tooltip content="New Tab" delay={500}>
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                onPress={() => terminal.createNewTab()}
-                className="min-w-7 w-7 h-7 text-[rgb(var(--doppio-titlebar-text))]/50 hover:text-[rgb(var(--doppio-titlebar-text))] hover:bg-black/5 transition-colors"
-              >
-                <IconPlus />
-              </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => terminal.createNewTab()}
+                  className="min-w-7 w-7 h-7 text-[rgb(var(--doppio-titlebar-text))]/50 hover:text-[rgb(var(--doppio-titlebar-text))] hover:bg-black/5 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="flex items-center gap-2">
+                <span>New Tab</span>
+                <kbd className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">⌘T</kbd>
+              </TooltipContent>
             </Tooltip>
           </div>
 
-          {/* Remaining space is draggable (inherits from parent) */}
           <div className="flex-1 h-full" />
         </>
       ) : (
-        /* Non-terminal pages: just an empty draggable area */
         <div className="flex-1 h-full" />
       )}
     </div>

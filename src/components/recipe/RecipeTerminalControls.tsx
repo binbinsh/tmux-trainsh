@@ -1,5 +1,10 @@
-import { Chip, Tooltip, Kbd, Divider, Progress, ScrollShadow } from "@nextui-org/react";
-import { Button } from "../ui";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -252,9 +257,10 @@ function StepItem({ step, isActive }: { step: InteractiveStepState; isActive: bo
 
   return (
     <div
-      className={`flex items-center gap-2 py-1 px-2 rounded-md transition-colors ${
-        isActive ? "bg-primary/10" : "hover:bg-content2/50"
-      }`}
+      className={cn(
+        "flex items-center gap-2 py-1 px-2 rounded-md transition-colors",
+        isActive ? "bg-primary/10" : "hover:bg-muted/50"
+      )}
     >
       <div className="flex-shrink-0">
         <StepStatusIcon status={step.status} />
@@ -288,34 +294,6 @@ function TerminalIcon({ className }: { className?: string }) {
 }
 
 // ============================================================
-// Status Badge
-// ============================================================
-
-function StatusBadge({ status }: { status: InteractiveExecution["status"] }) {
-  const statusConfig: Record<
-    InteractiveExecution["status"],
-    { color: "default" | "primary" | "secondary" | "success" | "warning" | "danger"; label: string }
-  > = {
-    pending: { color: "default", label: "Pending" },
-    connecting: { color: "primary", label: "Connecting" },
-    running: { color: "success", label: "Running" },
-    paused: { color: "warning", label: "Paused" },
-    waiting_for_input: { color: "secondary", label: "Waiting for Input" },
-    completed: { color: "success", label: "Completed" },
-    failed: { color: "danger", label: "Failed" },
-    cancelled: { color: "default", label: "Cancelled" },
-  };
-
-  const config = statusConfig[status] || { color: "default", label: status };
-
-  return (
-    <Chip size="sm" color={config.color} variant="flat">
-      {config.label}
-    </Chip>
-  );
-}
-
-// ============================================================
 // Intervention Lock Indicator
 // ============================================================
 
@@ -327,27 +305,24 @@ function InterventionIndicator({
   onToggle?: () => void;
 }) {
   return (
-    <Tooltip
-      content={
-        locked
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={onToggle}
+          disabled={!onToggle}
+          aria-label={locked ? "Input locked" : "Input unlocked"}
+          className={locked ? "text-warning hover:text-warning" : "text-success hover:text-success"}
+        >
+          {locked ? <LockIcon /> : <UnlockIcon />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {locked
           ? "Script is sending commands. Wait for unlock to type."
-          : "Terminal is unlocked. You can type freely."
-      }
-    >
-      <Button
-        size="sm"
-        variant={locked ? "flat" : "light"}
-        color={locked ? "warning" : "success"}
-        isIconOnly
-        onPress={onToggle}
-        aria-label={locked ? "Input locked" : "Input unlocked"}
-      >
-        {locked ? (
-          <LockIcon className="text-warning" />
-        ) : (
-          <UnlockIcon className="text-success" />
-        )}
-      </Button>
+          : "Terminal is unlocked. You can type freely."}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -489,7 +464,7 @@ export function RecipeTerminalControls({
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -10 }}
-        className="flex flex-col bg-content1/80 backdrop-blur-md border-b border-divider"
+        className="flex flex-col bg-background/80 backdrop-blur-md border-b border-border"
       >
         {/* Top bar - always visible */}
         <div className="flex items-center gap-2 px-3 py-2">
@@ -499,7 +474,7 @@ export function RecipeTerminalControls({
             <span className="text-sm font-medium">{execution.recipe_name}</span>
           </div>
 
-          <Divider orientation="vertical" className="h-4" />
+          <Separator orientation="vertical" className="h-4" />
 
           {/* Status */}
           <StatusBadge status={execution.status} />
@@ -507,8 +482,8 @@ export function RecipeTerminalControls({
           {/* Progress indicator (compact) */}
           {!isCompleted && (
             <>
-              <Divider orientation="vertical" className="h-4" />
-              <span className="text-xs text-foreground/60">
+              <Separator orientation="vertical" className="h-4" />
+              <span className="text-xs text-muted-foreground">
                 {stepsCompleted}/{execution.steps.length}
               </span>
             </>
@@ -517,8 +492,8 @@ export function RecipeTerminalControls({
           {/* Current Step */}
           {execution.current_step && (
             <>
-              <Divider orientation="vertical" className="h-4" />
-              <span className="text-xs text-foreground/60 truncate max-w-32">
+              <Separator orientation="vertical" className="h-4" />
+              <span className="text-xs text-muted-foreground truncate max-w-32">
                 {execution.current_step}
               </span>
             </>
@@ -533,76 +508,93 @@ export function RecipeTerminalControls({
 
             {/* Pause/Resume Button */}
             {isRunning && (
-              <Tooltip content="Pause execution">
-                <Button
-                  size="sm"
-                  color="warning"
-                  variant="flat"
-                  isIconOnly
-                  isLoading={isPausing}
-                  onPress={handlePause}
-                >
-                  <PauseIcon />
-                </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={handlePause}
+                    disabled={isPausing || isResuming || isInterrupting || isCancelling}
+                    className="text-warning hover:text-warning"
+                    aria-label="Pause execution"
+                  >
+                    {isPausing ? <LoaderIcon className="w-4 h-4" /> : <PauseIcon />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Pause execution</TooltipContent>
               </Tooltip>
             )}
             {isPaused && (
-              <Tooltip content="Resume execution">
-                <Button
-                  size="sm"
-                  color="success"
-                  variant="flat"
-                  isIconOnly
-                  isLoading={isResuming}
-                  onPress={handleResume}
-                >
-                  <PlayIcon />
-                </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={handleResume}
+                    disabled={isPausing || isResuming || isInterrupting || isCancelling}
+                    className="text-success hover:text-success"
+                    aria-label="Resume execution"
+                  >
+                    {isResuming ? <LoaderIcon className="w-4 h-4" /> : <PlayIcon />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Resume execution</TooltipContent>
               </Tooltip>
             )}
 
             {/* Interrupt Button */}
             {isRunning && (
-              <Tooltip content="Send interrupt signal (Ctrl+C)">
-                <Button
-                  size="sm"
-                  color="warning"
-                  variant="flat"
-                  isIconOnly
-                  isLoading={isInterrupting}
-                  onPress={handleInterrupt}
-                >
-                  <StopIcon />
-                </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={handleInterrupt}
+                    disabled={isPausing || isResuming || isInterrupting || isCancelling}
+                    className="text-warning hover:text-warning"
+                    aria-label="Send interrupt signal (Ctrl+C)"
+                  >
+                    {isInterrupting ? <LoaderIcon className="w-4 h-4" /> : <StopIcon />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Send interrupt signal (Ctrl+C)</TooltipContent>
               </Tooltip>
             )}
 
             {/* Cancel Button */}
             {isActive && (
-              <Tooltip content="Cancel recipe execution">
-                <Button
-                  size="sm"
-                  color="danger"
-                  variant="flat"
-                  isLoading={isCancelling}
-                  onPress={handleCancel}
-                  startContent={!isCancelling && <XIcon />}
-                >
-                  Cancel
-                </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={handleCancel}
+                    disabled={isPausing || isResuming || isInterrupting || isCancelling}
+                    aria-label="Cancel recipe execution"
+                  >
+                    {isCancelling ? <LoaderIcon className="w-4 h-4" /> : <XIcon className="w-4 h-4" />}
+                    Cancel
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Cancel recipe execution</TooltipContent>
               </Tooltip>
             )}
 
             {/* Toggle expand button */}
-            <Tooltip content={recipeDetailsExpanded ? "Show less (⌘])" : "Show more (⌘])"}>
-              <Button
-                size="sm"
-                variant="light"
-                isIconOnly
-                onPress={toggleRecipeDetails}
-              >
-                {recipeDetailsExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-              </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={toggleRecipeDetails}
+                  aria-label={recipeDetailsExpanded ? "Show less (⌘])" : "Show more (⌘])"}
+                >
+                  {recipeDetailsExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {recipeDetailsExpanded ? "Show less (⌘])" : "Show more (⌘])"}
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
@@ -615,23 +607,23 @@ export function RecipeTerminalControls({
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="overflow-hidden border-t border-divider"
+              className="overflow-hidden border-t border-border"
             >
               <div className="flex gap-4 px-3 py-2">
                 {/* Progress bar */}
                 {!isCompleted && (
                   <div className="w-48 flex flex-col justify-center">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] text-foreground/50">Progress</span>
+                      <span className="text-[10px] text-muted-foreground">Progress</span>
                       <span className="text-[10px] font-medium">
                         {stepsCompleted}/{execution.steps.length}
                       </span>
                     </div>
                     <Progress
-                      size="sm"
                       value={progress}
-                      color={stepsFailed > 0 ? "danger" : "primary"}
                       className="max-w-full"
+                      trackClassName={stepsFailed > 0 ? "bg-danger/20" : undefined}
+                      indicatorClassName={stepsFailed > 0 ? "bg-danger" : undefined}
                     />
                     {stepsFailed > 0 && (
                       <p className="text-[10px] text-danger mt-0.5">{stepsFailed} failed</p>
@@ -641,8 +633,8 @@ export function RecipeTerminalControls({
 
                 {/* Steps list */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-medium text-foreground/50 mb-1">Steps</p>
-                  <ScrollShadow className="max-h-32" hideScrollBar>
+                  <p className="text-[10px] font-medium text-muted-foreground mb-1">Steps</p>
+                  <ScrollArea className="max-h-32">
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1">
                       {execution.steps.map((step, index) => (
                         <StepItem
@@ -652,17 +644,20 @@ export function RecipeTerminalControls({
                         />
                       ))}
                     </div>
-                  </ScrollShadow>
+                  </ScrollArea>
                 </div>
 
                 {/* Keyboard hint */}
-                <div className="flex flex-col justify-center text-[10px] text-foreground/40">
+                <div className="flex flex-col justify-center text-[10px] text-muted-foreground">
                   {isLocked ? (
                     <span>Waiting for script...</span>
                   ) : (
                     <>
                       <span>Type freely or</span>
-                      <Kbd keys={["ctrl"]} className="text-[10px]">C</Kbd>
+                      <span className="inline-flex items-center gap-1">
+                        <kbd className="inline-flex h-5 items-center justify-center rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium">Ctrl</kbd>
+                        <kbd className="inline-flex h-5 items-center justify-center rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium">C</kbd>
+                      </span>
                       <span>to interrupt</span>
                     </>
                   )}
@@ -727,4 +722,3 @@ export function useRecipeTerminal(terminalId: string) {
 }
 
 export default RecipeTerminalControls;
-

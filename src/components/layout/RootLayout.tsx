@@ -1,31 +1,30 @@
 import { Outlet, useLocation } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useLayoutEffect } from "react";
 import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
-import { TerminalProvider, useTerminalOptional } from "../../contexts/TerminalContext";
-import { hostApi, recipeApi, useInteractiveExecutions } from "../../lib/tauri-api";
+import { TerminalProvider } from "@/contexts/TerminalContext";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { getConfig, hostApi, recipeApi, useInteractiveExecutions } from "@/lib/tauri-api";
+import { applyAppTheme, getStoredAppTheme, DEFAULT_APP_THEME } from "@/lib/terminal-themes";
 
-// Page transition variants
 const pageTransitionVariants = {
   initial: {
     opacity: 0,
-    y: 6,
   },
   animate: {
     opacity: 1,
-    y: 0,
     transition: {
-      duration: 0.18,
-      ease: [0.25, 0.1, 0.25, 1],
+      duration: 0.1,
+      ease: "easeOut",
     },
   },
   exit: {
     opacity: 0,
-    y: -4,
     transition: {
-      duration: 0.12,
-      ease: [0.25, 0.1, 0.25, 1],
+      duration: 0.05,
+      ease: "easeIn",
     },
   },
 };
@@ -39,13 +38,25 @@ export function RootLayout() {
 }
 
 function RootLayoutShell() {
-  const terminal = useTerminalOptional();
-  const isCollapsed = terminal?.sidebarCollapsed ?? false;
   const location = useLocation();
 
-  // Determine if we should animate page transitions
-  // Terminal page manages its own state, so we skip animation there
   const isTerminalPage = location.pathname === "/terminal";
+
+  useLayoutEffect(() => {
+    applyAppTheme(getStoredAppTheme() ?? DEFAULT_APP_THEME);
+  }, []);
+
+  const configQuery = useQuery({
+    queryKey: ["config"],
+    queryFn: getConfig,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    const theme = configQuery.data?.terminal?.theme;
+    if (!theme) return;
+    applyAppTheme(theme);
+  }, [configQuery.data?.terminal?.theme]);
 
   const hostsQuery = useQuery({
     queryKey: ["hosts"],
@@ -63,27 +74,23 @@ function RootLayoutShell() {
   });
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden select-none cursor-default">
-      {/* Custom title bar with drag region */}
+    <SidebarProvider className="h-screen overflow-hidden select-none cursor-default flex-col">
       <TitleBar />
 
-      {/* Main content below title bar */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
           hosts={hostsQuery.data ?? []}
           recipes={recipesQuery.data ?? []}
           executions={executionsQuery.data ?? []}
           isLoadingHosts={hostsQuery.isLoading}
           isLoadingRecipes={recipesQuery.isLoading}
-          isCollapsed={isCollapsed}
         />
-        <main className="flex-1 overflow-hidden bg-background">
-          <AnimatePresence mode="wait">
-            {isTerminalPage ? (
-              // Terminal page - no animation wrapper to preserve xterm state
-              <Outlet />
-            ) : (
-              // Other pages - apply page transition animation
+
+        <SidebarInset className="min-h-0 overflow-hidden">
+          {isTerminalPage ? (
+            <Outlet />
+          ) : (
+            <AnimatePresence mode="popLayout">
               <motion.div
                 key={location.pathname}
                 variants={pageTransitionVariants}
@@ -94,10 +101,10 @@ function RootLayoutShell() {
               >
                 <Outlet />
               </motion.div>
-            )}
-          </AnimatePresence>
-        </main>
+            </AnimatePresence>
+          )}
+        </SidebarInset>
       </div>
-    </div>
+    </SidebarProvider>
   );
 }

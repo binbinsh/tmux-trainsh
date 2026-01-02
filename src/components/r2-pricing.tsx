@@ -1,20 +1,23 @@
 /**
  * Cloudflare R2 related components and utilities
- * 
+ *
  * Pricing reference: https://developers.cloudflare.com/r2/pricing/
  */
 
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-  Chip,
-  Input,
   Table,
   TableBody,
   TableCell,
-  TableColumn,
+  TableHead,
   TableHeader,
   TableRow,
-} from "@nextui-org/react";
-import { Button } from "./ui";
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { storageApi, usePricingSettings } from "../lib/tauri-api";
 import type { StorageUsage } from "../lib/types";
@@ -107,15 +110,16 @@ export function R2PricingCalculator() {
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium">R2 Storage Cost</div>
         <div className="flex items-center gap-2">
-          <Chip size="sm" variant="flat" color="primary">
+          <Badge variant="secondary" className="font-mono">
             {formatUsd(totalCost, 2)}/mo
-          </Chip>
+          </Badge>
           <Button
             size="sm"
-            variant="flat"
-            onPress={fetchUsages}
-            isLoading={loading}
+            variant="outline"
+            onClick={fetchUsages}
+            disabled={loading}
           >
+            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
             {usages.length > 0 ? "Refresh" : "Fetch Usage"}
           </Button>
         </div>
@@ -129,90 +133,119 @@ export function R2PricingCalculator() {
 
       {/* R2 Bucket List */}
       {usages.length > 0 && (
-        <Table removeWrapper aria-label="R2 bucket usage" classNames={{ base: "max-h-[160px] overflow-auto" }}>
-          <TableHeader>
-            <TableColumn>Bucket</TableColumn>
-            <TableColumn width={100}>Objects</TableColumn>
-            <TableColumn width={100}>Size</TableColumn>
-            <TableColumn width={80}>Cost</TableColumn>
-          </TableHeader>
-          <TableBody>
-            {usages.map((u) => {
-              const bucketCost = calculateR2BucketCost(u.used_gb);
-              return (
-                <TableRow key={u.storage_id}>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{u.storage_name}</span>
-                      <span className="text-xs text-foreground/50">{u.bucket_name}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {u.object_count?.toLocaleString() ?? "-"}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {formatBytes(u.used_bytes)}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-warning">
-                    {formatUsd(bucketCost, 2)}
-                  </TableCell>
+        <div className="doppio-card overflow-hidden">
+          <div className="max-h-[180px] overflow-auto">
+            <Table>
+              <TableHeader className="bg-muted/50">
+                <TableRow className="border-border text-xs text-muted-foreground hover:bg-muted/50">
+                  <TableHead className="px-3 py-2 text-left font-medium">Bucket</TableHead>
+                  <TableHead className="px-3 py-2 text-right font-medium w-[120px]">Objects</TableHead>
+                  <TableHead className="px-3 py-2 text-right font-medium w-[140px]">Size</TableHead>
+                  <TableHead className="px-3 py-2 text-right font-medium w-[110px]">Cost</TableHead>
                 </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+              </TableHeader>
+              <TableBody>
+                {usages.map((u) => {
+                  const bucketCost = calculateR2BucketCost(u.used_gb);
+                  return (
+                    <TableRow key={u.storage_id} className="hover:bg-muted/40 transition-colors border-border">
+                      <TableCell className="px-3 py-2">
+                        <div className="flex flex-col min-w-0">
+                          <span className="font-medium truncate">{u.storage_name}</span>
+                          <span className="text-xs text-muted-foreground truncate">{u.bucket_name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-3 py-2 text-right font-mono text-xs text-foreground/80">
+                        {u.object_count?.toLocaleString() ?? "-"}
+                      </TableCell>
+                      <TableCell className="px-3 py-2 text-right font-mono text-xs text-foreground/80">
+                        {formatBytes(u.used_bytes)}
+                      </TableCell>
+                      <TableCell className="px-3 py-2 text-right font-mono text-xs text-warning">
+                        {formatUsd(bucketCost, 2)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       )}
 
       {usages.length === 0 && !loading && (
-        <div className="text-xs text-foreground/50 text-center py-3 bg-content2 rounded-lg">
+        <div className="text-xs text-muted-foreground text-center py-3 bg-muted/50 rounded-lg border border-border">
           Click "Fetch Usage" to load R2 bucket sizes from Storage
         </div>
       )}
 
       {/* Manual ops input + summary */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="flex flex-col gap-1 p-3 bg-content2 rounded-lg">
-          <span className="text-xs text-foreground/60">Total Storage</span>
+        <div className="flex flex-col gap-1 p-3 bg-muted/50 rounded-lg border border-border">
+          <span className="text-xs text-muted-foreground">Total Storage</span>
           <span className="font-mono text-sm">{totalStorageGb.toFixed(2)} GB</span>
-          <span className="text-xs text-foreground/40">{totalObjects.toLocaleString()} objects</span>
+          <span className="text-xs text-muted-foreground">{totalObjects.toLocaleString()} objects</span>
         </div>
-        <Input labelPlacement="inside" label="Class A Ops (M/mo)"
-        type="number"
-        value={classAOps}
-        onValueChange={setClassAOps}
-        size="sm"
-        variant="bordered"
-        description={`Free: ${R2_PRICING.free_class_a_million}M`} />
-        <Input labelPlacement="inside" label="Class B Ops (M/mo)"
-        type="number"
-        value={classBOps}
-        onValueChange={setClassBOps}
-        size="sm"
-        variant="bordered"
-        description={`Free: ${R2_PRICING.free_class_b_million}M`} />
+        <div className="grid gap-1.5">
+          <Label htmlFor="r2-class-a">Class A Ops (M/mo)</Label>
+          <Input
+            id="r2-class-a"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step={0.1}
+            value={classAOps}
+            onChange={(e) => setClassAOps(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Free: {R2_PRICING.free_class_a_million}M
+          </p>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="r2-class-b">Class B Ops (M/mo)</Label>
+          <Input
+            id="r2-class-b"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step={0.1}
+            value={classBOps}
+            onChange={(e) => setClassBOps(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Free: {R2_PRICING.free_class_b_million}M
+          </p>
+        </div>
       </div>
 
       {/* Cost breakdown */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs">
-        <div className="flex justify-between p-2 bg-content2 rounded-lg">
-          <span className="text-foreground/60">Storage</span>
+        <div className="flex justify-between p-2 bg-muted/50 rounded-lg border border-border">
+          <span className="text-muted-foreground">Storage</span>
           <span className="font-mono">{formatUsd(storageCost, 2)}</span>
         </div>
-        <div className="flex justify-between p-2 bg-content2 rounded-lg">
-          <span className="text-foreground/60">Class A</span>
+        <div className="flex justify-between p-2 bg-muted/50 rounded-lg border border-border">
+          <span className="text-muted-foreground">Class A</span>
           <span className="font-mono">{formatUsd(classACost, 2)}</span>
         </div>
-        <div className="flex justify-between p-2 bg-content2 rounded-lg">
-          <span className="text-foreground/60">Class B</span>
+        <div className="flex justify-between p-2 bg-muted/50 rounded-lg border border-border">
+          <span className="text-muted-foreground">Class B</span>
           <span className="font-mono">{formatUsd(classBCost, 2)}</span>
         </div>
-        <div className="flex justify-between p-2 bg-success/10 rounded-lg">
-          <span className="text-foreground/60">Egress</span>
+        <div className="flex justify-between p-2 bg-success/10 rounded-lg border border-success/20">
+          <span className="text-muted-foreground">Egress</span>
           <span className="font-mono text-success">Free</span>
         </div>
       </div>
 
-      <p className="text-xs text-foreground/50">
+      {loading && usages.length === 0 && (
+        <div className="flex items-center justify-center py-2 text-xs text-muted-foreground gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Fetching usage...
+        </div>
+      )}
+
+      <p className={cn("text-xs text-muted-foreground", loading && "opacity-70")}>
         Storage: {formatUsd(R2_PRICING.storage_per_gb_month, 4)}/GB (10GB free) • Class A:{" "}
         {formatUsd(R2_PRICING.class_a_per_million, 2)}/M (1M free) • Class B:{" "}
         {formatUsd(R2_PRICING.class_b_per_million, 2)}/M (10M free) •{" "}

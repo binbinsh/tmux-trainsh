@@ -46,8 +46,6 @@ struct TermHandle {
 const OUTPUT_BUFFER_MAX_SIZE: usize = 1024 * 1024;
 /// PTY read buffer size (larger reads reduce syscalls)
 const READ_BUFFER_SIZE: usize = 64 * 1024;
-/// Minimum interval between event emissions (milliseconds) - ~30fps
-const EMIT_THROTTLE_MS: u64 = 16;
 /// tmux history limit for remote sessions (lines)
 const TMUX_HISTORY_LIMIT: usize = 200000;
 
@@ -363,48 +361,23 @@ fn spawn_pty_reader(
 ) {
   std::thread::spawn(move || {
     let mut buf = vec![0u8; READ_BUFFER_SIZE];
-    let mut pending_data = String::new();
-    let mut last_emit = std::time::Instant::now();
-    let throttle_duration = std::time::Duration::from_millis(EMIT_THROTTLE_MS);
 
     loop {
       let n = match reader.read(&mut buf) {
         Ok(0) => {
           eprintln!("[Terminal] {} PTY EOF for {}", label, id_data);
-          // Flush any pending data before exiting
-          if !pending_data.is_empty() {
-            emit_chunk(&app_handle, &id_data, &output_buf, &history, std::mem::take(&mut pending_data));
-          }
           break;
         }
         Ok(n) => n,
         Err(e) => {
           eprintln!("[Terminal] {} PTY read error for {}: {}", label, id_data, e);
-          // Flush any pending data before exiting
-          if !pending_data.is_empty() {
-            emit_chunk(&app_handle, &id_data, &output_buf, &history, std::mem::take(&mut pending_data));
-          }
           break;
         }
       };
 
-      let s = String::from_utf8_lossy(&buf[..n]);
-      pending_data.push_str(&s);
-
-      // Check if we should emit now:
-      // 1. Buffer is getting large (> 64KB)
-      // 2. Enough time has passed since last emit
-      // 3. Data contains a complete escape sequence that should be rendered (ends with newline or control char)
-      let elapsed = last_emit.elapsed();
-      let buffer_full = pending_data.len() >= READ_BUFFER_SIZE;
-      let throttle_passed = elapsed >= throttle_duration;
-
-      // For fast output (like animations), batch multiple frames together
-      // Only emit when throttle has passed OR buffer is full
-      if (throttle_passed || buffer_full) && !pending_data.is_empty() {
-        emit_chunk(&app_handle, &id_data, &output_buf, &history, std::mem::take(&mut pending_data));
-        last_emit = std::time::Instant::now();
-      }
+      // Emit immediately - no buffering or throttling for maximum responsiveness
+      let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+      emit_chunk(&app_handle, &id_data, &output_buf, &history, chunk);
     }
 
     eprintln!("[Terminal] Emitting term:exit for {}", id_data);

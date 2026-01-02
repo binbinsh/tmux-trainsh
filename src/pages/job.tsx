@@ -1,16 +1,6 @@
-import {
-  Card,
-  CardBody,
-  CardHeader,
-  Divider,
-  Input,
-  Spinner,
-  Switch,
-  Textarea
-} from "@nextui-org/react";
-import { Button } from "../components/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import {
   downloadRemoteDir,
   getConfig,
@@ -20,10 +10,24 @@ import {
   vastDestroyInstance,
   vastListInstances,
   vastRunJob
-} from "../lib/tauri-api";
-import type { RunVastJobInput } from "../lib/tauri-api";
-import type { GpuRow, RemoteJobMeta, VastInstance } from "../lib/types";
-import { DataTable, type ColumnDef } from "../components/shared/DataTable";
+} from "@/lib/tauri-api";
+import type { RunVastJobInput } from "@/lib/tauri-api";
+import type { GpuRow, RemoteJobMeta, VastInstance } from "@/lib/types";
+import { DataTable, type ColumnDef } from "@/components/shared/DataTable";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  Button,
+  Input,
+  Textarea,
+  Separator,
+  Switch,
+  Label,
+  Badge,
+} from "@/components/ui";
 
 export function JobPage() {
   const cfgQuery = useQuery({
@@ -229,209 +233,264 @@ export function JobPage() {
   ], []);
 
   return (
-    <div className="p-6">
-      <Card>
-        <CardHeader className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-lg font-semibold">Run</div>
-            <div className="text-sm text-foreground/70">上传项目 → tmux 启动训练 → 轮询日志/GPU → 完成后自动下载/销毁。</div>
-          </div>
-          <Button color="primary" isLoading={runMut.isPending} onPress={onRun}>
-            Run on Vast
-          </Button>
-        </CardHeader>
-        <Divider />
-        <CardBody className="gap-6">
-          {cfgQuery.isLoading ? (
-            <div className="flex items-center gap-3 py-4">
-              <Spinner size="sm" />
-              <div className="text-sm text-foreground/70">Loading config…</div>
+    <div className="doppio-page">
+      <div className="doppio-page-content space-y-6">
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle>Run</CardTitle>
+              <CardDescription>
+                上传项目 → tmux 启动训练 → 轮询日志/GPU → 完成后自动下载/销毁。
+              </CardDescription>
             </div>
-          ) : null}
+            <Button onClick={onRun} disabled={runMut.isPending}>
+              {runMut.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Running...</> : "Run on Vast"}
+            </Button>
+          </CardHeader>
+          <Separator />
+          <CardContent className="space-y-6 pt-4">
+            {cfgQuery.isLoading ? (
+              <div className="flex items-center gap-3 py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <div className="text-sm text-muted-foreground">Loading config…</div>
+              </div>
+            ) : null}
 
-          <section className="grid gap-3">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Input labelPlacement="inside" label="Project Dir"
-              value={projectDir}
-              onValueChange={setProjectDir}
-              placeholder="/path/to/your/project"
-              description="会自动排除 .git/node_modules/src-tauri/target 等；可通过 extra excludes 再排除。" />
-              <Input labelPlacement="inside" label="Instance ID"
-              value={instanceId}
-              onValueChange={setInstanceId}
-              placeholder="e.g. 123456"
-              description="从 Vast.ai Instances 页面复制（需要实例处于可 SSH 状态）。" />
-            </div>
-            {renderInstanceHint(selectedInstance)}
+            <section className="grid gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Project Dir</Label>
+                  <Input
+                    value={projectDir}
+                    onChange={(e) => setProjectDir(e.target.value)}
+                    placeholder="/path/to/your/project"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    会自动排除 .git/node_modules/src-tauri/target 等；可通过 extra excludes 再排除。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Instance ID</Label>
+                  <Input
+                    value={instanceId}
+                    onChange={(e) => setInstanceId(e.target.value)}
+                    placeholder="e.g. 123456"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    从 Vast.ai Instances 页面复制（需要实例处于可 SSH 状态）。
+                  </p>
+                </div>
+              </div>
+              {renderInstanceHint(selectedInstance)}
 
-            <Input labelPlacement="inside" label="Command"
-            value={command}
-            onValueChange={setCommand}
-            placeholder="python train.py --config configs/xxx.yaml"
-            description="会在远端用 bash -lc 执行，并通过 tee 写入 train.log。" />
+              <div className="space-y-2">
+                <Label>Command</Label>
+                <Input
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
+                  placeholder="python train.py --config configs/xxx.yaml"
+                />
+                <p className="text-xs text-muted-foreground">
+                  会在远端用 bash -lc 执行，并通过 tee 写入 train.log。
+                </p>
+              </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Input labelPlacement="inside" label="Workdir (optional)"
-              value={workdir}
-              onValueChange={setWorkdir}
-              placeholder="."
-              description="相对于项目根目录的子目录；留空=项目根目录。" />
-              <Input labelPlacement="inside" label="Output dir (optional)"
-              value={outputDir}
-              onValueChange={setOutputDir}
-              placeholder="outputs"
-              description="远端输出目录（留空则 job_dir/output；支持绝对路径或相对 workdir）。" />
-              <Input labelPlacement="inside" label="HF_HOME (optional)"
-              value={hfHome}
-              onValueChange={setHfHome}
-              placeholder={cfgQuery.data?.colab.hf_home ?? "~/.cache/huggingface"}
-              description="留空则使用 Settings → Colab 的 hf_home 或默认 ~/.cache/huggingface。" />
-            </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Workdir (optional)</Label>
+                  <Input
+                    value={workdir}
+                    onChange={(e) => setWorkdir(e.target.value)}
+                    placeholder="."
+                  />
+                  <p className="text-xs text-muted-foreground">相对于项目根目录的子目录；留空=项目根目录。</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Output dir (optional)</Label>
+                  <Input
+                    value={outputDir}
+                    onChange={(e) => setOutputDir(e.target.value)}
+                    placeholder="outputs"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    远端输出目录（留空则 job_dir/output；支持绝对路径或相对 workdir）。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>HF_HOME (optional)</Label>
+                  <Input
+                    value={hfHome}
+                    onChange={(e) => setHfHome(e.target.value)}
+                    placeholder={cfgQuery.data?.colab.hf_home ?? "~/.cache/huggingface"}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    留空则使用 Settings → Colab 的 hf_home 或默认 ~/.cache/huggingface。
+                  </p>
+                </div>
+              </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Switch isSelected={sync} onValueChange={setSync}>
-                Sync project (upload & extract)
-              </Switch>
-              <Input labelPlacement="inside" label="Extra excludes (optional)"
-              value={extraExcludes}
-              onValueChange={setExtraExcludes}
-              placeholder="checkpoints, wandb"
-              description="逗号/换行分隔，作为打包排除前缀。" />
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Switch isSelected={includeData} onValueChange={setIncludeData}>
-                Include data/
-              </Switch>
-              <Switch isSelected={includeModels} onValueChange={setIncludeModels}>
-                Include models/
-              </Switch>
-              <Switch isSelected={includeDotenv} onValueChange={setIncludeDotenv}>
-                Include .env (unsafe)
-              </Switch>
-            </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="flex items-center gap-2">
+                  <Switch checked={sync} onCheckedChange={setSync} id="sync-switch" />
+                  <Label htmlFor="sync-switch">Sync project (upload & extract)</Label>
+                </div>
+                <div className="space-y-2">
+                  <Label>Extra excludes (optional)</Label>
+                  <Input
+                    value={extraExcludes}
+                    onChange={(e) => setExtraExcludes(e.target.value)}
+                    placeholder="checkpoints, wandb"
+                  />
+                  <p className="text-xs text-muted-foreground">逗号/换行分隔，作为打包排除前缀。</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="flex items-center gap-2">
+                  <Switch checked={includeData} onCheckedChange={setIncludeData} id="include-data" />
+                  <Label htmlFor="include-data">Include data/</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch checked={includeModels} onCheckedChange={setIncludeModels} id="include-models" />
+                  <Label htmlFor="include-models">Include models/</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch checked={includeDotenv} onCheckedChange={setIncludeDotenv} id="include-dotenv" />
+                  <Label htmlFor="include-dotenv">Include .env (unsafe)</Label>
+                </div>
+              </div>
 
-            <Divider />
+              <Separator />
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Input labelPlacement="inside" label="Local download dir"
-              value={localDownloadDir}
-              onValueChange={setLocalDownloadDir}
-              placeholder="/path/to/save/outputs"
-              description="用于下载远端 output dir。" />
-              <Switch isSelected={autoDownload} onValueChange={setAutoDownload}>
-                Auto download on finish
-              </Switch>
-              <Switch isSelected={autoDestroy} onValueChange={setAutoDestroy}>
-                Auto destroy instance on finish
-              </Switch>
-            </div>
-          </section>
-
-          {(runError || meta) && (
-            <section className="grid gap-3">
-              <Divider />
-              {runError ? <div className="text-sm text-danger">Run failed: {runError}</div> : null}
-              {meta ? (
-                <>
-                  <div className="text-sm grid gap-1">
-                    <div>
-                      <span className="font-semibold">tmux session:</span>{" "}
-                      <span className="font-mono">{meta.remote.tmux_session}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold">job_dir:</span>{" "}
-                      <span className="font-mono text-xs">{meta.remote.job_dir}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold">workdir:</span>{" "}
-                      <span className="font-mono text-xs">{meta.remote.workdir}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold">log:</span>{" "}
-                      <span className="font-mono text-xs">{meta.remote.log_path}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold">output_dir:</span>{" "}
-                      <span className="font-mono text-xs">{meta.remote.output_dir ?? "-"}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold">meta:</span>{" "}
-                      <span className="font-mono text-xs">{meta.local_meta_path}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold">exit code:</span>{" "}
-                      {exitQuery.isLoading ? (
-                        "…"
-                      ) : exitQuery.data == null ? (
-                        <span className="text-warning">running</span>
-                      ) : (
-                        exitQuery.data
-                      )}
-                    </div>
-                    {autoStatus ? <div className="text-xs text-foreground/60">Auto: {autoStatus}</div> : null}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="flat"
-                      isDisabled={!meta.remote.output_dir || !localDownloadDir.trim()}
-                      onPress={async () => {
-                        if (!meta.remote.output_dir) return;
-                        await downloadRemoteDir({
-                          ssh: meta.ssh,
-                          remoteDir: meta.remote.output_dir,
-                          localDir: localDownloadDir.trim(),
-                          delete: false
-                        });
-                      }}
-                    >
-                      Download outputs
-                    </Button>
-                    <Button
-                      color="danger"
-                      variant="flat"
-                      onPress={async () => {
-                        const id = Number(instanceId);
-                        if (!Number.isFinite(id)) return;
-                        if (!confirm(`Destroy instance ${id}?`)) return;
-                        await vastDestroyInstance(id);
-                      }}
-                    >
-                      Destroy instance
-                    </Button>
-                    <Button variant="flat" onPress={() => logsQuery.refetch()}>
-                      Refresh logs
-                    </Button>
-                    <Button variant="flat" onPress={() => gpuQuery.refetch()}>
-                      Refresh GPU
-                    </Button>
-                  </div>
-
-                  <Divider />
-
-                  <div className="grid gap-3">
-                    <div className="text-sm font-semibold">GPU</div>
-                    <DataTable
-                      data={gpuRows}
-                      columns={gpuColumns}
-                      rowKey={(r) => `${r.index}-${r.name}`}
-                      emptyContent="No GPU data"
-                      compact
-                    />
-                  </div>
-
-                  <Divider />
-
-                  <div className="grid gap-3">
-                    <div className="text-sm font-semibold">Logs (tail -n 200)</div>
-                    <Textarea labelPlacement="inside" value={logsText} minRows={12} readOnly classNames={{ input: "font-mono text-xs" }} />
-                  </div>
-                </>
-              ) : null}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Local download dir</Label>
+                  <Input
+                    value={localDownloadDir}
+                    onChange={(e) => setLocalDownloadDir(e.target.value)}
+                    placeholder="/path/to/save/outputs"
+                  />
+                  <p className="text-xs text-muted-foreground">用于下载远端 output dir。</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch checked={autoDownload} onCheckedChange={setAutoDownload} id="auto-download" />
+                  <Label htmlFor="auto-download">Auto download on finish</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch checked={autoDestroy} onCheckedChange={setAutoDestroy} id="auto-destroy" />
+                  <Label htmlFor="auto-destroy">Auto destroy instance on finish</Label>
+                </div>
+              </div>
             </section>
-          )}
-        </CardBody>
-      </Card>
+
+            {(runError || meta) && (
+              <section className="grid gap-4">
+                <Separator />
+                {runError ? <div className="text-sm text-destructive">Run failed: {runError}</div> : null}
+                {meta ? (
+                  <>
+                    <div className="text-sm grid gap-1">
+                      <div>
+                        <span className="font-semibold">tmux session:</span>{" "}
+                        <span className="font-mono">{meta.remote.tmux_session}</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold">job_dir:</span>{" "}
+                        <span className="font-mono text-xs">{meta.remote.job_dir}</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold">workdir:</span>{" "}
+                        <span className="font-mono text-xs">{meta.remote.workdir}</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold">log:</span>{" "}
+                        <span className="font-mono text-xs">{meta.remote.log_path}</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold">output_dir:</span>{" "}
+                        <span className="font-mono text-xs">{meta.remote.output_dir ?? "-"}</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold">meta:</span>{" "}
+                        <span className="font-mono text-xs">{meta.local_meta_path}</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold">exit code:</span>{" "}
+                        {exitQuery.isLoading ? (
+                          "…"
+                        ) : exitQuery.data == null ? (
+                          <Badge variant="secondary">running</Badge>
+                        ) : (
+                          exitQuery.data
+                        )}
+                      </div>
+                      {autoStatus ? <div className="text-xs text-muted-foreground">Auto: {autoStatus}</div> : null}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        disabled={!meta.remote.output_dir || !localDownloadDir.trim()}
+                        onClick={async () => {
+                          if (!meta.remote.output_dir) return;
+                          await downloadRemoteDir({
+                            ssh: meta.ssh,
+                            remoteDir: meta.remote.output_dir,
+                            localDir: localDownloadDir.trim(),
+                            delete: false
+                          });
+                        }}
+                      >
+                        Download outputs
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        onClick={async () => {
+                          const id = Number(instanceId);
+                          if (!Number.isFinite(id)) return;
+                          if (!confirm(`Destroy instance ${id}?`)) return;
+                          await vastDestroyInstance(id);
+                        }}
+                      >
+                        Destroy instance
+                      </Button>
+                      <Button variant="outline" onClick={() => logsQuery.refetch()}>
+                        Refresh logs
+                      </Button>
+                      <Button variant="outline" onClick={() => gpuQuery.refetch()}>
+                        Refresh GPU
+                      </Button>
+                    </div>
+
+                    <Separator />
+
+                    <div className="grid gap-3">
+                      <div className="text-sm font-semibold">GPU</div>
+                      <DataTable
+                        data={gpuRows}
+                        columns={gpuColumns}
+                        rowKey={(r) => `${r.index}-${r.name}`}
+                        emptyContent="No GPU data"
+                        compact
+                      />
+                    </div>
+
+                    <Separator />
+
+                    <div className="grid gap-3">
+                      <div className="text-sm font-semibold">Logs (tail -n 200)</div>
+                      <Textarea
+                        value={logsText}
+                        readOnly
+                        className="font-mono text-xs min-h-[300px]"
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </section>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

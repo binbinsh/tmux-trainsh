@@ -1,35 +1,23 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Spinner } from "@nextui-org/react";
-import { Button } from "../ui";
-
-// ============================================================
-// Icons
-// ============================================================
-
-function IconEllipsis() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
-    </svg>
-  );
-}
-
-function IconSortAsc() {
-  return (
-    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
-    </svg>
-  );
-}
-
-function IconSortDesc() {
-  return (
-    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-    </svg>
-  );
-}
+import { MoreVertical, ChevronUp, ChevronDown, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 // ============================================================
 // Type Definitions
@@ -51,9 +39,9 @@ export type ColumnDef<T> = {
 export type RowAction<T> = {
   key: string;
   label: string;
-  onPress: (item: T) => void;
-  color?: "default" | "danger";
-  isDisabled?: (item: T) => boolean;
+  onClick: (item: T) => void;
+  variant?: "default" | "destructive";
+  disabled?: (item: T) => boolean;
 };
 
 type DataTableProps<T> = {
@@ -74,20 +62,14 @@ type DataTableProps<T> = {
 
 export type StatusChipProps = {
   label: string;
-  color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
-  variant?: "flat" | "solid" | "bordered" | "light" | "faded" | "shadow" | "dot";
+  variant?: "default" | "secondary" | "destructive" | "outline";
 };
 
-export function StatusChip({ label, color = "default", variant = "flat" }: StatusChipProps) {
+export function StatusChip({ label, variant = "default" }: StatusChipProps) {
   return (
-    <Chip
-      size="sm"
-      variant={variant}
-      color={color}
-      classNames={{ content: "text-xs font-medium px-0" }}
-    >
+    <Badge variant={variant} className="text-xs font-medium px-2">
       {label}
-    </Chip>
+    </Badge>
   );
 }
 
@@ -97,7 +79,7 @@ export function StatusChip({ label, color = "default", variant = "flat" }: Statu
 
 export type Tag = {
   label: string;
-  color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
+  variant?: "default" | "secondary" | "destructive" | "outline";
 };
 
 export function TagList({ tags, max = 3 }: { tags: Tag[]; max?: number }) {
@@ -107,20 +89,14 @@ export function TagList({ tags, max = 3 }: { tags: Tag[]; max?: number }) {
   return (
     <div className="flex flex-wrap gap-1">
       {displayTags.map((tag, idx) => (
-        <Chip
-          key={idx}
-          size="sm"
-          variant="flat"
-          color={tag.color || "default"}
-          classNames={{ content: "text-xs px-0" }}
-        >
+        <Badge key={idx} variant={tag.variant || "default"} className="text-xs px-2">
           {tag.label}
-        </Chip>
+        </Badge>
       ))}
       {remaining > 0 && (
-        <Chip size="sm" variant="flat" classNames={{ content: "text-xs px-0" }}>
+        <Badge variant="outline" className="text-xs px-2">
           +{remaining}
-        </Chip>
+        </Badge>
       )}
     </div>
   );
@@ -143,7 +119,7 @@ export function CellWithIcon({ icon, title, subtitle }: {
       <div className="min-w-0 flex-1">
         <div className="font-medium text-sm truncate">{title}</div>
         {subtitle && (
-          <div className="text-xs text-foreground/50 font-mono truncate">{subtitle}</div>
+          <div className="text-xs text-muted-foreground font-mono truncate">{subtitle}</div>
         )}
       </div>
     </div>
@@ -183,14 +159,14 @@ export function DataTable<T>({
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Spinner size="lg" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   if (data.length === 0) {
     return (
-      <div className="text-center py-12 text-foreground/50">
+      <div className="text-center py-12 text-muted-foreground">
         {emptyContent || "No data"}
       </div>
     );
@@ -200,57 +176,63 @@ export function DataTable<T>({
   const headerPadding = compact ? "px-3 py-2" : "px-4 py-2.5";
 
   return (
-    <div className={`doppio-card overflow-hidden ${className}`}>
+    <div className={cn("doppio-card overflow-hidden", className)}>
       <div className="overflow-x-auto">
-        <table className="w-full" style={{ tableLayout: "auto" }}>
-          <thead>
-            <tr className="border-b border-divider bg-content2/50">
+        <Table className="w-full" style={{ tableLayout: "auto" }}>
+          <TableHeader>
+            <TableRow className="border-border bg-muted/50 hover:bg-muted/50">
               {columns.map((col) => {
                 const shouldNowrap = col.nowrap !== false; // default true
                 return (
-                  <th
+                  <TableHead
                     key={col.key}
-                    className={`${headerPadding} text-left text-xs font-semibold text-foreground/60 tracking-wider ${shouldNowrap ? "whitespace-nowrap" : ""}`}
+                    className={cn(
+                      headerPadding,
+                      "text-left text-xs font-semibold text-muted-foreground tracking-wider",
+                      shouldNowrap && "whitespace-nowrap"
+                    )}
                     style={{
                       width: col.grow ? "auto" : col.width,
                       minWidth: col.minWidth,
                     }}
                   >
                     {col.sortable ? (
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors uppercase"
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto p-0 justify-start gap-1 text-xs font-semibold text-muted-foreground tracking-wider uppercase hover:bg-transparent hover:text-foreground"
                         onClick={() => handleSort(col.key)}
                       >
                         {col.header}
                         {sortKey === col.key && (
-                          sortDir === "asc" ? <IconSortAsc /> : <IconSortDesc />
+                          sortDir === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
                         )}
-                      </button>
+                      </Button>
                     ) : (
                       <span className="uppercase">{col.header}</span>
                     )}
-                  </th>
+                  </TableHead>
                 );
               })}
               {hasActions && (
-                <th className={`${headerPadding} w-10`} />
+                <TableHead className={cn(headerPadding, "w-10")} />
               )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-divider">
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {data.map((item, index) => {
               const key = rowKey(item);
               const isHovered = hoveredRow === key;
               const isClickable = !!onRowClick;
 
               return (
-                <tr
+                <TableRow
                   key={key}
-                  className={`
-                    transition-colors
-                    ${isClickable ? "cursor-pointer" : ""}
-                    ${isHovered ? "bg-primary/5" : "hover:bg-content2/50"}
-                  `}
+                  className={cn(
+                    "group transition-colors border-border",
+                    isClickable && "cursor-pointer",
+                    isHovered ? "bg-primary/5" : "hover:bg-muted/50"
+                  )}
                   onClick={() => onRowClick?.(item)}
                   onMouseEnter={() => setHoveredRow(key)}
                   onMouseLeave={() => setHoveredRow(null)}
@@ -258,55 +240,60 @@ export function DataTable<T>({
                   {columns.map((col) => {
                     const shouldNowrap = col.nowrap !== false; // default true
                     return (
-                      <td
+                      <TableCell
                         key={col.key}
-                        className={`${cellPadding} text-sm ${shouldNowrap ? "whitespace-nowrap" : ""}`}
+                        className={cn(
+                          cellPadding,
+                          "text-sm",
+                          shouldNowrap && "whitespace-nowrap"
+                        )}
                         style={{
                           width: col.grow ? "auto" : col.width,
                           minWidth: col.minWidth,
                         }}
                       >
                         {col.render(item, index)}
-                      </td>
+                      </TableCell>
                     );
                   })}
                   {hasActions && (
-                    <td
-                      className={`${cellPadding} w-10`}
+                    <TableCell
+                      className={cn(cellPadding, "w-10")}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <Dropdown>
-                        <DropdownTrigger>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
                           <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            className={`opacity-0 group-hover:opacity-100 transition-opacity ${isHovered ? "opacity-100" : ""}`}
+                            size="icon"
+                            variant="ghost"
+                            className={cn(
+                              "h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity",
+                              isHovered && "opacity-100"
+                            )}
                           >
-                            <IconEllipsis />
+                            <MoreVertical className="h-4 w-4" />
                           </Button>
-                        </DropdownTrigger>
-                        <DropdownMenu aria-label="Row actions">
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
                           {actions.map((action) => (
-                            <DropdownItem
+                            <DropdownMenuItem
                               key={action.key}
-                              onPress={() => action.onPress(item)}
-                              className={action.color === "danger" ? "text-danger" : ""}
-                              color={action.color}
-                              isDisabled={action.isDisabled?.(item)}
+                              onClick={() => action.onClick(item)}
+                              className={action.variant === "destructive" ? "text-destructive" : ""}
+                              disabled={action.disabled?.(item)}
                             >
                               {action.label}
-                            </DropdownItem>
+                            </DropdownMenuItem>
                           ))}
-                        </DropdownMenu>
-                      </Dropdown>
-                    </td>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
                   )}
-                </tr>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
@@ -319,34 +306,30 @@ export function DataTable<T>({
 export function ActionButton({
   label,
   icon,
-  color = "primary",
-  variant = "flat",
-  onPress,
-  isDisabled,
+  variant = "default",
+  onClick,
+  disabled,
   isLoading,
   size = "sm",
 }: {
   label?: string;
   icon?: ReactNode;
-  color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
-  variant?: "flat" | "solid" | "bordered" | "light" | "faded" | "shadow" | "ghost";
-  onPress: () => void;
-  isDisabled?: boolean;
+  variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
+  onClick: () => void;
+  disabled?: boolean;
   isLoading?: boolean;
-  size?: "sm" | "md";
+  size?: "sm" | "default" | "lg" | "icon";
 }) {
   return (
     <Button
       size={size}
-      color={color}
       variant={variant}
-      onPress={onPress}
-      isDisabled={isDisabled}
-      isLoading={isLoading}
-      isIconOnly={!label && !!icon}
+      onClick={onClick}
+      disabled={disabled || isLoading}
     >
-      {icon && !label && icon}
-      {label && (
+      {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+      {!isLoading && icon && !label && icon}
+      {!isLoading && label && (
         <>
           {icon && <span className="mr-1">{icon}</span>}
           {label}

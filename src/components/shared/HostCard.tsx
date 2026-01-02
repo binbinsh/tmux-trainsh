@@ -1,29 +1,22 @@
 import { useState, type ReactNode } from "react";
-import { Tooltip } from "@nextui-org/react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Button } from "../ui";
-import { AppIcon } from "../AppIcon";
-import type { Host, VastInstance } from "../../lib/types";
-import { getGpuModelShortName } from "../../lib/gpu";
-
-// Icons
-function IconEdit({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-    </svg>
-  );
-}
+import { Edit2 } from "lucide-react";
+import { motion } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { AppIcon } from "@/components/AppIcon";
+import type { Host, VastInstance } from "@/lib/types";
+import { getGpuModelShortName } from "@/lib/gpu";
+import { cn } from "@/lib/utils";
 
 // Small tag component
-function Tag({ children, color = "default" }: { children: ReactNode; color?: "default" | "primary" | "warning" }) {
+function Tag({ children, variant = "default" }: { children: ReactNode; variant?: "default" | "primary" | "warning" }) {
   const colors = {
-    default: "bg-foreground/10 text-foreground/60",
-    primary: "bg-primary/15 text-primary",
-    warning: "bg-warning/15 text-warning",
+    default: "bg-muted/40 text-muted-foreground",
+    primary: "bg-muted/40 text-muted-foreground",
+    warning: "bg-muted/40 text-muted-foreground",
   };
   return (
-    <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium whitespace-nowrap ${colors[color]}`}>
+    <span className={cn("inline-flex items-center px-1 py-px rounded text-[10px] font-normal whitespace-nowrap", colors[variant])}>
       {children}
     </span>
   );
@@ -34,7 +27,7 @@ type HostRowProps = {
   icon: ReactNode;
   title: string;
   subtitle?: string;
-  rightTags?: { label: string; color?: "default" | "primary" | "warning" }[];
+  rightTags?: { label: string; variant?: "default" | "primary" | "warning" }[];
   isOnline?: boolean;
   isSelected?: boolean;
   onClick?: () => void;
@@ -60,38 +53,29 @@ export function HostRow({
   const [isHovered, setIsHovered] = useState(false);
 
   return (
-    <motion.div
-      className={`
-        termius-host-row
-        ${isSelected ? "termius-host-row-selected" : ""}
-        ${isHovered ? "termius-host-row-hover" : ""}
-        ${className}
-      `}
+    <div
+      className={cn(
+        "termius-host-row",
+        isSelected && "termius-host-row-selected",
+        isHovered && "termius-host-row-hover",
+        className
+      )}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
-      whileHover={{ scale: 1.005 }}
-      whileTap={{ scale: 0.995 }}
-      transition={{ type: "spring", stiffness: 400, damping: 25 }}
     >
       {/* Icon with status dot */}
       <div className="relative flex-shrink-0">
-        <motion.div
-          className="w-8 h-8 rounded-lg bg-content3 flex items-center justify-center"
-          whileHover={{ scale: 1.05 }}
-          transition={{ type: "spring", stiffness: 400, damping: 20 }}
-        >
+        <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
           {icon}
-        </motion.div>
+        </div>
         {/* Status dot */}
-        <motion.span
-          className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-content2
-            ${isOnline ? "bg-success" : "bg-foreground/30"}
-          `}
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: "spring", stiffness: 500, damping: 20, delay: 0.1 }}
+        <span
+          className={cn(
+            "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-muted",
+            isOnline ? "bg-success" : "bg-foreground/30"
+          )}
         />
       </div>
 
@@ -103,59 +87,40 @@ export function HostRow({
         )}
       </div>
 
-      {/* Right side - tags and edit button */}
-      <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
-        <AnimatePresence mode="wait">
-          {rightTags && rightTags.length > 0 && !isHovered && (
-            <motion.div
-              key="tags"
-              className="flex flex-col items-end gap-0.5"
-              initial={{ opacity: 0, x: 10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -10 }}
-              transition={{ duration: 0.15 }}
-            >
-              {rightTags.map((tag, i) => (
-                <Tag key={i} color={tag.color}>{tag.label}</Tag>
-              ))}
-            </motion.div>
-          )}
-          {hoverActions && isHovered ? (
-            <motion.div
-              key="hover-actions"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 10 }}
-              transition={{ duration: 0.15 }}
-            >
-              {hoverActions}
-            </motion.div>
-          ) : onEdit && isHovered ? (
-            <motion.div
-              key="edit-button"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 10 }}
-              transition={{ duration: 0.15 }}
-            >
-              <Tooltip content="Edit">
-                <Button
-                  size="sm"
-                  variant="light"
-                  isIconOnly
-                  className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                  onPress={() => {
-                    onEdit();
-                  }}
-                >
-                  <IconEdit className="w-3.5 h-3.5" />
-                </Button>
+      {/* Right side - tags or hover actions (fixed size container) */}
+      <div className="flex items-center justify-end ml-2 flex-shrink-0 min-w-[80px]">
+        {isHovered && (hoverActions || onEdit) ? (
+          <div className="flex items-center">
+            {hoverActions ? (
+              hoverActions
+            ) : onEdit ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100 p-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit();
+                    }}
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Edit</TooltipContent>
               </Tooltip>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex flex-col items-end gap-0.5 max-h-[36px] overflow-hidden">
+            {rightTags && rightTags.length > 0 && rightTags.slice(0, 2).map((tag, i) => (
+              <Tag key={i} variant={tag.variant}>{tag.label}</Tag>
+            ))}
+          </div>
+        )}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -179,7 +144,7 @@ export function SavedHostRow({
   const sshAddress = host.ssh ? `${host.ssh.user}@${host.ssh.host}:${host.ssh.port}` : undefined;
 
   // Build right tags array (GPU info from system_info.gpu_list)
-  const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+  const rightTags: { label: string; variant?: "default" | "primary" | "warning" }[] = [];
   const gpuList = host.system_info?.gpu_list;
   if (gpuList && gpuList.length > 0) {
     // Group GPUs by name
@@ -191,7 +156,7 @@ export function SavedHostRow({
     // Create labels
     for (const [name, count] of gpuCounts) {
       const label = count > 1 ? `${count}x ${name}` : name;
-      rightTags.push({ label, color: "primary" });
+      rightTags.push({ label, variant: "default" });
     }
   }
 
@@ -237,12 +202,12 @@ export function VastInstanceRow({
   const title = instance.label?.trim() || `vast #${instance.id}`;
 
   // Build right tags array (GPU + price)
-  const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+  const rightTags: { label: string; variant?: "default" | "primary" | "warning" }[] = [];
   if (gpuLabel) {
-    rightTags.push({ label: gpuLabel, color: "primary" });
+    rightTags.push({ label: gpuLabel, variant: "default" });
   }
   if (costLabel) {
-    rightTags.push({ label: costLabel, color: "warning" });
+    rightTags.push({ label: costLabel, variant: "warning" });
   }
 
   return (
@@ -268,7 +233,7 @@ type HostListProps = {
 
 export function HostList({ children, className = "" }: HostListProps) {
   return (
-    <div className={`termius-host-list ${className}`}>
+    <div className={cn("termius-host-list", className)}>
       {children}
     </div>
   );
@@ -285,7 +250,7 @@ type HostSectionProps = {
 
 export function HostSection({ title, count, actions, children, className = "" }: HostSectionProps) {
   return (
-    <div className={`mb-4 ${className}`}>
+    <div className={cn("mb-4", className)}>
       <div className="flex items-center justify-between mb-2 px-1">
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-semibold text-foreground/40 uppercase tracking-wider">
@@ -322,7 +287,7 @@ export function EmptyHostState({ icon, title, description, action }: EmptyHostSt
     >
       {icon && (
         <motion.div
-          className="w-10 h-10 rounded-lg bg-content2 flex items-center justify-center mb-3 text-foreground/40"
+          className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mb-3 text-foreground/40"
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.1, type: "spring", stiffness: 300, damping: 20 }}

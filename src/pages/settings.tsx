@@ -1,28 +1,26 @@
+import { Button } from "@/components/ui";
+import { Card, CardContent } from "@/components/ui";
+import { Input } from "@/components/ui";
+import { Label } from "@/components/ui";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui";
+import { Skeleton } from "@/components/ui";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui";
+import { Loader2 } from "lucide-react";
+import { Terminal } from "lucide-react";
 import {
-  Card,
-  CardBody,
-  CardHeader,
-  Input,
-  Link,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Select,
-  SelectItem,
-  Skeleton,
-  Spinner,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui";
+import {
   Tooltip,
-  useDisclosure
-} from "@nextui-org/react";
-import { Button } from "../components/ui";
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui";
 import { AppIcon } from "../components/AppIcon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -44,8 +42,11 @@ import {
   useUpdateColabSubscription,
   useUpdateDisplayCurrency
 } from "../lib/tauri-api";
-import type { ColabGpuPricing, Currency, SecretMeta, SecretSuggestion, TrainshConfig } from "../lib/types";
+import type { ColabGpuPricing, Currency, SecretMeta, SecretSuggestion, TrainshConfig, AppThemeName } from "../lib/types";
 import { CURRENCIES, formatPriceWithRates, getCurrencySymbol } from "../lib/currency";
+import { APP_THEME_OPTIONS, DEFAULT_APP_THEME, applyAppTheme } from "../lib/terminal-themes";
+import { cn } from "@/lib/utils";
+import { Eye, EyeOff, X, Check } from "lucide-react";
 
 // ============================================================
 // Icons
@@ -100,75 +101,71 @@ function IconTrash({ className }: { className?: string }) {
   );
 }
 
-function IconEye({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-    </svg>
-  );
-}
-
-function IconEyeOff({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-    </svg>
-  );
-}
-
-function IconX({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
-}
-
 // ============================================================
 // Section Card Component - Using unified doppio-card style
 // ============================================================
 
-type SectionIconType = "settings" | "server" | "beaker" | "key";
+type SectionId = "general" | "vast" | "scamalytics" | "colab" | "secrets";
 
-function SectionCard({
-  title,
-  subtitle,
-  icon,
-  children,
-  actions
-}: {
+type SectionConfig = {
+  id: SectionId;
   title: string;
-  subtitle?: string;
+  subtitle: string;
   icon: SectionIconType;
-  children: React.ReactNode;
-  actions?: React.ReactNode;
+};
+
+const SECTIONS: SectionConfig[] = [
+  { id: "general", title: "General", subtitle: "Appearance and preferences", icon: "settings" },
+  { id: "vast", title: "Vast.ai", subtitle: "API and SSH settings", icon: "server" },
+  { id: "scamalytics", title: "Scamalytics", subtitle: "IP risk intelligence", icon: "key" },
+  { id: "colab", title: "Google Colab", subtitle: "Subscription and GPU pricing", icon: "beaker" },
+  { id: "secrets", title: "Secrets", subtitle: "SSH keys and tokens", icon: "key" },
+];
+
+type SectionIconType = "settings" | "server" | "beaker" | "key" | "terminal";
+
+function IconTerminal({ className }: { className?: string }) {
+  return <Terminal className={className} />;
+}
+
+function SectionNavItem({
+  section,
+  isSelected,
+  onClick,
+}: {
+  section: SectionConfig;
+  isSelected: boolean;
+  onClick: () => void;
 }) {
   const IconComponent = {
     settings: IconSettings,
     server: IconServer,
     beaker: IconBeaker,
     key: IconKey,
-  }[icon];
+    terminal: IconTerminal,
+  }[section.icon];
 
   return (
-    <div className="doppio-card">
-      <div className="flex justify-between items-start gap-3 p-4 border-b border-divider">
-        <div className="flex gap-3 items-center">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <IconComponent className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h3 className="text-base font-semibold">{title}</h3>
-            {subtitle && <p className="text-xs text-foreground/50">{subtitle}</p>}
-          </div>
-        </div>
-        {actions}
+    <button
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors",
+        isSelected
+          ? "bg-primary/10 text-primary"
+          : "hover:bg-muted text-foreground/70 hover:text-foreground"
+      )}
+    >
+      <div className={cn(
+        "w-9 h-9 rounded-lg flex items-center justify-center shrink-0",
+        isSelected ? "bg-primary/20" : "bg-muted"
+      )}>
+        <IconComponent className="w-4 h-4" />
       </div>
-      <div className="p-4">
-        {children}
+      <div className="min-w-0">
+        <div className="text-sm font-medium truncate">{section.title}</div>
+        <div className="text-xs text-foreground/50 truncate">{section.subtitle}</div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -199,6 +196,7 @@ export function SettingsPage() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [isColabDirty, setIsColabDirty] = useState(false);
   const colabSaveRef = useRef<null | (() => Promise<void>)>(null);
+  const [selectedSection, setSelectedSection] = useState<SectionId>("general");
 
   const sshKeyOptions = useMemo(() => {
     const secrets = sshSecretKeysQuery.data ?? [];
@@ -290,25 +288,27 @@ export function SettingsPage() {
               <Skeleton className="h-9 w-24 rounded-lg" />
             </div>
           </div>
-          {/* Skeleton cards */}
-          <div className="space-y-6">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="doppio-card">
-                <div className="flex justify-between items-start gap-3 p-4 border-b border-divider">
-                  <div className="flex gap-3 items-center">
-                    <Skeleton className="w-10 h-10 rounded-xl" />
-                    <div>
-                      <Skeleton className="h-5 w-32 rounded-lg mb-1" />
-                      <Skeleton className="h-3 w-48 rounded-lg" />
-                    </div>
+          {/* Skeleton two-column layout */}
+          <div className="flex gap-6 flex-1 min-h-0">
+            {/* Left sidebar skeleton */}
+            <div className="w-64 shrink-0 space-y-2">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="flex items-center gap-3 p-3">
+                  <Skeleton className="w-9 h-9 rounded-lg shrink-0" />
+                  <div className="flex-1">
+                    <Skeleton className="h-4 w-20 rounded mb-1" />
+                    <Skeleton className="h-3 w-28 rounded" />
                   </div>
                 </div>
-                <div className="p-4 space-y-4">
-                  <Skeleton className="h-12 w-full rounded-lg" />
-                  <Skeleton className="h-12 w-full rounded-lg" />
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+            {/* Right content skeleton */}
+            <div className="flex-1 doppio-card p-6 space-y-4">
+              <Skeleton className="h-6 w-32 rounded-lg" />
+              <Skeleton className="h-10 w-full rounded-lg" />
+              <Skeleton className="h-10 w-full rounded-lg" />
+              <Skeleton className="h-10 w-2/3 rounded-lg" />
+            </div>
           </div>
         </div>
       </div>
@@ -319,13 +319,13 @@ export function SettingsPage() {
     return (
       <div className="h-full p-6">
         <Card>
-          <CardBody>
-            <div className="text-sm text-danger">
+          <CardContent className="pt-6">
+            <div className="text-sm text-destructive">
               Failed to load config: {(cfgQuery.error as Error)?.message ?? "Unknown error"}
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
-            </div>
+      </div>
     );
   }
 
@@ -341,211 +341,265 @@ export function SettingsPage() {
             <div className="flex items-center gap-3">
               {savedAt && !saveError && (
                 <span className="text-xs text-success flex items-center gap-1">
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                  </svg>
+                  <Check className="w-3 h-3" />
                   Saved {savedAt}
                 </span>
               )}
               {saveError && (
-                <span className="text-xs text-danger">Failed: {saveError}</span>
+                <span className="text-xs text-destructive">Failed: {saveError}</span>
               )}
               <Button
                 size="sm"
-                variant="flat"
-                onPress={() => fetchRates.mutate()}
-                isLoading={fetchRates.isPending}
+                variant="secondary"
+                onClick={() => fetchRates.mutate()}
+                disabled={fetchRates.isPending}
               >
+                {fetchRates.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Refresh Rates
               </Button>
               <Button
                 size="sm"
-                color="primary"
-                isLoading={saving}
-                isDisabled={!draft || saving || !isDirty}
-                onPress={onSave}
+                onClick={onSave}
+                disabled={!draft || saving || !isDirty}
               >
+                {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Save
               </Button>
             </div>
           </div>
         </div>
 
-        <div className="space-y-6">
-
-        <SectionCard icon="settings" title="General" subtitle="Default paths, preferences, and currency">
-          <div className="space-y-4">
-            <Input labelPlacement="inside" label="HuggingFace Cache (HF_HOME)"
-            value={draft.colab.hf_home ?? ""}
-            onValueChange={(v) =>
-              setDraft({ ...draft, colab: { ...draft.colab, hf_home: v.trim() ? v : null } })
-            }
-            placeholder="~/.cache/huggingface"
-            description="HF_HOME"
-            size="sm"
-            variant="flat"
-            classNames={{ inputWrapper: "bg-content2" }} />
-            <DisplayCurrencySection />
+        {/* Two-column layout */}
+        <div className="flex gap-6 flex-1 min-h-0">
+          {/* Left sidebar - section navigation */}
+          <div className="w-64 shrink-0 space-y-1">
+            {SECTIONS.map((section) => (
+              <SectionNavItem
+                key={section.id}
+                section={section}
+                isSelected={selectedSection === section.id}
+                onClick={() => setSelectedSection(section.id)}
+              />
+            ))}
           </div>
-        </SectionCard>
 
-        <SectionCard icon="server" title="Vast.ai" subtitle="API key, SSH settings, and pricing rates">
-          <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input labelPlacement="inside" label="API Key"
-                  type="password"
-                  value={draft.vast.api_key ?? ""}
-                  onValueChange={(v) =>
-                                    setDraft({ ...draft, vast: { ...draft.vast, api_key: v.trim() ? v : null } })
-                  }
-                                  description="API key"
-                  size="sm"
-                                  variant="flat"
-                                  classNames={{ inputWrapper: "bg-content2" }} />
-                  <Input labelPlacement="inside" label="Console URL"
-                  value={draft.vast.url}
-                  onValueChange={(v) =>
-                                    setDraft({ ...draft, vast: { ...draft.vast, url: v } })
-                  }
-                  size="sm"
-                                  variant="flat"
-                                  classNames={{ inputWrapper: "bg-content2" }} />
+          {/* Right panel - section content */}
+          <div className="flex-1 doppio-card p-6 overflow-auto">
+            {selectedSection === "general" && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold">General</h2>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="app-theme">Appearance</Label>
+                    <Select
+                      value={draft.terminal?.theme ?? DEFAULT_APP_THEME}
+                      onValueChange={(value) => {
+                        const themeName = value as AppThemeName;
+                        setDraft({
+                          ...draft,
+                          terminal: { ...draft.terminal, theme: themeName }
+                        });
+                        // Apply theme immediately for preview
+                        applyAppTheme(themeName);
+                      }}
+                    >
+                      <SelectTrigger id="app-theme">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {APP_THEME_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            <div className="flex flex-col">
+                              <span>{opt.label}</span>
+                              <span className="text-xs text-foreground/50">{opt.description}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-foreground/50">
+                      Choose between light and dark mode. Affects the entire application.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hf-home">HuggingFace Cache (HF_HOME)</Label>
+                    <Input
+                      id="hf-home"
+                      value={draft.colab.hf_home ?? ""}
+                      onChange={(e) =>
+                        setDraft({ ...draft, colab: { ...draft.colab, hf_home: e.target.value.trim() ? e.target.value : null } })
+                      }
+                      placeholder="~/.cache/huggingface"
+                    />
+                  </div>
+                  <DisplayCurrencySection />
                 </div>
-
-            <VastPricingSection />
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Input labelPlacement="inside" label="SSH User"
-              value={draft.vast.ssh_user}
-              onValueChange={(v) =>
-              setDraft({ ...draft, vast: { ...draft.vast, ssh_user: v || "root" } })
-              }
-              placeholder="root"
-              size="sm"
-                                variant="flat"
-                                classNames={{ inputWrapper: "bg-content2" }} />
-              <Select
-                labelPlacement="inside"
-                label="SSH Connection"
-                selectedKeys={[draft.vast.ssh_connection_preference ?? "proxy"]}
-                onSelectionChange={(keys) => {
-                  const selected = (Array.from(keys)[0] as string | undefined) ?? "proxy";
-                  setDraft({
-                    ...draft,
-                    vast: { ...draft.vast, ssh_connection_preference: selected === "direct" ? "direct" : "proxy" }
-                  });
-                }}
-                size="sm"
-                variant="flat"
-                classNames={{ trigger: "bg-content2" }}
-              >
-                <SelectItem key="proxy" textValue="Proxy">
-                  Proxy (sshX.vast.ai)
-                </SelectItem>
-                <SelectItem key="direct" textValue="Direct">
-                  Direct (public IP + direct port)
-                </SelectItem>
-              </Select>
-              <Select
-                labelPlacement="inside"
-                label="SSH Key"
-                selectedKeys={draft.vast.ssh_key_path ? [draft.vast.ssh_key_path] : []}
-                onSelectionChange={(keys) => {
-                  const selected = Array.from(keys)[0] as string | undefined;
-                  setDraft({
-                    ...draft,
-                    vast: { ...draft.vast, ssh_key_path: selected?.trim() ? selected : null }
-                  });
-                }}
-                size="sm"
-                variant="flat"
-                classNames={{ trigger: "bg-content2" }}
-                isDisabled={
-                  (sshKeysQuery.isLoading || sshSecretKeysQuery.isLoading)
-                    ? false
-                    : sshKeyOptions.length === 0
-                }
-                placeholder={
-                  sshKeysQuery.isLoading || sshSecretKeysQuery.isLoading
-                    ? "Loading..."
-                    : "Select a key (secret or ~/.ssh)"
-                }
-              >
-                {sshKeyOptions.map((value) => {
-                  const isSecret = value.startsWith("${secret:") && value.endsWith("}");
-                  const label = isSecret ? value.slice("${secret:".length, -1) : (value.split("/").slice(-1)[0] ?? value);
-                  return (
-                    <SelectItem key={value} textValue={label}>
-                      <span className="font-mono text-sm">{label}</span>
-                      <span className="text-foreground/50 text-xs ml-2">
-                        {isSecret ? "secret" : value}
-                      </span>
-                    </SelectItem>
-                  );
-                })}
-              </Select>
-            </div>
               </div>
-        </SectionCard>
+            )}
 
-        <SectionCard icon="key" title="Scamalytics" subtitle="IP risk intelligence credentials">
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                labelPlacement="inside"
-                label="User"
-                value={draft.scamalytics.user ?? ""}
-                onValueChange={(v) =>
-                  setDraft({ ...draft, scamalytics: { ...draft.scamalytics, user: v.trim() ? v : null } })
-                }
-                description="Account ID"
-                size="sm"
-                variant="flat"
-                classNames={{ inputWrapper: "bg-content2" }}
-              />
-              <Input
-                labelPlacement="inside"
-                label="API Key"
-                type="password"
-                value={draft.scamalytics.api_key ?? ""}
-                onValueChange={(v) =>
-                  setDraft({ ...draft, scamalytics: { ...draft.scamalytics, api_key: v.trim() ? v : null } })
-                }
-                description="API key"
-                size="sm"
-                variant="flat"
-                classNames={{ inputWrapper: "bg-content2" }}
-              />
-            </div>
-            <p className="text-xs text-foreground/60">
-              Need an API key?{" "}
-              <Link
-                href={SCAMALYTICS_SIGNUP_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                color="primary"
-                size="sm"
-                onClick={handleOpenScamalyticsSignup}
-              >
-                Register for a Scamalytics API key
-              </Link>
-            </p>
-          </div>
-        </SectionCard>
+            {selectedSection === "vast" && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold">Vast.ai</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="vast-api-key">API Key</Label>
+                    <Input
+                      id="vast-api-key"
+                      type="password"
+                      value={draft.vast.api_key ?? ""}
+                      onChange={(e) =>
+                        setDraft({ ...draft, vast: { ...draft.vast, api_key: e.target.value.trim() ? e.target.value : null } })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="vast-url">Console URL</Label>
+                    <Input
+                      id="vast-url"
+                      value={draft.vast.url}
+                      onChange={(e) =>
+                        setDraft({ ...draft, vast: { ...draft.vast, url: e.target.value } })
+                      }
+                    />
+                  </div>
+                </div>
+                <VastPricingSection />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-user">SSH User</Label>
+                    <Input
+                      id="ssh-user"
+                      value={draft.vast.ssh_user}
+                      onChange={(e) =>
+                        setDraft({ ...draft, vast: { ...draft.vast, ssh_user: e.target.value || "root" } })
+                      }
+                      placeholder="root"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-connection">SSH Connection</Label>
+                    <Select
+                      value={draft.vast.ssh_connection_preference ?? "proxy"}
+                      onValueChange={(value) => {
+                        setDraft({
+                          ...draft,
+                          vast: { ...draft.vast, ssh_connection_preference: value === "direct" ? "direct" : "proxy" }
+                        });
+                      }}
+                    >
+                      <SelectTrigger id="ssh-connection">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="proxy">Proxy (sshX.vast.ai)</SelectItem>
+                        <SelectItem value="direct">Direct (public IP + direct port)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-key">SSH Key</Label>
+                    <Select
+                      value={draft.vast.ssh_key_path || ""}
+                      onValueChange={(value) => {
+                        setDraft({
+                          ...draft,
+                          vast: { ...draft.vast, ssh_key_path: value?.trim() ? value : null }
+                        });
+                      }}
+                      disabled={
+                        (sshKeysQuery.isLoading || sshSecretKeysQuery.isLoading)
+                          ? false
+                          : sshKeyOptions.length === 0
+                      }
+                    >
+                      <SelectTrigger id="ssh-key">
+                        <SelectValue placeholder={
+                          sshKeysQuery.isLoading || sshSecretKeysQuery.isLoading
+                            ? "Loading..."
+                            : "Select a key (secret or ~/.ssh)"
+                        } />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sshKeyOptions.map((value) => {
+                          const isSecret = value.startsWith("${secret:") && value.endsWith("}");
+                          const label = isSecret ? value.slice("${secret:".length, -1) : (value.split("/").slice(-1)[0] ?? value);
+                          return (
+                            <SelectItem key={value} value={value}>
+                              <span className="font-mono text-sm">{label}</span>
+                              <span className="text-foreground/50 text-xs ml-2">
+                                {isSecret ? "secret" : value}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            )}
 
-        <SectionCard icon="beaker" title="Google Colab" subtitle="Subscription pricing and GPU compute unit rates">
+            {selectedSection === "scamalytics" && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold">Scamalytics</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="scamalytics-user">Account ID</Label>
+                    <Input
+                      id="scamalytics-user"
+                      value={draft.scamalytics.user ?? ""}
+                      onChange={(e) =>
+                        setDraft({ ...draft, scamalytics: { ...draft.scamalytics, user: e.target.value.trim() ? e.target.value : null } })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="scamalytics-api-key">API Key</Label>
+                    <Input
+                      id="scamalytics-api-key"
+                      type="password"
+                      value={draft.scamalytics.api_key ?? ""}
+                      onChange={(e) =>
+                        setDraft({ ...draft, scamalytics: { ...draft.scamalytics, api_key: e.target.value.trim() ? e.target.value : null } })
+                      }
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-foreground/60">
+                  Need an API key?{" "}
+                  <a
+                    href={SCAMALYTICS_SIGNUP_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                    onClick={handleOpenScamalyticsSignup}
+                  >
+                    Register for a Scamalytics API key
+                  </a>
+                </p>
+              </div>
+            )}
+
+            {selectedSection === "colab" && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold">Google Colab</h2>
                 <ColabPricingSection
                   onDirtyChange={setIsColabDirty}
                   registerSave={(saveFn) => {
                     colabSaveRef.current = saveFn;
                   }}
                 />
-        </SectionCard>
+              </div>
+            )}
 
-        <SectionCard icon="key" title="Secrets" subtitle="SSH keys and tokens stored securely, Use {secret:name} syntax in recipes.">
-          <div className="space-y-6">
-            <SecretsSection />
+            {selectedSection === "secrets" && (
+              <div className="space-y-6">
+                <h2 className="text-lg font-semibold">Secrets</h2>
+                <p className="text-sm text-foreground/60">SSH keys and tokens stored securely. Use {"{secret:name}"} syntax in recipes.</p>
+                <SecretsSection />
+              </div>
+            )}
           </div>
-        </SectionCard>
         </div>
 
       </div>
@@ -562,7 +616,7 @@ function DisplayCurrencySection() {
   const updateDisplayCurrency = useUpdateDisplayCurrency();
 
   if (pricingQuery.isLoading) {
-    return <Spinner size="sm" />;
+    return <Loader2 className="w-4 h-4 animate-spin" />;
   }
 
   if (!pricingQuery.data) {
@@ -574,20 +628,28 @@ function DisplayCurrencySection() {
 
   return (
     <div className="space-y-3">
-      <Select labelPlacement="inside" label="Default Currency"
-      selectedKeys={[displayCurrency]}
-      onSelectionChange={async (keys) => {
-        const selected = Array.from(keys)[0] as Currency;
-        if (!selected || selected === displayCurrency) return;
-        await updateDisplayCurrency.mutateAsync(selected);
-      }}
-      size="sm"
-      variant="flat"
-      classNames={{ trigger: "bg-content2" }}>{CURRENCIES.map((c) => (
-        <SelectItem key={c.value} textValue={`${c.symbol} ${c.label}`}>
-          {c.symbol} {c.label}
-        </SelectItem>
-      ))}</Select>
+      <div className="space-y-2">
+        <Label htmlFor="display-currency">Default Currency</Label>
+        <Select
+          value={displayCurrency}
+          onValueChange={async (value) => {
+            const selected = value as Currency;
+            if (!selected || selected === displayCurrency) return;
+            await updateDisplayCurrency.mutateAsync(selected);
+          }}
+        >
+          <SelectTrigger id="display-currency">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CURRENCIES.map((c) => (
+              <SelectItem key={c.value} value={c.value}>
+                {c.symbol} {c.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <p className="text-xs text-foreground/50">
         Exchange rates updated: {new Date(updatedAt).toLocaleString()}
       </p>
@@ -608,7 +670,7 @@ function VastPricingSection() {
   const settings = pricingQuery.data;
 
   if (pricingQuery.isLoading) {
-    return <Spinner size="sm" />;
+    return <Loader2 className="w-4 h-4 animate-spin" />;
   }
 
   if (!settings?.vast_rates) {
@@ -623,15 +685,15 @@ function VastPricingSection() {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="flex justify-between items-center p-3 bg-content2 rounded-lg">
+        <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
           <span className="text-sm text-foreground/60">Storage</span>
           <span className="font-mono text-sm">{formatRate(settings.vast_rates.storage_per_gb_month)}/GB/mo</span>
         </div>
-        <div className="flex justify-between items-center p-3 bg-content2 rounded-lg">
+        <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
           <span className="text-sm text-foreground/60">Egress</span>
           <span className="font-mono text-sm">{formatRate(settings.vast_rates.network_egress_per_gb)}/GB</span>
         </div>
-        <div className="flex justify-between items-center p-3 bg-content2 rounded-lg">
+        <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
           <span className="text-sm text-foreground/60">Ingress</span>
           <span className="font-mono text-sm">{formatRate(settings.vast_rates.network_ingress_per_gb)}/GB</span>
         </div>
@@ -755,50 +817,69 @@ function ColabPricingSection({ onDirtyChange, registerSave }: ColabPricingSectio
   }, [registerSave, saveAll]);
 
   if (pricingQuery.isLoading) {
-    return <Spinner size="lg" className="mx-auto" />;
+    return <Loader2 className="w-6 h-6 mx-auto animate-spin" />;
   }
 
   return (
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Input labelPlacement="inside" label="Plan Name"
-          value={subName}
-          onValueChange={setSubName}
-          placeholder="Colab Pro"
-          size="sm"
-          variant="flat"
-          classNames={{ inputWrapper: "bg-content2" }} />
-          <Input labelPlacement="inside" label="Price"
-          type="number"
-          value={subPrice}
-          onValueChange={setSubPrice}
-          placeholder="11.99"
-          startContent={<span className="text-foreground/50 text-xs">{getCurrencySymbol(subCurrency)}</span>}
-          size="sm"
-          variant="flat"
-          classNames={{ inputWrapper: "bg-content2" }} />
-          <Select labelPlacement="inside" label="Currency"
-          selectedKeys={[subCurrency]}
-          onSelectionChange={(keys) => {
-            const selected = Array.from(keys)[0] as Currency;
-            if (selected) setSubCurrency(selected);
-          }}
-          size="sm"
-          variant="flat"
-          classNames={{ trigger: "bg-content2" }}>{CURRENCIES.map((c) => (
-            <SelectItem key={c.value} textValue={`${c.symbol} ${c.label}`}>
-              {c.symbol} {c.label}
-            </SelectItem>
-          ))}</Select>
-          <Input labelPlacement="inside" label="Compute Units"
-          type="number"
-          value={subUnits}
-          onValueChange={setSubUnits}
-          placeholder="100"
-          size="sm"
-          variant="flat"
-          classNames={{ inputWrapper: "bg-content2" }} />
+          <div className="space-y-2">
+            <Label htmlFor="plan-name">Plan Name</Label>
+            <Input
+              id="plan-name"
+              value={subName}
+              onChange={(e) => setSubName(e.target.value)}
+              placeholder="Colab Pro"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="plan-price">Price</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground/50 text-xs">
+                {getCurrencySymbol(subCurrency)}
+              </span>
+              <Input
+                id="plan-price"
+                type="number"
+                value={subPrice}
+                onChange={(e) => setSubPrice(e.target.value)}
+                placeholder="11.99"
+                className="pl-6"
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="plan-currency">Currency</Label>
+            <Select
+              value={subCurrency}
+              onValueChange={(value) => {
+                const selected = value as Currency;
+                if (selected) setSubCurrency(selected);
+              }}
+            >
+              <SelectTrigger id="plan-currency">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CURRENCIES.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    {c.symbol} {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="compute-units">Compute Units</Label>
+            <Input
+              id="compute-units"
+              type="number"
+              value={subUnits}
+              onChange={(e) => setSubUnits(e.target.value)}
+              placeholder="100"
+            />
+          </div>
         </div>
 
         {calculation && (
@@ -812,93 +893,106 @@ function ColabPricingSection({ onDirtyChange, registerSave }: ColabPricingSectio
       </div>
 
       <div className="space-y-4">
-        <Table removeWrapper aria-label="GPU pricing" classNames={{ base: "max-h-[280px] overflow-auto" }}>
-          <TableHeader>
-            <TableColumn>GPU</TableColumn>
-            <TableColumn width={90}>Units/Hr</TableColumn>
-            <TableColumn width={100}>Units/24Hr</TableColumn>
-            <TableColumn width={85}>{displayCurrency}/Hr</TableColumn>
-            <TableColumn width={95}>{displayCurrency}/24Hr</TableColumn>
-            <TableColumn width={40}> </TableColumn>
-          </TableHeader>
-          <TableBody emptyContent="No GPUs configured">
-            {gpuList.map((gpu, idx) => {
-              const calcGpu = calculation?.gpu_prices.find((g) => g.gpu_name === gpu.gpu_name);
-              return (
-                <TableRow key={idx}>
-                  <TableCell>
-                    <Input labelPlacement="inside" value={gpu.gpu_name}
-                    onValueChange={(v) => {
-                      if (v.trim()) {
-                        setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, gpu_name: v } : g)));
-                      }
-                    }}
-                    size="sm"
-                    variant="underlined"
-                    classNames={{ input: "font-semibold", inputWrapper: "h-8" }} />
-                  </TableCell>
-                  <TableCell>
-                    <Input labelPlacement="inside" type="number"
-                    value={gpu.units_per_hour.toString()}
-                    onValueChange={(v) => {
-                      const val = parseFloat(v);
-                      if (!isNaN(val) && val > 0) {
-                        setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, units_per_hour: val } : g)));
-                      }
-                    }}
-                    size="sm"
-                    variant="underlined"
-                    classNames={{ input: "text-center w-14", inputWrapper: "h-8" }} />
-                  </TableCell>
-                  <TableCell className="font-mono text-foreground/60">
-                    {(gpu.units_per_hour * 24).toFixed(1)}
-                  </TableCell>
-                  <TableCell className="font-mono text-success">
-                    {calcGpu ? formatUsd(calcGpu.price_usd_per_hour) : "-"}
-                  </TableCell>
-                  <TableCell className="font-mono text-warning">
-                    {calcGpu ? formatUsd(calcGpu.price_usd_per_hour * 24, 2) : "-"}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      isIconOnly
-                      size="sm"
-                      variant="light"
-                      color="danger"
-                      onPress={() => setGpuList((prev) => prev.filter((_, i) => i !== idx))}
-                    >
-                      <IconX className="w-4 h-4" />
-                    </Button>
+        <div className="max-h-[280px] overflow-auto border border-border rounded-lg">
+          <Table>
+            <TableHeader className="bg-muted">
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-left p-3 text-sm font-medium">GPU</TableHead>
+                <TableHead className="text-left p-3 text-sm font-medium w-[90px]">Units/Hr</TableHead>
+                <TableHead className="text-left p-3 text-sm font-medium w-[100px]">Units/24Hr</TableHead>
+                <TableHead className="text-left p-3 text-sm font-medium w-[85px]">{displayCurrency}/Hr</TableHead>
+                <TableHead className="text-left p-3 text-sm font-medium w-[95px]">{displayCurrency}/24Hr</TableHead>
+                <TableHead className="w-[40px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {gpuList.length === 0 ? (
+                <TableRow className="border-border hover:bg-transparent">
+                  <TableCell colSpan={6} className="text-center p-4 text-sm text-foreground/50">
+                    No GPUs configured
                   </TableCell>
                 </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+              ) : (
+                gpuList.map((gpu, idx) => {
+                  const calcGpu = calculation?.gpu_prices.find((g) => g.gpu_name === gpu.gpu_name);
+                  return (
+                    <TableRow key={idx} className="border-border">
+                      <TableCell className="p-2">
+                        <Input
+                          value={gpu.gpu_name}
+                          onChange={(e) => {
+                            if (e.target.value.trim()) {
+                              setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, gpu_name: e.target.value } : g)));
+                            }
+                          }}
+                          className="h-8 font-semibold border-0 border-b border-foreground/20 rounded-none focus-visible:ring-0 focus-visible:border-foreground bg-transparent"
+                        />
+                      </TableCell>
+                      <TableCell className="p-2">
+                        <Input
+                          type="number"
+                          value={gpu.units_per_hour.toString()}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (!isNaN(val) && val > 0) {
+                              setGpuList((prev) => prev.map((g, i) => (i === idx ? { ...g, units_per_hour: val } : g)));
+                            }
+                          }}
+                          className="h-8 text-center w-14 border-0 border-b border-foreground/20 rounded-none focus-visible:ring-0 focus-visible:border-foreground bg-transparent"
+                        />
+                      </TableCell>
+                      <TableCell className="p-2 font-mono text-foreground/60">
+                        {(gpu.units_per_hour * 24).toFixed(1)}
+                      </TableCell>
+                      <TableCell className="p-2 font-mono text-success">
+                        {calcGpu ? formatUsd(calcGpu.price_usd_per_hour) : "-"}
+                      </TableCell>
+                      <TableCell className="p-2 font-mono text-warning">
+                        {calcGpu ? formatUsd(calcGpu.price_usd_per_hour * 24, 2) : "-"}
+                      </TableCell>
+                      <TableCell className="p-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          onClick={() => setGpuList((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         <div className="flex items-end gap-3">
-          <Input labelPlacement="inside" label="New GPU"
-          value={newGpuName}
-          onValueChange={setNewGpuName}
-          placeholder="e.g., A100"
-          size="sm"
-          variant="flat"
-          classNames={{ inputWrapper: "bg-content2", base: "flex-1" }} />
-          <Input labelPlacement="inside" label="Units/Hr"
-          type="number"
-          value={newGpuUnits}
-          onValueChange={setNewGpuUnits}
-          placeholder="12.29"
-          size="sm"
-          variant="flat"
-          classNames={{ inputWrapper: "bg-content2", base: "w-28" }} />
+          <div className="flex-1 space-y-2">
+            <Label htmlFor="new-gpu-name">New GPU</Label>
+            <Input
+              id="new-gpu-name"
+              value={newGpuName}
+              onChange={(e) => setNewGpuName(e.target.value)}
+              placeholder="e.g., A100"
+            />
+          </div>
+          <div className="w-28 space-y-2">
+            <Label htmlFor="new-gpu-units">Units/Hr</Label>
+            <Input
+              id="new-gpu-units"
+              type="number"
+              value={newGpuUnits}
+              onChange={(e) => setNewGpuUnits(e.target.value)}
+              placeholder="12.29"
+            />
+          </div>
           <Button
-            color="primary"
-            variant="flat"
-            size="sm"
-            className="h-12 min-h-12"
-            onPress={handleAddGpu}
-            isDisabled={!newGpuName.trim() || !newGpuUnits.trim()}
+            variant="secondary"
+            className="h-10"
+            onClick={handleAddGpu}
+            disabled={!newGpuName.trim() || !newGpuUnits.trim()}
           >
             Add
           </Button>
@@ -946,7 +1040,7 @@ function SecretsSection() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["secrets"] })
   });
 
-  const { isOpen, onOpen, onOpenChange, onClose } = useDisclosure();
+  const [isOpen, setIsOpen] = useState(false);
   const [editName, setEditName] = useState("");
   const [editValue, setEditValue] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -964,7 +1058,7 @@ function SecretsSection() {
     setEditValue("");
     setEditDescription(suggestion?.description || "");
     setShowValue(false);
-    onOpen();
+    setIsOpen(true);
   };
 
   const openEditModal = async (secret: SecretMeta) => {
@@ -978,7 +1072,7 @@ function SecretsSection() {
     } catch {
       setEditValue("");
     }
-    onOpen();
+    setIsOpen(true);
   };
 
   const secrets = secretsQuery.data || [];
@@ -1015,7 +1109,7 @@ function SecretsSection() {
   }, []);
 
   if (secretsQuery.isLoading) {
-    return <Spinner size="lg" className="mx-auto" />;
+    return <Loader2 className="w-6 h-6 mx-auto animate-spin" />;
   }
 
   return (
@@ -1025,8 +1119,8 @@ function SecretsSection() {
       ) : (
         <div className="space-y-2">
           {keysQuery.isLoading ? (
-            <div className="flex items-center justify-center p-3 bg-content2 rounded-lg">
-              <Spinner size="sm" />
+            <div className="flex items-center justify-center p-3 bg-muted rounded-lg">
+              <Loader2 className="w-4 h-4 animate-spin" />
             </div>
           ) : (
             keyPaths.map((path) => {
@@ -1036,53 +1130,63 @@ function SecretsSection() {
               const isPrivateLoading =
                 sshKeyAction?.path === path && sshKeyAction?.kind === "private";
               return (
-                <div key={path} className="flex items-center gap-2 p-3 bg-content2 rounded-lg">
+                <div key={path} className="flex items-center gap-2 p-3 bg-muted rounded-lg">
                   <div className="flex-1 min-w-0">
                     <div className="font-mono text-sm truncate">ssh/{filename}</div>
                     <div className="text-xs text-foreground/50 truncate">{path}</div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Tooltip
-                      content={
-                        copyNotice === `ssh:private:${path}` ? "Copied" : "Copy private key"
-                      }
-                      isOpen={copyNotice === `ssh:private:${path}` ? true : undefined}
-                    >
-                      <Button
-                        size="sm"
-                        variant="light"
-                        isIconOnly
-                        isDisabled={sshKeyAction !== null}
-                        isLoading={isPrivateLoading}
-                        onPress={() => handleCopyKey(path, "private")}
-                      >
-                        <IconCopy className="w-4 h-4" />
-                      </Button>
-                    </Tooltip>
-                    <Tooltip
-                      content={
-                        copyNotice === `ssh:public:${path}` ? "Copied" : "Copy public key"
-                      }
-                      isOpen={copyNotice === `ssh:public:${path}` ? true : undefined}
-                    >
-                      <Button
-                        size="sm"
-                        variant="light"
-                        isIconOnly
-                        isDisabled={sshKeyAction !== null}
-                        isLoading={isPublicLoading}
-                        onPress={() => handleCopyKey(path, "public")}
-                      >
-                        <IconCopy className="w-4 h-4" />
-                      </Button>
-                    </Tooltip>
+                    <TooltipProvider>
+                      <Tooltip open={copyNotice === `ssh:private:${path}` ? true : undefined}>
+                        <TooltipTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            disabled={sshKeyAction !== null}
+                            onClick={() => handleCopyKey(path, "private")}
+                          >
+                            {isPrivateLoading ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <IconCopy className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {copyNotice === `ssh:private:${path}` ? "Copied" : "Copy private key"}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <TooltipProvider>
+                      <Tooltip open={copyNotice === `ssh:public:${path}` ? true : undefined}>
+                        <TooltipTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            disabled={sshKeyAction !== null}
+                            onClick={() => handleCopyKey(path, "public")}
+                          >
+                            {isPublicLoading ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <IconCopy className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {copyNotice === `ssh:public:${path}` ? "Copied" : "Copy public key"}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 </div>
               );
             })
           )}
           {secrets.map((secret) => (
-            <div key={secret.name} className="flex items-center gap-2 p-3 bg-content2 rounded-lg">
+            <div key={secret.name} className="flex items-center gap-2 p-3 bg-muted rounded-lg">
               <div className="flex-1 min-w-0">
                 <div className="font-mono text-sm truncate">{secret.name}</div>
                 {secret.description && (
@@ -1092,38 +1196,44 @@ function SecretsSection() {
               <span className="text-xs text-foreground/40">
                 {new Date(secret.updated_at).toLocaleDateString()}
               </span>
-              <Tooltip
-                content={
-                  copyNotice === `secret:${secret.name}` ? "Copied" : "Copy reference"
-                }
-                isOpen={copyNotice === `secret:${secret.name}` ? true : undefined}
+              <TooltipProvider>
+                <Tooltip open={copyNotice === `secret:${secret.name}` ? true : undefined}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={async () => {
+                        await copyText(`\${secret:${secret.name}}`);
+                        const id = `secret:${secret.name}`;
+                        if (copyNoticeTimer.current) {
+                          window.clearTimeout(copyNoticeTimer.current);
+                        }
+                        setCopyNotice(id);
+                        copyNoticeTimer.current = window.setTimeout(() => setCopyNotice(null), 1200);
+                      }}
+                    >
+                      <IconCopy className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {copyNotice === `secret:${secret.name}` ? "Copied" : "Copy reference"}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={() => openEditModal(secret)}
               >
-                <Button
-                  size="sm"
-                  variant="light"
-                  isIconOnly
-                  onPress={async () => {
-                    await copyText(`\${secret:${secret.name}}`);
-                    const id = `secret:${secret.name}`;
-                    if (copyNoticeTimer.current) {
-                      window.clearTimeout(copyNoticeTimer.current);
-                    }
-                    setCopyNotice(id);
-                    copyNoticeTimer.current = window.setTimeout(() => setCopyNotice(null), 1200);
-                  }}
-                >
-                  <IconCopy className="w-4 h-4" />
-                </Button>
-              </Tooltip>
-              <Button size="sm" variant="light" isIconOnly onPress={() => openEditModal(secret)}>
                 <IconEdit className="w-4 h-4" />
               </Button>
               <Button
-                size="sm"
-                variant="light"
-                color="danger"
-                isIconOnly
-                onPress={() => setDeleteTarget(secret.name)}
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 text-destructive hover:text-destructive"
+                onClick={() => setDeleteTarget(secret.name)}
               >
                 <IconTrash className="w-4 h-4" />
               </Button>
@@ -1132,104 +1242,123 @@ function SecretsSection() {
         </div>
       )}
 
-      {sshKeyError && <div className="text-xs text-danger">{sshKeyError}</div>}
+      {sshKeyError && <div className="text-xs text-destructive">{sshKeyError}</div>}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" color="primary" variant="flat" onPress={() => openAddModal()}>
+        <Button size="sm" variant="secondary" onClick={() => openAddModal()}>
           + Add Secret
         </Button>
         {unusedSuggestions.slice(0, 6).map((s) => (
-          <Tooltip key={s.name} content={s.description}>
-            <Button size="sm" variant="bordered" onPress={() => openAddModal(s)}>
-              + {s.label}
-            </Button>
-          </Tooltip>
+          <TooltipProvider key={s.name}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="outline" onClick={() => openAddModal(s)}>
+                  + {s.label}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{s.description}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         ))}
       </div>
 
-      <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader>{isEditing ? "Edit Secret" : "Add Secret"}</ModalHeader>
-              <ModalBody className="gap-4">
-                <Input labelPlacement="inside" label="Name"
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{isEditing ? "Edit Secret" : "Add Secret"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="secret-name">Name</Label>
+              <Input
+                id="secret-name"
                 value={editName}
-                onValueChange={setEditName}
+                onChange={(e) => setEditName(e.target.value)}
                 placeholder="github/token"
-                description="Use slashes"
-                isReadOnly={isEditing}
-                variant="bordered" />
-                <Input labelPlacement="inside" label="Value"
-                type={showValue ? "text" : "password"}
-                value={editValue}
-                onValueChange={setEditValue}
-                placeholder="Enter API key or token"
-                variant="bordered"
-                endContent={
-                  <Button size="sm" variant="light" isIconOnly onPress={() => setShowValue(!showValue)}>
-                    {showValue ? <IconEyeOff className="w-4 h-4" /> : <IconEye className="w-4 h-4" />}
-                  </Button>
-                } />
-                <Input labelPlacement="inside" label="Description (optional)"
+                readOnly={isEditing}
+              />
+              <p className="text-xs text-foreground/50">Use slashes</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="secret-value">Value</Label>
+              <div className="relative">
+                <Input
+                  id="secret-value"
+                  type={showValue ? "text" : "password"}
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  placeholder="Enter API key or token"
+                  className="pr-10"
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="absolute right-0 top-0 h-full"
+                  onClick={() => setShowValue(!showValue)}
+                >
+                  {showValue ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="secret-description">Description (optional)</Label>
+              <Input
+                id="secret-description"
                 value={editDescription}
-                onValueChange={setEditDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
                 placeholder="What is this secret used for?"
-                variant="bordered" />
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="flat" onPress={onClose}>Cancel</Button>
-                <Button
-                  color="primary"
-                  isLoading={upsertMutation.isPending}
-                  isDisabled={!editName.trim() || !editValue.trim()}
-                  onPress={async () => {
-                    await upsertMutation.mutateAsync({
-                      name: editName.trim(),
-                      value: editValue.trim(),
-                      description: editDescription.trim() || null
-                    });
-                    onClose();
-                  }}
-                >
-                  Save
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setIsOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!editName.trim() || !editValue.trim() || upsertMutation.isPending}
+              onClick={async () => {
+                await upsertMutation.mutateAsync({
+                  name: editName.trim(),
+                  value: editValue.trim(),
+                  description: editDescription.trim() || null
+                });
+                setIsOpen(false);
+              }}
+            >
+              {upsertMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <Modal isOpen={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <ModalContent>
-          {() => (
-            <>
-              <ModalHeader>Delete Secret</ModalHeader>
-              <ModalBody>
-                <p>Are you sure you want to delete <strong className="font-mono">{deleteTarget}</strong>?</p>
-                <p className="text-sm text-foreground/60">
-                  This will remove it from your OS keychain. Recipes that reference this secret will fail.
-                </p>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="flat" onPress={() => setDeleteTarget(null)}>Cancel</Button>
-                <Button
-                  color="danger"
-                  isLoading={deleteMutation.isPending}
-                  onPress={async () => {
-                    if (deleteTarget) {
-                      await deleteMutation.mutateAsync(deleteTarget);
-                      setDeleteTarget(null);
-                    }
-                  }}
-                >
-                  Delete
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+      <Dialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Secret</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p>Are you sure you want to delete <strong className="font-mono">{deleteTarget}</strong>?</p>
+            <p className="text-sm text-foreground/60">
+              This will remove it from your OS keychain. Recipes that reference this secret will fail.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={async () => {
+                if (deleteTarget) {
+                  await deleteMutation.mutateAsync(deleteTarget);
+                  setDeleteTarget(null);
+                }
+              }}
+            >
+              {deleteMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

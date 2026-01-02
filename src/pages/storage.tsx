@@ -1,26 +1,46 @@
+import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardBody,
-  Divider,
-  Dropdown,
-  DropdownItem,
+  CardContent,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
-  DropdownTrigger,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
   Select,
+  SelectContent,
   SelectItem,
-  Switch,
-  Tab,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
   Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import {
   Tooltip,
-  useDisclosure,
-} from "@nextui-org/react";
-import { Button, SkeletonSection } from "../components/ui";
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -37,86 +57,34 @@ import { GoogleDriveWizard } from "../components/GoogleDriveWizard";
 import { formatPriceWithRates } from "../lib/currency";
 import { AppIcon } from "../components/AppIcon";
 import { EmptyHostState, HostRow, HostSection } from "../components/shared/HostCard";
-
-// ============================================================
-// Icons
-// ============================================================
-
-function IconPlus() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-    </svg>
-  );
-}
-
-function IconRefresh() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-    </svg>
-  );
-}
-
-function IconEllipsis() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
-    </svg>
-  );
-}
-
-function IconSearch({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-    </svg>
-  );
-}
-
-function IconFilter({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
-    </svg>
-  );
-}
-
-function IconSort({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
-    </svg>
-  );
-}
-
-function IconFolderOpen({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 7.5h5.379c.597 0 1.17.237 1.591.659l.621.621c.422.422.994.659 1.591.659H20.25c.414 0 .75.336.75.75v6A2.25 2.25 0 0118.75 19.5H6.108a2.25 2.25 0 01-2.15-1.586l-1.5-5.25A2.25 2.25 0 014.61 9.75H20.25" />
-    </svg>
-  );
-}
-
-function IconEdit({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-    </svg>
-  );
-}
-
-function IconTrash({ className }: { className?: string }) {
-  return (
-    <svg className={className ?? "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-    </svg>
-  );
-}
+import { cn } from "@/lib/utils";
+import {
+  Plus,
+  RefreshCw,
+  MoreVertical,
+  Search,
+  Filter,
+  ArrowUpDown,
+  FolderOpen,
+  Pencil,
+  Trash2,
+  Loader2,
+} from "lucide-react";
 
 // ============================================================
 // Helper Functions
 // ============================================================
+
+function SkeletonSection({ itemCount = 3 }: { itemCount?: number }) {
+  return (
+    <div className="space-y-2 mb-6">
+      <Skeleton className="h-6 w-32 mb-3" />
+      {Array.from({ length: itemCount }).map((_, i) => (
+        <Skeleton key={i} className="h-14 w-full" />
+      ))}
+    </div>
+  );
+}
 
 function getBackendTypeName(backend: StorageBackend): string {
   switch (backend.type) {
@@ -335,204 +303,235 @@ function AddStorageModal({
   }
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onOpenChange={handleOpenChange} 
-      size="2xl" 
-      scrollBehavior="inside"
-      isDismissable={true}
-      isKeyboardDismissDisabled={false}
-    >
-      <ModalContent>
-        {(onClose) => (
-          <>
-            <ModalHeader>Add Storage</ModalHeader>
-            <ModalBody>
-              <div className="space-y-4">
-                <Input labelPlacement="inside" label="Name"
-                placeholder="My Storage"
-                value={name}
-                onValueChange={setName}
-                isRequired />
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add Storage</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="storage-name">Name *</Label>
+            <Input
+              id="storage-name"
+              placeholder="My Storage"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
 
-                <IconPicker value={icon} onChange={setIcon} />
+          <IconPicker value={icon} onChange={setIcon} />
 
-                <Divider />
+          <Separator />
 
-                <Tabs selectedKey={storageType} onSelectionChange={(k) => setStorageType(k as string)}>
-                  <Tab key="local" title="💻 Local">
-                    <div className="pt-4 space-y-4">
-                      <Input labelPlacement="inside" label="Root Path"
-                      placeholder="/Users/me/Projects"
-                      value={localPath}
-                      onValueChange={setLocalPath}
-                      isRequired
-                      description="Absolute path to local directory" />
-                    </div>
-                  </Tab>
+          <Tabs value={storageType} onValueChange={setStorageType}>
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="local">💻 Local</TabsTrigger>
+              <TabsTrigger value="ssh_remote">
+                <span className="flex items-center gap-1">
+                  <AppIcon name="ssh" className="w-3 h-3" alt="" />
+                  SSH
+                </span>
+              </TabsTrigger>
+              <TabsTrigger value="cloudflare_r2">
+                <span className="flex items-center gap-1">
+                  <AppIcon name="cloudflare" className="w-3 h-3" alt="" />
+                  R2
+                </span>
+              </TabsTrigger>
+              <TabsTrigger value="google_drive">
+                <span className="flex items-center gap-1">
+                  <AppIcon name="googledrive" className="w-3 h-3" alt="" />
+                  Drive
+                </span>
+              </TabsTrigger>
+              <TabsTrigger value="smb">
+                <span className="flex items-center gap-1">
+                  <AppIcon name="smb" className="w-3 h-3" alt="" />
+                  SMB
+                </span>
+              </TabsTrigger>
+            </TabsList>
 
-                  <Tab
-                    key="ssh_remote"
-                    title={(
-                      <span className="flex items-center gap-2">
-                        <AppIcon name="ssh" className="w-4 h-4" alt="SSH" />
-                        SSH Remote
-                      </span>
-                    )}
-                  >
-                    <div className="pt-4 space-y-4">
-                      <Select labelPlacement="inside" label="Host"
-                      placeholder="Select a host"
-                      selectedKeys={sshHostId ? [sshHostId] : []}
-                      onSelectionChange={(keys) => {
-                        const id = Array.from(keys)[0] as string;
-                        setSshHostId(id);
-                      }}
-                      isRequired>{(hosts.data ?? []).map((host) => (
-                        <SelectItem key={host.id}>
-                          {host.name}
-                        </SelectItem>
-                      ))}</Select>
-                      <Input labelPlacement="inside" label="Root Path"
-                      placeholder="/root"
-                      value={sshRootPath}
-                      onValueChange={setSshRootPath}
-                      description="Path on remote host" />
-                    </div>
-                  </Tab>
-
-                  <Tab
-                    key="cloudflare_r2"
-                    title={(
-                      <span className="flex items-center gap-2">
-                        <AppIcon name="cloudflare" className="w-4 h-4" alt="Cloudflare R2" />
-                        Cloudflare R2
-                      </span>
-                    )}
-                  >
-                    <div className="pt-4 space-y-4">
-                      <Input labelPlacement="inside" label="Account ID"
-                      placeholder="Your Cloudflare account ID"
-                      value={r2AccountId}
-                      onValueChange={setR2AccountId}
-                      isRequired />
-                      <Input labelPlacement="inside" label="Bucket"
-                      placeholder="my-bucket"
-                      value={r2Bucket}
-                      onValueChange={setR2Bucket}
-                      isRequired />
-                      <Input labelPlacement="inside" label="Access Key ID"
-                      value={r2AccessKeyId}
-                      onValueChange={setR2AccessKeyId}
-                      isRequired />
-                      <Input labelPlacement="inside" label="Secret Access Key"
-                      type="password"
-                      value={r2SecretAccessKey}
-                      onValueChange={setR2SecretAccessKey}
-                      isRequired />
-                    </div>
-                  </Tab>
-
-                  <Tab
-                    key="google_drive"
-                    title={(
-                      <span className="flex items-center gap-2">
-                        <AppIcon name="googledrive" className="w-4 h-4" alt="Google Drive" />
-                        Google Drive
-                      </span>
-                    )}
-                  >
-                    <div className="pt-4 space-y-4">
-                      <p className="text-sm text-foreground/60">
-                        Google Drive uses OAuth and requires browser authorization.
-                      </p>
-                      <Card className="bg-primary/5 border border-primary/20">
-                        <CardBody className="text-center py-6">
-                          <span className="text-4xl mb-3 block">🔐</span>
-                          <p className="font-medium mb-2">OAuth Setup</p>
-                          <p className="text-sm text-foreground/60 mb-4">
-                            Follow the wizard to authorize access.
-                          </p>
-                          <Button
-                            color="primary"
-                            onPress={() => {
-                              onClose();
-                              setShowGDriveWizard(true);
-                            }}
-                          >
-                            Open Setup Wizard
-                          </Button>
-                        </CardBody>
-                      </Card>
-                    </div>
-                  </Tab>
-
-                  <Tab
-                    key="smb"
-                    title={(
-                      <span className="flex items-center gap-2">
-                        <AppIcon name="smb" className="w-4 h-4" alt="SMB" />
-                        SMB/NAS
-                      </span>
-                    )}
-                  >
-                    <div className="pt-4 space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <Input labelPlacement="inside" label="Host"
-                        placeholder="192.168.1.100"
-                        value={smbHost}
-                        onValueChange={setSmbHost}
-                        isRequired />
-                        <Input labelPlacement="inside" label="Share"
-                        placeholder="shared"
-                        value={smbShare}
-                        onValueChange={setSmbShare}
-                        description="Leave empty to browse all shares" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <Input labelPlacement="inside" label="Username (optional)"
-                        value={smbUser}
-                        onValueChange={setSmbUser} />
-                        <Input labelPlacement="inside" label="Password (optional)"
-                        type="password"
-                        value={smbPassword}
-                        onValueChange={setSmbPassword} />
-                      </div>
-                    </div>
-                  </Tab>
-                </Tabs>
-
-                <Divider />
-
-                <div className="flex items-center gap-4">
-                  <Switch size="sm" isSelected={readonly} onValueChange={setReadonly}>
-                    Read-only
-                  </Switch>
-                  <span className="text-xs text-foreground/60">
-                    Prevent write operations to this storage
-                  </span>
-                </div>
-
-                {error && <p className="text-sm text-danger">{error}</p>}
+            <TabsContent value="local" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="local-path">Root Path *</Label>
+                <Input
+                  id="local-path"
+                  placeholder="/Users/me/Projects"
+                  value={localPath}
+                  onChange={(e) => setLocalPath(e.target.value)}
+                />
+                <p className="text-sm text-muted-foreground">Absolute path to local directory</p>
               </div>
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={onClose}>
-                Cancel
-              </Button>
-              <Button
-                color="primary"
-                onPress={handleCreate}
-                isLoading={createMutation.isPending}
-                isDisabled={storageType === "google_drive"}
-              >
-                Add Storage
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+            </TabsContent>
+
+            <TabsContent value="ssh_remote" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="ssh-host">Host *</Label>
+                <Select value={sshHostId} onValueChange={setSshHostId}>
+                  <SelectTrigger id="ssh-host">
+                    <SelectValue placeholder="Select a host" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(hosts.data ?? []).map((host) => (
+                      <SelectItem key={host.id} value={host.id}>
+                        {host.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ssh-root-path">Root Path</Label>
+                <Input
+                  id="ssh-root-path"
+                  placeholder="/root"
+                  value={sshRootPath}
+                  onChange={(e) => setSshRootPath(e.target.value)}
+                />
+                <p className="text-sm text-muted-foreground">Path on remote host</p>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="cloudflare_r2" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="r2-account-id">Account ID *</Label>
+                <Input
+                  id="r2-account-id"
+                  placeholder="Your Cloudflare account ID"
+                  value={r2AccountId}
+                  onChange={(e) => setR2AccountId(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="r2-bucket">Bucket *</Label>
+                <Input
+                  id="r2-bucket"
+                  placeholder="my-bucket"
+                  value={r2Bucket}
+                  onChange={(e) => setR2Bucket(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="r2-access-key">Access Key ID *</Label>
+                <Input
+                  id="r2-access-key"
+                  value={r2AccessKeyId}
+                  onChange={(e) => setR2AccessKeyId(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="r2-secret-key">Secret Access Key *</Label>
+                <Input
+                  id="r2-secret-key"
+                  type="password"
+                  value={r2SecretAccessKey}
+                  onChange={(e) => setR2SecretAccessKey(e.target.value)}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="google_drive" className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Google Drive uses OAuth and requires browser authorization.
+              </p>
+              <Card className="bg-primary/5 border-primary/20">
+                <CardContent className="text-center py-6">
+                  <span className="text-4xl mb-3 block">🔐</span>
+                  <p className="font-medium mb-2">OAuth Setup</p>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Follow the wizard to authorize access.
+                  </p>
+                  <Button
+                    onClick={() => {
+                      onOpenChange(false);
+                      setShowGDriveWizard(true);
+                    }}
+                  >
+                    Open Setup Wizard
+                  </Button>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="smb" className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="smb-host">Host *</Label>
+                  <Input
+                    id="smb-host"
+                    placeholder="192.168.1.100"
+                    value={smbHost}
+                    onChange={(e) => setSmbHost(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="smb-share">Share</Label>
+                  <Input
+                    id="smb-share"
+                    placeholder="shared"
+                    value={smbShare}
+                    onChange={(e) => setSmbShare(e.target.value)}
+                  />
+                  <p className="text-sm text-muted-foreground">Leave empty to browse all shares</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="smb-user">Username (optional)</Label>
+                  <Input
+                    id="smb-user"
+                    value={smbUser}
+                    onChange={(e) => setSmbUser(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="smb-password">Password (optional)</Label>
+                  <Input
+                    id="smb-password"
+                    type="password"
+                    value={smbPassword}
+                    onChange={(e) => setSmbPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <Separator />
+
+          <div className="flex items-center gap-4">
+            <Switch
+              id="readonly-switch"
+              checked={readonly}
+              onCheckedChange={setReadonly}
+            />
+            <Label htmlFor="readonly-switch" className="cursor-pointer">
+              Read-only
+            </Label>
+            <span className="text-xs text-muted-foreground">
+              Prevent write operations to this storage
+            </span>
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleCreate}
+            disabled={createMutation.isPending || storageType === "google_drive"}
+          >
+            {createMutation.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            {createMutation.isPending ? "Adding..." : "Add Storage"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -576,28 +575,32 @@ function IconPicker({
 }) {
   return (
     <div className="space-y-2">
-      <label className="text-sm text-foreground/70">Icon</label>
-      <div className="flex flex-wrap gap-1 p-2 bg-content2 rounded-lg max-h-32 overflow-auto">
+      <Label>Icon</Label>
+      <div className="flex flex-wrap gap-1 p-2 bg-muted rounded-lg max-h-32 overflow-auto">
         {STORAGE_ICONS.map(({ emoji, label }) => (
-          <button
+          <Button
             key={emoji}
             type="button"
+            variant="ghost"
+            size="icon"
             title={label}
             onClick={() => onChange(emoji)}
-            className={`p-1.5 text-lg rounded-md transition-all hover:bg-content3 ${
-              value === emoji ? "bg-primary/20 ring-2 ring-primary" : ""
-            }`}
+            className={cn(
+              "h-8 w-8 p-0 text-lg rounded-md transition-all hover:bg-muted-foreground/10",
+              value === emoji && "bg-primary/20 ring-2 ring-primary"
+            )}
           >
             {emoji}
-          </button>
+          </Button>
         ))}
       </div>
       <div className="flex items-center gap-2">
-        <Input labelPlacement="inside" size="sm"
-        placeholder="Custom emoji..."
-        value={value}
-        onValueChange={onChange}
-        className="flex-1" />
+        <Input
+          placeholder="Custom emoji..."
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="flex-1"
+        />
         {value && (
           <span className="text-xl">{value}</span>
         )}
@@ -763,176 +766,234 @@ function EditStorageModal({
     switch (storageType) {
       case "local":
         return (
-          <Input labelPlacement="inside" label="Root Path"
-          placeholder="/Users/me/Projects"
-          value={localPath}
-          onValueChange={setLocalPath}
-          isRequired
-          description="Absolute path to local directory" />
+          <div className="space-y-2">
+            <Label htmlFor="edit-local-path">Root Path *</Label>
+            <Input
+              id="edit-local-path"
+              placeholder="/Users/me/Projects"
+              value={localPath}
+              onChange={(e) => setLocalPath(e.target.value)}
+            />
+            <p className="text-sm text-muted-foreground">Absolute path to local directory</p>
+          </div>
         );
       case "ssh_remote":
         return (
           <>
-            <Select labelPlacement="inside" label="Host"
-            placeholder="Select a host"
-            selectedKeys={sshHostId ? [sshHostId] : []}
-            onSelectionChange={(keys) => {
-              const id = Array.from(keys)[0] as string;
-              setSshHostId(id);
-            }}
-            isRequired>{(hosts.data ?? []).map((host) => (
-              <SelectItem key={host.id}>
-                {host.name}
-              </SelectItem>
-            ))}</Select>
-            <Input labelPlacement="inside" label="Root Path"
-            placeholder="/root"
-            value={sshRootPath}
-            onValueChange={setSshRootPath}
-            description="Path on remote host" />
+            <div className="space-y-2">
+              <Label htmlFor="edit-ssh-host">Host *</Label>
+              <Select value={sshHostId} onValueChange={setSshHostId}>
+                <SelectTrigger id="edit-ssh-host">
+                  <SelectValue placeholder="Select a host" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(hosts.data ?? []).map((host) => (
+                    <SelectItem key={host.id} value={host.id}>
+                      {host.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-ssh-root-path">Root Path</Label>
+              <Input
+                id="edit-ssh-root-path"
+                placeholder="/root"
+                value={sshRootPath}
+                onChange={(e) => setSshRootPath(e.target.value)}
+              />
+              <p className="text-sm text-muted-foreground">Path on remote host</p>
+            </div>
           </>
         );
       case "cloudflare_r2":
         return (
           <>
-            <Input labelPlacement="inside" label="Account ID"
-            placeholder="Your Cloudflare account ID"
-            value={r2AccountId}
-            onValueChange={setR2AccountId}
-            isRequired />
-            <Input labelPlacement="inside" label="Bucket"
-            placeholder="my-bucket"
-            value={r2Bucket}
-            onValueChange={setR2Bucket}
-            isRequired />
-            <Input labelPlacement="inside" label="Access Key ID"
-            value={r2AccessKeyId}
-            onValueChange={setR2AccessKeyId}
-            isRequired />
-            <Input labelPlacement="inside" label="Secret Access Key"
-            type="password"
-            value={r2SecretAccessKey}
-            onValueChange={setR2SecretAccessKey}
-            isRequired />
+            <div className="space-y-2">
+              <Label htmlFor="edit-r2-account-id">Account ID *</Label>
+              <Input
+                id="edit-r2-account-id"
+                placeholder="Your Cloudflare account ID"
+                value={r2AccountId}
+                onChange={(e) => setR2AccountId(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-r2-bucket">Bucket *</Label>
+              <Input
+                id="edit-r2-bucket"
+                placeholder="my-bucket"
+                value={r2Bucket}
+                onChange={(e) => setR2Bucket(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-r2-access-key">Access Key ID *</Label>
+              <Input
+                id="edit-r2-access-key"
+                value={r2AccessKeyId}
+                onChange={(e) => setR2AccessKeyId(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-r2-secret-key">Secret Access Key *</Label>
+              <Input
+                id="edit-r2-secret-key"
+                type="password"
+                value={r2SecretAccessKey}
+                onChange={(e) => setR2SecretAccessKey(e.target.value)}
+              />
+            </div>
           </>
         );
       case "google_drive":
         return (
           <>
-            <p className="text-sm text-foreground/60">
+            <p className="text-sm text-muted-foreground">
               Google Drive requires OAuth authentication. Leave Client ID/Secret empty to use rclone's defaults.
             </p>
-            <Input labelPlacement="inside" label="Client ID (optional)"
-            value={gdClientId}
-            onValueChange={setGdClientId} />
-            <Input labelPlacement="inside" label="Client Secret (optional)"
-            type="password"
-            value={gdClientSecret}
-            onValueChange={setGdClientSecret} />
+            <div className="space-y-2">
+              <Label htmlFor="edit-gd-client-id">Client ID (optional)</Label>
+              <Input
+                id="edit-gd-client-id"
+                value={gdClientId}
+                onChange={(e) => setGdClientId(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-gd-client-secret">Client Secret (optional)</Label>
+              <Input
+                id="edit-gd-client-secret"
+                type="password"
+                value={gdClientSecret}
+                onChange={(e) => setGdClientSecret(e.target.value)}
+              />
+            </div>
           </>
         );
       case "smb":
         return (
           <>
             <div className="grid grid-cols-2 gap-4">
-              <Input labelPlacement="inside" label="Host"
-              placeholder="192.168.1.100"
-              value={smbHost}
-              onValueChange={setSmbHost}
-              isRequired />
-              <Input labelPlacement="inside" label="Share"
-              placeholder="shared"
-              value={smbShare}
-              onValueChange={setSmbShare}
-              description="Leave empty to browse all shares" />
+              <div className="space-y-2">
+                <Label htmlFor="edit-smb-host">Host *</Label>
+                <Input
+                  id="edit-smb-host"
+                  placeholder="192.168.1.100"
+                  value={smbHost}
+                  onChange={(e) => setSmbHost(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-smb-share">Share</Label>
+                <Input
+                  id="edit-smb-share"
+                  placeholder="shared"
+                  value={smbShare}
+                  onChange={(e) => setSmbShare(e.target.value)}
+                />
+                <p className="text-sm text-muted-foreground">Leave empty to browse all shares</p>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <Input labelPlacement="inside" label="Username (optional)"
-              value={smbUser}
-              onValueChange={setSmbUser} />
-              <Input labelPlacement="inside" label="Password (optional)"
-              type="password"
-              value={smbPassword}
-              onValueChange={setSmbPassword} />
+              <div className="space-y-2">
+                <Label htmlFor="edit-smb-user">Username (optional)</Label>
+                <Input
+                  id="edit-smb-user"
+                  value={smbUser}
+                  onChange={(e) => setSmbUser(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-smb-password">Password (optional)</Label>
+                <Input
+                  id="edit-smb-password"
+                  type="password"
+                  value={smbPassword}
+                  onChange={(e) => setSmbPassword(e.target.value)}
+                />
+              </div>
             </div>
           </>
         );
       default:
-        return <p className="text-sm text-foreground/60">Unknown storage type</p>;
+        return <p className="text-sm text-muted-foreground">Unknown storage type</p>;
     }
   }
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onOpenChange={onOpenChange} 
-      isDismissable={true} 
-      size="2xl"
-      scrollBehavior="inside"
-    >
-      <ModalContent>
-        {(onClose) => (
-          <>
-            <ModalHeader>Edit Storage</ModalHeader>
-            <ModalBody>
-              <div className="space-y-4">
-                {/* Basic Info */}
-                <Input labelPlacement="inside" label="Name"
-                placeholder="My Storage"
-                value={name}
-                onValueChange={setName}
-                isRequired />
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit Storage</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          {/* Basic Info */}
+          <div className="space-y-2">
+            <Label htmlFor="edit-storage-name">Name *</Label>
+            <Input
+              id="edit-storage-name"
+              placeholder="My Storage"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
 
-                <IconPicker value={icon} onChange={setIcon} />
+          <IconPicker value={icon} onChange={setIcon} />
 
-                <Divider />
+          <Separator />
 
-                {/* Backend Type Display */}
-                <div className="flex items-center gap-2 p-3 bg-content2 rounded-lg">
-                  {getBackendIconNode(storage.backend)}
-                  <div>
-                    <p className="font-medium">{getBackendTypeName(storage.backend)}</p>
-                    <p className="text-xs text-foreground/60">Storage type cannot be changed</p>
-                  </div>
-                </div>
+          {/* Backend Type Display */}
+          <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
+            {getBackendIconNode(storage.backend)}
+            <div>
+              <p className="font-medium">{getBackendTypeName(storage.backend)}</p>
+              <p className="text-xs text-muted-foreground">Storage type cannot be changed</p>
+            </div>
+          </div>
 
-                {/* Backend Settings */}
-                <div className="space-y-4">
-                  <h4 className="text-sm font-medium text-foreground/80">Backend Settings</h4>
-                  {renderBackendFields()}
-                </div>
+          {/* Backend Settings */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-medium text-muted-foreground">Backend Settings</h4>
+            {renderBackendFields()}
+          </div>
 
-                <Divider />
+          <Separator />
 
-                {/* Options */}
-                <div className="flex items-center gap-4">
-                  <Switch size="sm" isSelected={readonly} onValueChange={setReadonly}>
-                    Read-only
-                  </Switch>
-                  <span className="text-xs text-foreground/60">
-                    Prevent write operations to this storage
-                  </span>
-                </div>
+          {/* Options */}
+          <div className="flex items-center gap-4">
+            <Switch
+              id="edit-readonly-switch"
+              checked={readonly}
+              onCheckedChange={setReadonly}
+            />
+            <Label htmlFor="edit-readonly-switch" className="cursor-pointer">
+              Read-only
+            </Label>
+            <span className="text-xs text-muted-foreground">
+              Prevent write operations to this storage
+            </span>
+          </div>
 
-                {error && <p className="text-sm text-danger whitespace-pre-wrap">{error}</p>}
-              </div>
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={onClose}>
-                Cancel
-              </Button>
-              <Button
-                color="primary"
-                onPress={handleUpdate}
-                isLoading={updateMutation.isPending}
-              >
-                Save Changes
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+          {error && <p className="text-sm text-destructive whitespace-pre-wrap">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleUpdate}
+            disabled={updateMutation.isPending}
+          >
+            {updateMutation.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            {updateMutation.isPending ? "Saving..." : "Save Changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -946,13 +1007,13 @@ export function StoragePage() {
   const storagesQuery = useStorages();
   const hostsQuery = useHosts();
   const pricingQuery = usePricingSettings();
-  const addModal = useDisclosure();
-  const editModal = useDisclosure();
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingStorage, setEditingStorage] = useState<Storage | null>(null);
-  
+
   // Google Drive wizard state
   const [showGDriveWizard, setShowGDriveWizard] = useState(false);
-  
+
   // Storage usage state with backend cache persistence
   const [storageUsages, setStorageUsages] = useState<Map<string, StorageUsage>>(new Map());
   const [usageLoading, setUsageLoading] = useState(false);
@@ -983,7 +1044,7 @@ export function StoragePage() {
   const fetchStorageUsages = async () => {
     const currentStorages = storagesQuery.data ?? [];
     if (currentStorages.length === 0) return;
-    
+
     setUsageLoading(true);
     try {
       // Fetch R2 usages (batch)
@@ -992,24 +1053,24 @@ export function StoragePage() {
       for (const usage of r2Usages) {
         usageMap.set(usage.storage_id, usage);
       }
-      
+
       // Fetch SMB/SSH usages individually (with timeout)
       const smbSshStorages = currentStorages.filter(
         (s) => s.backend.type === "smb" || s.backend.type === "ssh_remote"
       );
-      
+
       await Promise.all(
         smbSshStorages.map(async (storage) => {
           try {
             // Add timeout for slow connections
-            const timeoutPromise = new Promise<null>((_, reject) => 
+            const timeoutPromise = new Promise<null>((_, reject) =>
               setTimeout(() => reject(new Error("Timeout")), 10000)
             );
             const usage = await Promise.race([
               storageApi.getUsage(storage.id),
               timeoutPromise
             ]) as StorageUsage | null;
-            
+
             if (usage && usage.total_bytes != null) {
               usageMap.set(storage.id, usage);
             }
@@ -1018,7 +1079,7 @@ export function StoragePage() {
           }
         })
       );
-      
+
       setStorageUsages(usageMap);
       // Save ALL usages to backend cache
       await pricingApi.r2Cache.save(Array.from(usageMap.values()));
@@ -1031,9 +1092,9 @@ export function StoragePage() {
 
   function handleEdit(storage: Storage) {
     setEditingStorage(storage);
-    editModal.onOpen();
+    setEditModalOpen(true);
   }
-  
+
   async function handleRefresh() {
     await storagesQuery.refetch();
     // Also refresh storage usages
@@ -1183,60 +1244,63 @@ export function StoragePage() {
         onClick={() => setSelectedStorageId(storage.id)}
         onDoubleClick={() => openBrowse(storage)}
         hoverActions={
-          <div
-            className="flex items-center gap-1"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Tooltip content="Browse" delay={500}>
-              <Button
-                size="sm"
-                variant="light"
-                isIconOnly
-                className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                onPress={() => openBrowse(storage)}
-              >
-                <IconFolderOpen className="w-4 h-4" />
-              </Button>
-            </Tooltip>
-            <Tooltip content="Edit" delay={500}>
-              <Button
-                size="sm"
-                variant="light"
-                isIconOnly
-                className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                onPress={() => handleEdit(storage)}
-              >
-                <IconEdit className="w-4 h-4" />
-              </Button>
-            </Tooltip>
-            <Dropdown placement="bottom-end">
-              <DropdownTrigger>
-                <Button
-                  size="sm"
-                  variant="light"
-                  isIconOnly
-                  className="w-7 h-7 min-w-7 opacity-60 hover:opacity-100"
-                >
-                  <IconEllipsis />
-                </Button>
-              </DropdownTrigger>
-              <DropdownMenu aria-label="Storage actions">
-                <DropdownItem
-                  key="delete"
-                  color="danger"
-                  className="text-danger"
-                  startContent={<IconTrash className="w-4 h-4" />}
-                  onPress={() => {
-                    deleteMutation.mutate(storage.id);
-                    setSelectedStorageId((prev) => (prev === storage.id ? null : prev));
-                  }}
-                >
-                  Delete
-                </DropdownItem>
+          <TooltipProvider>
+            <div
+              className="flex items-center gap-1"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="w-7 h-7 opacity-60 hover:opacity-100"
+                    onClick={() => openBrowse(storage)}
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Browse</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="w-7 h-7 opacity-60 hover:opacity-100"
+                    onClick={() => handleEdit(storage)}
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Edit</TooltipContent>
+              </Tooltip>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="w-7 h-7 opacity-60 hover:opacity-100"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => {
+                      deleteMutation.mutate(storage.id);
+                      setSelectedStorageId((prev) => (prev === storage.id ? null : prev));
+                    }}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
               </DropdownMenu>
-            </Dropdown>
-          </div>
+            </div>
+          </TooltipProvider>
         }
       />
     );
@@ -1259,97 +1323,81 @@ export function StoragePage() {
           {/* Row 1: Search + Browse */}
           <div className="termius-toolbar-row">
             <div className="termius-search-bar">
-              <Input
-                size="lg"
-                placeholder="Search storages..."
-                value={searchQuery}
-                onValueChange={setSearchQuery}
-                startContent={<IconSearch className="w-5 h-5 text-foreground/40" />}
-                endContent={
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                <Input
+                  className="h-12 pl-10 pr-24 text-base bg-muted"
+                  placeholder="Search storages..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2">
                   <Button
-                    color="primary"
                     size="sm"
                     className="h-8 px-4"
-                    onPress={() => {
+                    onClick={() => {
                       if (!selectedStorage) return;
                       openBrowse(selectedStorage);
                     }}
-                    isDisabled={!canBrowseSelected}
+                    disabled={!canBrowseSelected}
                   >
                     Browse
                   </Button>
-                }
-                classNames={{
-                  base: "flex-1",
-                  inputWrapper: "bg-content2 h-12",
-                  input: "text-base",
-                }}
-              />
+                </div>
+              </div>
             </div>
           </div>
 
           {/* Row 2: Quick Actions + Filters */}
           <div className="termius-toolbar-row justify-between">
             <div className="termius-quick-actions">
-              <button className="termius-quick-action" onClick={addModal.onOpen}>
-                <IconPlus />
+              <Button type="button" variant="outline" size="sm" onClick={() => setAddModalOpen(true)}>
+                <Plus className="w-4 h-4" />
                 <span>New Storage</span>
-              </button>
-              <button
-                className="termius-quick-action"
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => void handleRefresh()}
                 disabled={storagesQuery.isFetching || usageLoading}
               >
-                <IconRefresh />
+                <RefreshCw className="w-4 h-4" />
                 <span>Refresh</span>
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center gap-1">
-              <Dropdown>
-                <DropdownTrigger>
-                  <button className={`termius-quick-action ${filterType !== "all" ? "termius-quick-action-primary" : ""}`}>
-                    <IconFilter />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" size="sm">
+                    <Filter className="w-4 h-4" />
                     <span>{getFilterLabel(filterType)}</span>
-                  </button>
-                </DropdownTrigger>
-                <DropdownMenu
-                  selectionMode="single"
-                  selectedKeys={new Set([filterType])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as "all" | StorageBackend["type"];
-                    setFilterType(selected);
-                  }}
-                >
-                  <DropdownItem key="all">All</DropdownItem>
-                  <DropdownItem key="local">Local</DropdownItem>
-                  <DropdownItem key="ssh_remote">SSH Remote</DropdownItem>
-                  <DropdownItem key="smb">SMB/NAS</DropdownItem>
-                  <DropdownItem key="google_drive">Google Drive</DropdownItem>
-                  <DropdownItem key="cloudflare_r2">Cloudflare R2</DropdownItem>
-                  <DropdownItem key="google_cloud_storage">Google Cloud Storage</DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setFilterType("all")}>All</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterType("local")}>Local</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterType("ssh_remote")}>SSH Remote</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterType("smb")}>SMB/NAS</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterType("google_drive")}>Google Drive</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterType("cloudflare_r2")}>Cloudflare R2</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFilterType("google_cloud_storage")}>Google Cloud Storage</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-              <Dropdown>
-                <DropdownTrigger>
-                  <button className="termius-quick-action">
-                    <IconSort />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" size="sm">
+                    <ArrowUpDown className="w-4 h-4" />
                     <span>{sortBy === "name" ? "Name" : "Recent"}</span>
-                  </button>
-                </DropdownTrigger>
-                <DropdownMenu
-                  selectionMode="single"
-                  selectedKeys={new Set([sortBy])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as "name" | "recent";
-                    setSortBy(selected);
-                  }}
-                >
-                  <DropdownItem key="name">Name</DropdownItem>
-                  <DropdownItem key="recent">Recent</DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setSortBy("name")}>Name</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSortBy("recent")}>Recent</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
@@ -1367,7 +1415,7 @@ export function StoragePage() {
             description={searchQuery ? undefined : "Add a storage location to get started."}
             action={
               !searchQuery ? (
-                <Button size="sm" color="primary" onPress={addModal.onOpen}>
+                <Button size="sm" onClick={() => setAddModalOpen(true)}>
                   New Storage
                 </Button>
               ) : undefined
@@ -1386,15 +1434,9 @@ export function StoragePage() {
 
         {/* Add Storage Modal */}
         <AddStorageModal
-          isOpen={addModal.isOpen}
-          onOpenChange={(open) => {
-            if (open) {
-              addModal.onOpen();
-            } else {
-              addModal.onClose();
-            }
-          }}
-          onSuccess={addModal.onClose}
+          isOpen={addModalOpen}
+          onOpenChange={setAddModalOpen}
+          onSuccess={() => setAddModalOpen(false)}
           setShowGDriveWizard={setShowGDriveWizard}
         />
 
@@ -1411,17 +1453,15 @@ export function StoragePage() {
         {editingStorage && (
           <EditStorageModal
             storage={editingStorage}
-            isOpen={editModal.isOpen}
+            isOpen={editModalOpen}
             onOpenChange={(open) => {
-              if (open) {
-                editModal.onOpen();
-              } else {
-                editModal.onClose();
+              setEditModalOpen(open);
+              if (!open) {
                 setEditingStorage(null);
               }
             }}
             onSuccess={() => {
-              editModal.onClose();
+              setEditModalOpen(false);
               setEditingStorage(null);
             }}
           />

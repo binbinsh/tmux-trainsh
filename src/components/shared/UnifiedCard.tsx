@@ -1,18 +1,15 @@
 import type { ReactNode } from "react";
-import { Card, CardBody, Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@nextui-org/react";
-import { Button } from "../ui";
-
-// ============================================================
-// Icons
-// ============================================================
-
-function IconEllipsis() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
-    </svg>
-  );
-}
+import { MoreVertical, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 // ============================================================
 // Type Definitions
@@ -21,24 +18,22 @@ function IconEllipsis() {
 export type CardAction = {
   key: string;
   label: string;
-  onPress: () => void;
-  color?: "default" | "danger";
-  isDisabled?: boolean;
+  onClick: () => void;
+  variant?: "default" | "destructive";
+  disabled?: boolean;
 };
 
 export type CardBadge = {
   label: string;
-  color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
-  variant?: "flat" | "solid" | "bordered" | "light" | "faded" | "shadow";
+  variant?: "default" | "secondary" | "destructive" | "outline";
 };
 
 export type CardButton = {
   label: string;
-  onPress: () => void;
-  color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
-  variant?: "flat" | "solid" | "bordered" | "light" | "faded" | "shadow" | "ghost";
+  onClick: () => void;
+  variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
   startContent?: ReactNode;
-  isDisabled?: boolean;
+  disabled?: boolean;
   isLoading?: boolean;
 };
 
@@ -54,7 +49,7 @@ type UnifiedCardProps = {
   /** Dropdown menu actions */
   actions?: CardAction[];
   /** Click handler for the entire card (makes it pressable) */
-  onPress?: () => void;
+  onClick?: () => void;
   /** Data attribute for click guard on dropdown area */
   actionGuardAttr?: string;
   /** Secondary info line (e.g., SSH address, path) */
@@ -96,7 +91,7 @@ export function UnifiedCard({
   status,
   type,
   actions,
-  onPress,
+  onClick,
   actionGuardAttr = "data-card-action",
   subtitle,
   tags,
@@ -105,13 +100,13 @@ export function UnifiedCard({
   footer,
   className = "",
 }: UnifiedCardProps) {
-  const isPressable = !!onPress;
+  const isPressable = !!onClick;
   const hasActions = actions && actions.length > 0;
   const hasTags = tags && tags.length > 0;
   const hasButtons = buttons && buttons.length > 0;
 
   const cardContent = (
-    <CardBody className="p-4 flex flex-col gap-3">
+    <CardContent className="p-4 flex flex-col gap-3">
       {/* Header Row: Icon + Title + Status + Type + Actions Menu */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -124,24 +119,20 @@ export function UnifiedCard({
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="font-semibold text-foreground truncate">{title}</h3>
               {status && (
-                <Chip
-                  size="sm"
-                  variant={status.variant || "flat"}
-                  color={status.color || "default"}
-                  classNames={{ content: "text-xs font-medium" }}
+                <Badge
+                  variant={status.variant || "default"}
+                  className="text-xs font-medium"
                 >
                   {status.label}
-                </Chip>
+                </Badge>
               )}
               {type && (
-                <Chip
-                  size="sm"
-                  variant={type.variant || "flat"}
-                  color={type.color || "default"}
-                  classNames={{ content: "text-xs" }}
+                <Badge
+                  variant={type.variant || "default"}
+                  className="text-xs"
                 >
                   {type.label}
-                </Chip>
+                </Badge>
               )}
             </div>
           </div>
@@ -149,33 +140,32 @@ export function UnifiedCard({
 
         {hasActions && (
           <div className="shrink-0" {...{ [actionGuardAttr]: true }}>
-            <Dropdown>
-              <DropdownTrigger>
-                <Button isIconOnly size="sm" variant="light">
-                  <IconEllipsis />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="icon" variant="ghost" className="h-8 w-8">
+                  <MoreVertical className="h-4 w-4" />
                 </Button>
-              </DropdownTrigger>
-              <DropdownMenu aria-label="Card actions">
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
                 {actions.map((action) => (
-                  <DropdownItem
+                  <DropdownMenuItem
                     key={action.key}
-                    onPress={action.onPress}
-                    className={action.color === "danger" ? "text-danger" : ""}
-                    color={action.color}
-                    isDisabled={action.isDisabled}
+                    onClick={action.onClick}
+                    className={action.variant === "destructive" ? "text-destructive" : ""}
+                    disabled={action.disabled}
                   >
                     {action.label}
-                  </DropdownItem>
+                  </DropdownMenuItem>
                 ))}
-              </DropdownMenu>
-            </Dropdown>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
       </div>
 
       {/* Subtitle */}
       {subtitle && (
-        <div className="text-xs font-mono text-foreground/50 truncate select-text">
+        <div className="text-xs font-mono text-muted-foreground truncate select-text">
           {subtitle}
         </div>
       )}
@@ -184,15 +174,13 @@ export function UnifiedCard({
       {hasTags && (
         <div className="flex flex-wrap gap-1.5">
           {tags.map((tag, idx) => (
-            <Chip
+            <Badge
               key={idx}
-              size="sm"
-              variant={tag.variant || "flat"}
-              color={tag.color || "default"}
-              classNames={{ content: "text-xs" }}
+              variant={tag.variant || "default"}
+              className="text-xs"
             >
               {tag.label}
-            </Chip>
+            </Badge>
           ))}
         </div>
       )}
@@ -207,13 +195,12 @@ export function UnifiedCard({
             <Button
               key={idx}
               size="sm"
-              color={btn.color || "default"}
-              variant={btn.variant || "flat"}
-              startContent={btn.startContent}
-              onPress={btn.onPress}
-              isDisabled={btn.isDisabled}
-              isLoading={btn.isLoading}
+              variant={btn.variant || "default"}
+              onClick={btn.onClick}
+              disabled={btn.disabled || btn.isLoading}
             >
+              {btn.isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {!btn.isLoading && btn.startContent}
               {btn.label}
             </Button>
           ))}
@@ -225,27 +212,26 @@ export function UnifiedCard({
 
       {/* Footer */}
       {footer && (
-        <p className="text-xs text-foreground/40 mt-auto">{footer}</p>
+        <p className="text-xs text-muted-foreground/60 mt-auto">{footer}</p>
       )}
-    </CardBody>
+    </CardContent>
   );
 
   if (isPressable) {
     return (
       <Card
-        as="div"
-        isPressable
-        disableAnimation
-        disableRipple
-        onPress={(event) => {
+        className={cn(
+          "doppio-card-interactive h-full cursor-pointer hover:border-primary/40 transition-colors",
+          className
+        )}
+        onClick={(event) => {
           // Check if click was on an action area (dropdown, buttons)
           const target = event.target as Element;
           if (target.closest(`[${actionGuardAttr}]`)) {
             return;
           }
-          onPress();
+          onClick();
         }}
-        className={`doppio-card-interactive h-full data-[pressed=true]:scale-100 ${className}`}
       >
         {cardContent}
       </Card>
@@ -253,7 +239,7 @@ export function UnifiedCard({
   }
 
   return (
-    <Card className={`doppio-card h-full ${className}`}>
+    <Card className={cn("doppio-card h-full", className)}>
       {cardContent}
     </Card>
   );
@@ -290,7 +276,7 @@ export function ListItemCard({
   connectDisabled = false,
 }: ListItemCardProps) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-divider bg-content2 p-3 hover:border-primary/40 transition-colors">
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted p-3 hover:border-primary/40 transition-colors">
       <div className="flex items-start gap-3 min-w-0">
         {icon && (
           <div className="shrink-0">
@@ -301,41 +287,36 @@ export function ListItemCard({
           <div className="flex items-center gap-2 flex-wrap">
             <p className="font-medium text-sm truncate">{title}</p>
             {status && (
-              <Chip
-                size="sm"
-                variant={status.variant || "flat"}
-                color={status.color || "default"}
-                classNames={{ content: "text-xs font-medium" }}
+              <Badge
+                variant={status.variant || "default"}
+                className="text-xs font-medium"
               >
                 {status.label}
-              </Chip>
+              </Badge>
             )}
             {type && (
-              <Chip
-                size="sm"
-                variant={type.variant || "flat"}
-                color={type.color || "default"}
-                classNames={{ content: "text-xs" }}
+              <Badge
+                variant={type.variant || "default"}
+                className="text-xs"
               >
                 {type.label}
-              </Chip>
+              </Badge>
             )}
           </div>
           {subtitle && (
-            <p className="text-xs font-mono text-foreground/50 truncate">{subtitle}</p>
+            <p className="text-xs font-mono text-muted-foreground truncate">{subtitle}</p>
           )}
           {meta && (
-            <p className="text-xs text-foreground/40">{meta}</p>
+            <p className="text-xs text-muted-foreground/60">{meta}</p>
           )}
         </div>
       </div>
       {onConnect && (
         <Button
           size="sm"
-          color="primary"
-          variant="flat"
-          onPress={onConnect}
-          isDisabled={connectDisabled}
+          variant="default"
+          onClick={onConnect}
+          disabled={connectDisabled}
         >
           {connectLabel}
         </Button>
@@ -354,29 +335,29 @@ type EmptyStateProps = {
   description?: string;
   action?: {
     label: string;
-    onPress: () => void;
+    onClick: () => void;
   };
 };
 
 export function EmptyState({ icon, title, description, action }: EmptyStateProps) {
   return (
     <Card className="doppio-card border-dashed">
-      <CardBody className="text-center py-12">
+      <CardContent className="text-center py-12">
         {icon && (
-          <div className="flex justify-center mb-4 text-foreground/40">
+          <div className="flex justify-center mb-4 text-muted-foreground/60">
             {icon}
           </div>
         )}
         <h3 className="font-semibold mb-2">{title}</h3>
         {description && (
-          <p className="text-sm text-foreground/60 mb-4">{description}</p>
+          <p className="text-sm text-muted-foreground mb-4">{description}</p>
         )}
         {action && (
-          <Button color="primary" onPress={action.onPress}>
+          <Button variant="default" onClick={action.onClick}>
             {action.label}
           </Button>
         )}
-      </CardBody>
+      </CardContent>
     </Card>
   );
 }

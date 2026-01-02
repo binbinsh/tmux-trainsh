@@ -1,10 +1,9 @@
-import {
-  Chip,
-  Progress,
-  ScrollShadow,
-  Tooltip,
-} from "@nextui-org/react";
-import { Button } from "../ui";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useCallback, useState } from "react";
 import {
@@ -210,10 +209,31 @@ function ExecutionStatusBadge({ status }: { status: string }) {
 
   const cfg = config[status] || { color: "default", icon: null };
 
+  const variant =
+    cfg.color === "danger"
+      ? ("destructive" as const)
+      : cfg.color === "warning"
+      ? ("secondary" as const)
+      : cfg.color === "success"
+      ? ("default" as const)
+      : cfg.color === "secondary"
+      ? ("secondary" as const)
+      : cfg.color === "primary"
+      ? ("default" as const)
+      : ("outline" as const);
+
+  const customClassName =
+    cfg.color === "success"
+      ? "bg-green-500 text-white hover:bg-green-600"
+      : cfg.color === "warning"
+      ? "bg-yellow-500 text-white hover:bg-yellow-600"
+      : "";
+
   return (
-    <Chip size="sm" color={cfg.color} variant="flat" startContent={cfg.icon}>
-      {status.replace(/_/g, " ")}
-    </Chip>
+    <Badge variant={variant} className={cn("gap-1", customClassName)}>
+      {cfg.icon}
+      <span className="capitalize">{status.replace(/_/g, " ")}</span>
+    </Badge>
   );
 }
 
@@ -252,9 +272,10 @@ function StepItem({ step, isActive }: { step: InteractiveStepState; isActive: bo
   
   return (
     <div
-      className={`flex items-center gap-2 py-1.5 px-2 rounded-md transition-colors ${
-        isActive ? "bg-primary/10" : "hover:bg-content2/50"
-      }`}
+      className={cn(
+        "flex items-center gap-2 py-1.5 px-2 rounded-md transition-colors",
+        isActive ? "bg-primary/10" : "hover:bg-muted/50"
+      )}
     >
       <div className="flex-shrink-0">
         <StepStatusIcon status={step.status} />
@@ -360,7 +381,7 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-3 border-b border-divider">
+      <div className="p-3 border-b border-border">
         <div className="flex items-start justify-between gap-2 mb-2">
           <h3 className="text-sm font-semibold truncate flex-1">{execution.recipe_name}</h3>
         </div>
@@ -368,14 +389,18 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <ExecutionStatusBadge status={execution.status} />
           {execution.intervention_locked && (
-            <Chip size="sm" variant="flat" color="warning" startContent={<LockIcon />}>
+            <Badge variant="secondary" className="gap-1 bg-yellow-500 text-white hover:bg-yellow-600">
+              <LockIcon />
               Locked
-            </Chip>
+            </Badge>
           )}
           {currentProgress && (
-            <Chip size="sm" variant="flat" color="primary" className="max-w-full truncate">
+            <Badge
+              variant="outline"
+              className="max-w-full truncate font-mono bg-primary/10 border-primary/20 text-primary"
+            >
               {currentProgress}
-            </Chip>
+            </Badge>
           )}
         </div>
 
@@ -383,58 +408,71 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
         {!isCompleted && (
           <div className="flex items-center gap-1">
             {isActive && (
-              <Tooltip content="Pause">
-                <Button
-                  size="sm"
-                  isIconOnly
-                  variant="flat"
-                  color="warning"
-                  isLoading={actionLoading === "pause"}
-                  onPress={handlePause}
-                >
-                  <PauseIcon />
-                </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={handlePause}
+                    disabled={actionLoading !== null}
+                    className="text-warning hover:text-warning"
+                    aria-label="Pause"
+                  >
+                    {actionLoading === "pause" ? <LoaderIcon className="w-4 h-4" /> : <PauseIcon />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Pause</TooltipContent>
               </Tooltip>
             )}
             {isPaused && (
-              <Tooltip content="Resume">
-                <Button
-                  size="sm"
-                  isIconOnly
-                  variant="flat"
-                  color="success"
-                  isLoading={actionLoading === "resume"}
-                  onPress={handleResume}
-                >
-                  <PlayIcon />
-                </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={handleResume}
+                    disabled={actionLoading !== null}
+                    className="text-success hover:text-success"
+                    aria-label="Resume"
+                  >
+                    {actionLoading === "resume" ? <LoaderIcon className="w-4 h-4" /> : <PlayIcon />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Resume</TooltipContent>
               </Tooltip>
             )}
             {showCancelButton && (
               <>
-                <Tooltip content="Send Ctrl+C">
-                  <Button
-                    size="sm"
-                    isIconOnly
-                    variant="flat"
-                    color="warning"
-                    isLoading={actionLoading === "interrupt"}
-                    onPress={handleInterrupt}
-                  >
-                    <StopIcon />
-                  </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={handleInterrupt}
+                      disabled={actionLoading !== null}
+                      className="text-warning hover:text-warning"
+                      aria-label="Send Ctrl+C"
+                    >
+                      {actionLoading === "interrupt" ? <LoaderIcon className="w-4 h-4" /> : <StopIcon />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Send Ctrl+C</TooltipContent>
                 </Tooltip>
                 <div className="flex-1" />
-                <Tooltip content="Cancel execution">
-                  <Button
-                    size="sm"
-                    variant="flat"
-                    color="danger"
-                    isLoading={actionLoading === "cancel"}
-                    onPress={handleCancel}
-                  >
-                    Cancel
-                  </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={handleCancel}
+                      disabled={actionLoading !== null}
+                      aria-label="Cancel execution"
+                    >
+                      {actionLoading === "cancel" ? <LoaderIcon className="w-4 h-4" /> : null}
+                      Cancel
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Cancel execution</TooltipContent>
                 </Tooltip>
               </>
             )}
@@ -444,18 +482,18 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
 
       {/* Progress */}
       {!isCompleted && (
-        <div className="px-3 py-2 border-b border-divider">
+        <div className="px-3 py-2 border-b border-border">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-foreground/60">Progress</span>
+            <span className="text-xs text-muted-foreground">Progress</span>
             <span className="text-xs font-medium">
               {stepsCompleted}/{execution.steps.length}
             </span>
           </div>
           <Progress
-            size="sm"
             value={progress}
-            color={stepsFailed > 0 ? "danger" : "primary"}
             className="max-w-full"
+            trackClassName={stepsFailed > 0 ? "bg-danger/20" : undefined}
+            indicatorClassName={stepsFailed > 0 ? "bg-danger" : undefined}
           />
           {stepsFailed > 0 && (
             <p className="text-xs text-danger mt-1">{stepsFailed} step(s) failed</p>
@@ -465,14 +503,14 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
 
       {/* Input Status / Lock Control */}
       {(isActive || isWaitingForInput) && (
-        <div className="px-3 py-2 border-b border-divider">
+        <div className="px-3 py-2 border-b border-border">
           {isWaitingForInput ? (
             <>
-              <div className="flex items-center gap-2 p-2 bg-secondary/10 rounded-lg">
+              <div className="flex items-center gap-2 p-2 bg-secondary/10 rounded-lg border border-secondary/20">
                 <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
                 <span className="text-xs font-medium text-secondary">Waiting for your input</span>
               </div>
-              <p className="text-[10px] text-foreground/50 mt-1 text-center">
+              <p className="text-[10px] text-muted-foreground mt-1 text-center">
                 Command may need password or confirmation - type in the terminal
               </p>
             </>
@@ -480,16 +518,21 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
             <>
               <Button
                 size="sm"
-                variant={execution.intervention_locked ? "flat" : "bordered"}
-                color={execution.intervention_locked ? "warning" : "default"}
-                startContent={execution.intervention_locked ? <LockIcon /> : <TerminalIcon />}
-                isLoading={actionLoading === "lock"}
-                onPress={handleToggleLock}
+                variant={execution.intervention_locked ? "secondary" : "outline"}
+                onClick={handleToggleLock}
+                disabled={actionLoading !== null}
                 className="w-full"
               >
+                {actionLoading === "lock" ? (
+                  <LoaderIcon className="w-4 h-4" />
+                ) : execution.intervention_locked ? (
+                  <LockIcon className="w-4 h-4" />
+                ) : (
+                  <TerminalIcon className="w-4 h-4" />
+                )}
                 {execution.intervention_locked ? "Unlock Intervention" : "Lock Intervention"}
               </Button>
-              <p className="text-[10px] text-foreground/50 mt-1 text-center">
+              <p className="text-[10px] text-muted-foreground mt-1 text-center">
                 {execution.intervention_locked 
                   ? "Script is in control - your input is blocked" 
                   : "You can type in the terminal"}
@@ -500,9 +543,9 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
       )}
 
       {/* Steps List */}
-      <ScrollShadow className="flex-1 overflow-y-auto">
+      <ScrollArea className="flex-1">
         <div className="py-2">
-          <p className="text-xs font-medium text-foreground/60 px-3 mb-1">Steps</p>
+          <p className="text-xs font-medium text-muted-foreground px-3 mb-1">Steps</p>
           <div className="px-1">
             {execution.steps.map((step, index) => (
               <StepItem
@@ -513,10 +556,10 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
             ))}
           </div>
         </div>
-      </ScrollShadow>
+      </ScrollArea>
 
       {/* Footer */}
-      <div className="p-2 border-t border-divider text-[10px] text-foreground/40">
+      <div className="p-2 border-t border-border text-[10px] text-muted-foreground">
         Started {new Date(execution.created_at).toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
@@ -539,11 +582,11 @@ function CurrentRecipeView({ execution }: CurrentRecipeViewProps) {
 function EmptyState() {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
-      <div className="w-12 h-12 rounded-full bg-content2/50 flex items-center justify-center mb-3">
-        <TerminalIcon className="w-5 h-5 text-foreground/30" />
+      <div className="w-12 h-12 rounded-full bg-muted/50 border border-border flex items-center justify-center mb-3">
+        <TerminalIcon className="w-5 h-5 text-muted-foreground" />
       </div>
-      <p className="text-sm font-medium text-foreground/50 mb-1">No Recipe</p>
-      <p className="text-xs text-foreground/40">
+      <p className="text-sm font-medium text-muted-foreground mb-1">No Recipe</p>
+      <p className="text-xs text-muted-foreground">
         This terminal is not running a recipe automation
       </p>
     </div>
@@ -570,7 +613,7 @@ export function RecipeAutomationPanel() {
       animate={{ width: 280, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
       transition={{ duration: 0.2, ease: "easeInOut" }}
-      className="h-full flex flex-col border-l border-divider bg-content1/50 overflow-hidden"
+      className="h-full flex flex-col border-l border-border bg-background/50 overflow-hidden"
     >
       {/* Content */}
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">

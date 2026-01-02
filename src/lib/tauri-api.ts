@@ -1447,7 +1447,8 @@ export function useInteractiveExecutions() {
   return useQuery({
     queryKey: ["interactive-executions"],
     queryFn: interactiveRecipeApi.list,
-    refetchInterval: 2_000,
+    refetchInterval: 5_000,
+    staleTime: 3_000,
   });
 }
 
@@ -1481,16 +1482,17 @@ export function useInteractiveExecution(id: string | null) {
       
       const unlisteners: (() => void)[] = [];
       
-      for (const eventName of events) {
-        const u = await listen<{
-          execution_id?: string;
-          step_id?: string;
-          status?: string;
-        }>(eventName, (event) => {
-          if (event.payload.execution_id === id) {
-            queryClient.setQueryData<InteractiveExecution | undefined>(
-              ["interactive-executions", id],
-              (prev) => {
+	      for (const eventName of events) {
+	        const u = await listen<{
+	          execution_id?: string;
+	          step_id?: string;
+	          status?: string;
+	          progress?: string | null;
+	        }>(eventName, (event) => {
+	          if (event.payload.execution_id === id) {
+	            queryClient.setQueryData<InteractiveExecution | undefined>(
+	              ["interactive-executions", id],
+	              (prev) => {
                 if (!prev) return prev;
                 const next: InteractiveExecution = { ...prev };
                 const stepId = event.payload.step_id;
@@ -1514,17 +1516,17 @@ export function useInteractiveExecution(id: string | null) {
                   }
                 }
 
-                if (stepId) {
-                  const steps = prev.steps.map((step) => {
-                    if (step.step_id !== stepId) return step;
-                    if (eventName === "recipe:step_started") return { ...step, status: "running" };
-                    if (eventName === "recipe:step_completed") return { ...step, status: "success" };
-                    if (eventName === "recipe:step_failed") return { ...step, status: "failed" };
-                    if (eventName === "recipe:command_sending") return { ...step, status: "running" };
-                    return step;
-                  });
-                  next.steps = steps;
-                }
+	                if (stepId) {
+	                  const steps: InteractiveExecution["steps"] = prev.steps.map((step) => {
+	                    if (step.step_id !== stepId) return step;
+	                    if (eventName === "recipe:step_started") return { ...step, status: "running" };
+	                    if (eventName === "recipe:step_completed") return { ...step, status: "success" };
+	                    if (eventName === "recipe:step_failed") return { ...step, status: "failed" };
+	                    if (eventName === "recipe:command_sending") return { ...step, status: "running" };
+	                    return step;
+	                  });
+	                  next.steps = steps;
+	                }
 
                 return next;
               }

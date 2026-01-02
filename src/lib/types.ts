@@ -333,10 +333,19 @@ export type ScamalyticsConfig = {
   host: string;
 };
 
+export type AppThemeName = "tokyo-night-light" | "tokyo-night-dark";
+// Alias for backward compatibility
+export type TerminalThemeName = AppThemeName;
+
+export type TerminalConfig = {
+  theme: AppThemeName;
+};
+
 export type TrainshConfig = {
   vast: VastConfig;
   colab: ColabConfig;
   scamalytics: ScamalyticsConfig;
+  terminal: TerminalConfig;
 };
 
 export type VastInstance = {

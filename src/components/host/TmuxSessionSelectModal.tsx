@@ -1,16 +1,19 @@
-import { Chip, Divider, Input, Listbox, ListboxItem, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Spinner } from "@nextui-org/react";
 import { useState } from "react";
-import type { RemoteTmuxSession } from "../../lib/tauri-api";
-import { Button } from "../ui";
-
-function IconTerminal({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 17l6-6-6-6" />
-      <path d="M12 19h8" />
-    </svg>
-  );
-}
+import { Terminal, Loader2 } from "lucide-react";
+import type { RemoteTmuxSession } from "@/lib/tauri-api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 export function TmuxSessionSelectModal({
   sessions,
@@ -35,88 +38,97 @@ export function TmuxSessionSelectModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={(open) => !open && onClose()} isDismissable={true} size="md">
-      <ModalContent>
-        <ModalHeader className="flex items-center gap-2">
-          <IconTerminal />
-          Select Tmux Session
-        </ModalHeader>
-        <ModalBody className="gap-4">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-2">
+            <Terminal className="h-5 w-5" />
+            <DialogTitle>Select Tmux Session</DialogTitle>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Spinner size="lg" />
+              <Loader2 className="h-8 w-8 animate-spin" />
             </div>
           ) : sessions.length === 0 ? (
             <div className="text-center py-4">
-              <p className="text-foreground/60 mb-4">No tmux sessions running on this host.</p>
-              <p className="text-sm text-foreground/50">A new session will be created when you connect.</p>
+              <p className="text-muted-foreground mb-4">No tmux sessions running on this host.</p>
+              <p className="text-sm text-muted-foreground">A new session will be created when you connect.</p>
             </div>
           ) : (
             <>
-              <p className="text-sm text-foreground/60">
-                Found {sessions.length} existing session{sessions.length > 1 ? "s" : ""}. Select one to attach:
-              </p>
-              <Listbox
-                aria-label="Tmux sessions"
-                selectionMode="single"
-                onAction={(key) => onSelect(String(key))}
-                className="p-0"
-              >
-                {sessions.map((s) => (
-                  <ListboxItem
-                    key={s.name}
-                    description={
-                      <span className="flex items-center gap-2">
-                        <span>{s.windows} window{s.windows !== 1 ? "s" : ""}</span>
-                        {s.attached && (
-                          <Chip size="sm" color="success" variant="flat" className="h-5">
-                            attached
-                          </Chip>
-                        )}
-                      </span>
-                    }
-                    className="py-3"
-                  >
-                    <span className="font-mono font-medium">{s.name}</span>
-                  </ListboxItem>
-                ))}
-              </Listbox>
-              <Divider />
+              <div>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Found {sessions.length} existing session{sessions.length > 1 ? "s" : ""}. Select one to attach:
+                </p>
+                <div className="space-y-1">
+                  {sessions.map((s) => (
+                    <Button
+                      key={s.name}
+                      type="button"
+                      variant="outline"
+                      onClick={() => onSelect(s.name)}
+                      className={cn(
+                        "w-full h-auto justify-start text-left p-3 rounded-lg border border-border transition-colors",
+                        "hover:bg-accent hover:border-accent-foreground/20"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-mono font-medium truncate">{s.name}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-muted-foreground">
+                              {s.windows} window{s.windows !== 1 ? "s" : ""}
+                            </span>
+                            {s.attached && (
+                              <Badge variant="default" className="h-5 text-xs">
+                                attached
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <Separator />
             </>
           )}
 
-          <div>
-            <p className="text-sm font-medium mb-2">Or create a new session:</p>
+          <div className="space-y-2">
+            <Label htmlFor="new-session" className="text-sm font-medium">
+              Or create a new session:
+            </Label>
             <div className="flex gap-2">
               <Input
-                labelPlacement="inside"
+                id="new-session"
                 placeholder="Session name (default: main)"
                 value={newSessionName}
-                onValueChange={setNewSessionName}
-                size="sm"
-                className="flex-1"
-                classNames={{ input: "font-mono" }}
+                onChange={(e) => setNewSessionName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleCreate();
                 }}
+                className="flex-1 font-mono"
               />
               <Button
-                color="primary"
-                size="sm"
-                onPress={handleCreate}
+                onClick={handleCreate}
                 className="min-w-[80px]"
               >
                 Create
               </Button>
             </div>
           </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -20,6 +20,8 @@ export type RecentConnection =
       updated_at: string;
     };
 
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 const RECENTS_KEY = "doppio.recentConnections.v1";
 
 function safeJsonParse<T>(raw: string | null): T | null {
@@ -97,7 +99,7 @@ export function saveRecentConnections(recents: RecentConnection[]) {
 
 export function upsertRecentConnection(
   recents: RecentConnection[],
-  next: Omit<RecentConnection, "updated_at"> & { updated_at?: string },
+  next: DistributiveOmit<RecentConnection, "updated_at"> & { updated_at?: string },
   max = 12
 ): RecentConnection[] {
   const updated_at = next.updated_at ?? new Date().toISOString();
@@ -111,4 +113,3 @@ export function upsertRecentConnection(
 export function removeRecentConnection(recents: RecentConnection[], id: string): RecentConnection[] {
   return recents.filter((r) => r.id !== id);
 }
-
