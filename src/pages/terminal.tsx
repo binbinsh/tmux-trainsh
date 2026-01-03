@@ -60,7 +60,7 @@ interface TerminalPaneProps {
   onSearchResult: (current: number, total: number) => void;
   searchDirection: "next" | "prev" | null;
   onSearchComplete: () => void;
-  recipeExecutionId?: string | null;
+  skillExecutionId?: string | null;
   interventionLocked?: boolean;
   themeName?: TerminalThemeName;
   onClose: () => void;
@@ -269,10 +269,10 @@ export function TerminalPage() {
     openLocalTerminal,
     closeSession,
     refreshSessions,
-    addRecipeTerminal,
+    addSkillTerminal,
     isLoading,
-    recipeDetailsExpanded,
-    toggleRecipeDetails,
+    skillDetailsExpanded,
+    toggleSkillDetails,
     workspaceVisible,
     setWorkspaceVisible,
     removeCurrentPlaceholder,
@@ -483,18 +483,18 @@ export function TerminalPage() {
         throw new Error("Execution did not return a terminal session");
       }
 
-      addRecipeTerminal({
+      addSkillTerminal({
         id: execution.terminal_id,
-        title: `Recipe: ${execution.recipe_name}`,
-        recipeExecutionId: execution.id,
+        title: `Skill: ${execution.recipe_name}`,
+        skillExecutionId: execution.id,
         hostId: execution.host_id,
       });
       recordConnectionByHostId(execution.host_id);
     } catch (e) {
-      console.error("Failed to run recipe from terminal launcher:", e);
+      console.error("Failed to run skill from terminal launcher:", e);
       setLauncherError(getErrorMessage(e));
     }
-  }, [addRecipeTerminal, removeCurrentPlaceholder, runRecipeMutation, setActiveId, setWorkspaceVisible]);
+  }, [addSkillTerminal, removeCurrentPlaceholder, runRecipeMutation, setActiveId, setWorkspaceVisible]);
 
   const launcherPrimaryLabel = selectedRecipePath ? "Run" : "Connect";
   const canLauncherPrimary = Boolean(selectedRecipePath ? selectedExecution : selectedRecent);
@@ -818,7 +818,7 @@ export function TerminalPage() {
       if (e.metaKey && e.key === "]") {
         e.preventDefault();
         e.stopPropagation();
-        toggleRecipeDetails();
+        toggleSkillDetails();
         return;
       }
 
@@ -856,7 +856,7 @@ export function TerminalPage() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [closeSession, createNewTab, toggleRecipeDetails, workspaceVisible, openLocalTerminal]);
+  }, [closeSession, createNewTab, toggleSkillDetails, workspaceVisible, openLocalTerminal]);
 
   const handleSearchResult = useCallback((current: number, total: number) => {
     setSearchResult({ current, total });
@@ -1063,9 +1063,9 @@ export function TerminalPage() {
                       <Server className="w-4 h-4" />
                       <span>Hosts</span>
                     </Button>
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate({ to: "/recipes" })}>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate({ to: "/skills" })}>
                       <Folder className="w-4 h-4" />
-                      <span>Recipes</span>
+                      <span>Skills</span>
                     </Button>
                   </div>
 
@@ -1304,7 +1304,7 @@ export function TerminalPage() {
                                       size="icon"
                                       className="w-7 h-7 opacity-60 hover:opacity-100"
                                       onClick={() => {
-                                        navigate({ to: "/recipes/$path", params: { path: encodeURIComponent(exec.recipe_path) } });
+                                        navigate({ to: "/skills/$path", params: { path: encodeURIComponent(exec.recipe_path) } });
                                       }}
                                     >
                                       <Pencil className="w-3.5 h-3.5" />
@@ -1332,7 +1332,7 @@ export function TerminalPage() {
                               <Link to="/hosts">Go to Hosts</Link>
                             </Button>
                             <Button variant="outline" asChild>
-                              <Link to="/recipes">Go to Recipes</Link>
+                              <Link to="/skills">Go to Skills</Link>
                             </Button>
                           </div>
                         ) : null
@@ -1345,10 +1345,10 @@ export function TerminalPage() {
           </div>
         ) : (
           <>
-            {activeId && sessions.find((s) => s.id === activeId)?.recipeExecutionId && (
+            {activeId && sessions.find((s) => s.id === activeId)?.skillExecutionId && (
               <RecipeTerminalControls
                 terminalId={activeId}
-                executionId={sessions.find((s) => s.id === activeId)?.recipeExecutionId}
+                executionId={sessions.find((s) => s.id === activeId)?.skillExecutionId}
               />
             )}
             <div
@@ -1370,7 +1370,7 @@ export function TerminalPage() {
                     onSearchResult={handleSearchResult}
                     searchDirection={activeId === s.id ? searchDirection : null}
                     onSearchComplete={handleSearchComplete}
-                    recipeExecutionId={s.recipeExecutionId}
+                    skillExecutionId={s.skillExecutionId}
                     interventionLocked={s.interventionLocked}
                     themeName={terminalTheme}
                     onClose={() => void closeSession(s.id)}

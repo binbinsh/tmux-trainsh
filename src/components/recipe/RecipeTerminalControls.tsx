@@ -348,7 +348,7 @@ export function RecipeTerminalControls({
   onInterrupt,
   onCancel,
 }: RecipeTerminalControlsProps) {
-  const { setInterventionLocked, getSession, recipeDetailsExpanded, toggleRecipeDetails } = useTerminal();
+  const { setInterventionLocked, getSession, skillDetailsExpanded, toggleSkillDetails } = useTerminal();
   const session = getSession(terminalId);
 
   // Get execution state
@@ -586,14 +586,14 @@ export function RecipeTerminalControls({
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={toggleRecipeDetails}
-                  aria-label={recipeDetailsExpanded ? "Show less (⌘])" : "Show more (⌘])"}
+                  onClick={toggleSkillDetails}
+                  aria-label={skillDetailsExpanded ? "Show less (⌘])" : "Show more (⌘])"}
                 >
-                  {recipeDetailsExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+                  {skillDetailsExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {recipeDetailsExpanded ? "Show less (⌘])" : "Show more (⌘])"}
+                {skillDetailsExpanded ? "Show less (⌘])" : "Show more (⌘])"}
               </TooltipContent>
             </Tooltip>
           </div>
@@ -601,7 +601,7 @@ export function RecipeTerminalControls({
 
         {/* Expanded details panel */}
         <AnimatePresence>
-          {recipeDetailsExpanded && (
+          {skillDetailsExpanded && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
@@ -676,13 +676,13 @@ export function RecipeTerminalControls({
 // ============================================================
 
 /**
- * Hook to manage recipe terminal state and events
+ * Hook to manage skill terminal state and events
  */
 export function useRecipeTerminal(terminalId: string) {
-  const { getSession, setInterventionLocked, addRecipeTerminal } = useTerminal();
+  const { getSession, setInterventionLocked, addSkillTerminal } = useTerminal();
   const session = getSession(terminalId);
-  
-  const executionId = session?.recipeExecutionId;
+
+  const executionId = session?.skillExecutionId;
   const { data: execution, isLoading } = useInteractiveExecution(executionId ?? null);
 
   // Send data to terminal
@@ -717,7 +717,7 @@ export function useRecipeTerminal(terminalId: string) {
     sendInterrupt,
     setInterventionLocked: (locked: boolean) =>
       setInterventionLocked(terminalId, locked),
-    addRecipeTerminal,
+    addSkillTerminal,
   };
 }
 

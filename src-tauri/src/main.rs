@@ -1155,7 +1155,7 @@ fn main() {
             secrets::secret_delete,
             secrets::secret_check_exists,
             secrets::secret_suggestions,
-            secrets::secret_validate_refs
+            secrets::secret_validate_refs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

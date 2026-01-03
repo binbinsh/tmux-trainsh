@@ -13,10 +13,10 @@ function Tag({ children, variant = "default" }: { children: ReactNode; variant?:
   const colors = {
     default: "bg-muted/40 text-muted-foreground",
     primary: "bg-muted/40 text-muted-foreground",
-    warning: "bg-muted/40 text-muted-foreground",
+    warning: "bg-orange-500/20 text-orange-600 dark:text-orange-400",
   };
   return (
-    <span className={cn("inline-flex items-center px-1 py-px rounded text-[10px] font-normal whitespace-nowrap", colors[variant])}>
+    <span className={cn("inline-flex items-center px-1 py-px rounded-sm text-[10px] font-normal whitespace-nowrap", colors[variant])}>
       {children}
     </span>
   );

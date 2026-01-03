@@ -227,6 +227,28 @@
     width: 0px;
     background: transparent;
   }
+
+  /* Mouse mode support (tmux, vim, etc.) */
+  .xterm.enable-mouse-events {
+    /* When mouse events are enabled, use standard pointer cursor */
+    cursor: default;
+  }
+
+  .xterm.enable-mouse-events .xterm-screen {
+    cursor: default;
+  }
+
+  /* Link hover cursor */
+  .xterm.xterm-cursor-pointer,
+  .xterm.xterm-cursor-pointer .xterm-screen {
+    cursor: pointer;
+  }
+
+  /* Column selection mode (alt buffer applications) */
+  .xterm.column-select.focus,
+  .xterm.column-select.focus .xterm-screen {
+    cursor: crosshair;
+  }
 }
 
 @layer components {

@@ -2080,8 +2080,8 @@ function ActionPalette({ onSelect }: { onSelect: (opType: string) => void }) {
   );
 }
 
-export function RecipeEditorPage() {
-  const params = useParams({ from: "/recipes/$path" });
+export function SkillEditorPage() {
+  const params = useParams({ from: "/skills/$path" });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const routePath = decodeURIComponent(params.path);
@@ -2144,7 +2144,7 @@ export function RecipeEditorPage() {
         if (newPath !== currentPath) {
           recipePathRef.current = newPath;
           navigate({
-            to: "/recipes/$path",
+            to: "/skills/$path",
             params: { path: encodeURIComponent(newPath) },
             replace: true,
           });
@@ -2267,10 +2267,10 @@ export function RecipeEditorPage() {
         if (!execution.terminal_id) {
           throw new Error("Execution did not return a terminal session");
         }
-        terminalContext.addRecipeTerminal({
+        terminalContext.addSkillTerminal({
           id: execution.terminal_id,
-          title: `Recipe: ${execution.recipe_name}`,
-          recipeExecutionId: execution.id,
+          title: `Skill: ${execution.recipe_name}`,
+          skillExecutionId: execution.id,
           hostId: execution.host_id,
         });
       }
@@ -2506,7 +2506,7 @@ export function RecipeEditorPage() {
       <header className="flex items-center gap-4 px-4 h-14 border-b border-border bg-background">
         {/* Left: Back button */}
         <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-          <Link to="/recipes">
+          <Link to="/skills">
             <IconArrowLeft />
           </Link>
         </Button>

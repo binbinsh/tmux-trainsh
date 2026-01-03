@@ -141,7 +141,7 @@ function SkeletonSection({ itemCount }: { itemCount: number }) {
   );
 }
 
-export function RecipesPage() {
+export function SkillsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const terminalContext = useTerminalOptional();
@@ -258,7 +258,7 @@ export function RecipesPage() {
       }
       setCreateRecipeModalOpen(false);
       setNewRecipeName("");
-      navigate({ to: "/recipes/$path", params: { path: encodeURIComponent(path) } });
+      navigate({ to: "/skills/$path", params: { path: encodeURIComponent(path) } });
     } catch (e) {
       console.error("Failed to create recipe:", e);
     }
@@ -318,10 +318,10 @@ export function RecipesPage() {
         if (!execution.terminal_id) {
           throw new Error("Execution did not return a terminal session");
         }
-        terminalContext.addRecipeTerminal({
+        terminalContext.addSkillTerminal({
           id: execution.terminal_id,
-          title: `Recipe: ${execution.recipe_name}`,
-          recipeExecutionId: execution.id,
+          title: `Skill: ${execution.recipe_name}`,
+          skillExecutionId: execution.id,
           hostId: execution.host_id,
         });
       }
@@ -358,10 +358,10 @@ export function RecipesPage() {
         if (terminalContext) {
           const existing = terminalContext.getSession(execution.terminal_id);
           if (!existing) {
-            terminalContext.addRecipeTerminal({
+            terminalContext.addSkillTerminal({
               id: execution.terminal_id,
-              title: `Recipe: ${execution.recipe_name}`,
-              recipeExecutionId: execution.id,
+              title: `Skill: ${execution.recipe_name}`,
+              skillExecutionId: execution.id,
               hostId: execution.host_id,
             });
           } else {
@@ -376,10 +376,10 @@ export function RecipesPage() {
       queryClient.setQueryData(["interactive-executions", resumed.id], resumed);
       queryClient.invalidateQueries({ queryKey: ["interactive-executions"] });
       if (terminalContext && resumed.terminal_id) {
-        terminalContext.addRecipeTerminal({
+        terminalContext.addSkillTerminal({
           id: resumed.terminal_id,
-          title: `Recipe: ${resumed.recipe_name}`,
-          recipeExecutionId: resumed.id,
+          title: `Skill: ${resumed.recipe_name}`,
+          skillExecutionId: resumed.id,
           hostId: resumed.host_id,
         });
       }
@@ -457,7 +457,7 @@ export function RecipesPage() {
   const showLocalOption = recipeToRun?.recipe.target?.type === "any" || recipeToRun?.recipe.target?.type === "local";
 
   const handleEdit = (path: string) => {
-    navigate({ to: "/recipes/$path", params: { path: encodeURIComponent(path) } });
+    navigate({ to: "/skills/$path", params: { path: encodeURIComponent(path) } });
   };
 
   const handleDuplicate = async (path: string, name: string) => {

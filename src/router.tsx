@@ -10,8 +10,8 @@ import { JobPage } from "./pages/job";
 import { TerminalPage } from "./pages/terminal";
 import { StoragePage } from "./pages/storage";
 import { FileBrowserPage } from "./pages/file-browser";
-import { RecipesPage } from "./pages/recipes";
-import { RecipeEditorPage } from "./pages/recipe-editor";
+import { SkillsPage } from "./pages/skills";
+import { SkillEditorPage } from "./pages/skill-editor";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -53,12 +53,12 @@ const hostNewRoute = createRoute({
   },
 });
 
-// Legacy session routes - redirect to recipes
+// Legacy session routes - redirect to skills
 const sessionsRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sessions",
   beforeLoad: () => {
-    throw redirect({ to: "/recipes" });
+    throw redirect({ to: "/skills" });
   },
 });
 
@@ -66,7 +66,16 @@ const tasksRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tasks/new",
   beforeLoad: () => {
-    throw redirect({ to: "/recipes" });
+    throw redirect({ to: "/skills" });
+  },
+});
+
+// Legacy recipes route - redirect to skills
+const recipesRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/recipes",
+  beforeLoad: () => {
+    throw redirect({ to: "/skills" });
   },
 });
 
@@ -114,17 +123,17 @@ const storageBrowseRoute = createRoute({
   component: FileBrowserPage,
 });
 
-// Recipe routes
-const recipesRoute = createRoute({
+// Skill routes
+const skillsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/recipes",
-  component: RecipesPage,
+  path: "/skills",
+  component: SkillsPage,
 });
 
-const recipeEditorRoute = createRoute({
+const skillEditorRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/recipes/$path",
-  component: RecipeEditorPage,
+  path: "/skills/$path",
+  component: SkillEditorPage,
 });
 
 const routeTree = rootRoute.addChildren([
@@ -134,15 +143,16 @@ const routeTree = rootRoute.addChildren([
   hostNewRoute,
   hostDetailRoute,
   vastHostDetailRoute,
-  // Recipe routes
-  recipesRoute,
-  recipeEditorRoute,
+  // Skill routes
+  skillsRoute,
+  skillEditorRoute,
   // Storage routes
   storageRoute,
   storageBrowseRoute,
   // Legacy redirects
   sessionsRedirectRoute,
   tasksRedirectRoute,
+  recipesRedirectRoute,
   // Legacy routes
   colabRoute,
   jobRoute,

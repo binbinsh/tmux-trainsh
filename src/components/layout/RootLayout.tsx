@@ -67,8 +67,8 @@ function RootLayoutShell() {
 
   const executionsQuery = useInteractiveExecutions();
 
-  const recipesQuery = useQuery({
-    queryKey: ["recipes"],
+  const skillsQuery = useQuery({
+    queryKey: ["skills"],
     queryFn: recipeApi.list,
     staleTime: 30_000,
   });
@@ -80,10 +80,10 @@ function RootLayoutShell() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
           hosts={hostsQuery.data ?? []}
-          recipes={recipesQuery.data ?? []}
+          skills={skillsQuery.data ?? []}
           executions={executionsQuery.data ?? []}
           isLoadingHosts={hostsQuery.isLoading}
-          isLoadingRecipes={recipesQuery.isLoading}
+          isLoadingSkills={skillsQuery.isLoading}
         />
 
         <SidebarInset className="min-h-0 overflow-hidden">

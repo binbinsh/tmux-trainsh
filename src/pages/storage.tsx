@@ -1195,11 +1195,11 @@ export function StoragePage() {
     navigate({ to: "/storage/$id", params: { id: storage.id } });
   }
 
-  function buildRightTags(storage: Storage): { label: string; color?: "default" | "primary" | "warning" }[] {
-    const tags: { label: string; color?: "default" | "primary" | "warning" }[] = [];
+  function buildRightTags(storage: Storage): { label: string; variant?: "default" | "primary" | "warning" }[] {
+    const tags: { label: string; variant?: "default" | "primary" | "warning" }[] = [];
 
     if (storage.readonly) {
-      tags.push({ label: "Read-only", color: "warning" });
+      tags.push({ label: "Read-only", variant: "warning" });
     }
 
     const usage = storageUsages.get(storage.id);
@@ -1210,14 +1210,14 @@ export function StoragePage() {
 
     if (supportsUsage) {
       if (usageLoading && !usage) {
-        tags.push({ label: "...", color: "default" });
+        tags.push({ label: "...", variant: "default" });
       } else if (usage) {
         if (storage.backend.type === "cloudflare_r2") {
-          tags.push({ label: formatStorageSize(usage.used_gb), color: "primary" });
+          tags.push({ label: formatStorageSize(usage.used_gb), variant: "primary" });
         } else if ((storage.backend.type === "smb" || storage.backend.type === "ssh_remote") && usage.total_gb != null) {
           tags.push({
             label: `${formatStorageSize(usage.used_gb, 1)} / ${formatStorageSize(usage.total_gb, 1)}`,
-            color: "primary",
+            variant: "primary",
           });
         }
       }
@@ -1225,7 +1225,7 @@ export function StoragePage() {
 
     if (storage.backend.type === "cloudflare_r2" && usage) {
       const r2MonthlyCost = calculateR2BucketCost(usage.used_gb);
-      tags.push({ label: `${formatUsd(r2MonthlyCost)}/mo`, color: "warning" });
+      tags.push({ label: `${formatUsd(r2MonthlyCost)}/mo`, variant: "warning" });
     }
 
     return tags;

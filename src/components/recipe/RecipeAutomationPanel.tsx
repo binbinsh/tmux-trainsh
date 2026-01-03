@@ -598,13 +598,13 @@ function EmptyState() {
 // ============================================================
 
 export function RecipeAutomationPanel() {
-  const { sessions, activeId, hasActiveRecipe } = useTerminal();
-  
+  const { sessions, activeId, hasActiveSkill } = useTerminal();
+
   // Get the active terminal session
   const activeSession = sessions.find((s) => s.id === activeId);
-  
-  // Get the recipe execution for the active terminal (if any)
-  const executionId = activeSession?.recipeExecutionId ?? null;
+
+  // Get the skill execution for the active terminal (if any)
+  const executionId = activeSession?.skillExecutionId ?? null;
   const { data: execution, isLoading } = useInteractiveExecution(executionId);
 
   return (
@@ -617,7 +617,7 @@ export function RecipeAutomationPanel() {
     >
       {/* Content */}
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-        {!hasActiveRecipe ? (
+        {!hasActiveSkill ? (
           <EmptyState />
         ) : isLoading ? (
           <div className="flex-1 flex items-center justify-center">

@@ -5,8 +5,8 @@ import { termClose, termList, termOpenLocal } from "../lib/tauri-api";
 export type TerminalSession = {
   id: string;
   title: string;
-  /** Associated recipe execution ID (if this terminal is running a recipe) */
-  recipeExecutionId?: string | null;
+  /** Associated skill execution ID (if this terminal is running a skill) */
+  skillExecutionId?: string | null;
   /** Host ID for the connection */
   hostId?: string | null;
   /** Whether intervention is currently locked */
@@ -22,19 +22,19 @@ type TerminalContextType = {
   openLocalTerminal: () => Promise<void>;
   closeSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
-  /** Add a recipe terminal session */
-  addRecipeTerminal: (session: TerminalSession) => void;
+  /** Add a skill terminal session */
+  addSkillTerminal: (session: TerminalSession) => void;
   /** Update intervention lock state for a session */
   setInterventionLocked: (sessionId: string, locked: boolean) => void;
   /** Get session by terminal ID */
   getSession: (id: string) => TerminalSession | undefined;
   isLoading: boolean;
-  /** Whether the recipe details panel is expanded in the top bar */
-  recipeDetailsExpanded: boolean;
-  setRecipeDetailsExpanded: (expanded: boolean) => void;
-  toggleRecipeDetails: () => void;
-  /** Check if current terminal has an associated recipe */
-  hasActiveRecipe: boolean;
+  /** Whether the skill details panel is expanded in the top bar */
+  skillDetailsExpanded: boolean;
+  setSkillDetailsExpanded: (expanded: boolean) => void;
+  toggleSkillDetails: () => void;
+  /** Check if current terminal has an associated skill */
+  hasActiveSkill: boolean;
   /** Whether the workspace panel is visible (for connecting to hosts) */
   workspaceVisible: boolean;
   setWorkspaceVisible: (visible: boolean) => void;
@@ -63,17 +63,17 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [recipeDetailsExpanded, setRecipeDetailsExpanded] = useState(false);
+  const [skillDetailsExpanded, setSkillDetailsExpanded] = useState(false);
   const [workspaceVisible, setWorkspaceVisible] = useState(false);
   const lastSessionCount = useRef(0);
 
-  // Check if current terminal has an associated recipe
-  const hasActiveRecipe = sessions.some(
-    (s) => s.id === activeId && s.recipeExecutionId
+  // Check if current terminal has an associated skill
+  const hasActiveSkill = sessions.some(
+    (s) => s.id === activeId && s.skillExecutionId
   );
 
-  const toggleRecipeDetails = useCallback(() => {
-    setRecipeDetailsExpanded((prev) => !prev);
+  const toggleSkillDetails = useCallback(() => {
+    setSkillDetailsExpanded((prev) => !prev);
   }, []);
 
   // Show workspace panel (hides terminal, shows host connection UI)
@@ -123,7 +123,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const refreshSessions = useCallback(async () => {
     try {
       const existing = await termList();
-      // Merge backend sessions with local state to preserve recipeExecutionId, order, and other frontend-only data
+      // Merge backend sessions with local state to preserve skillExecutionId, order, and other frontend-only data
       setSessions((prev) => {
         // Keep local order: update existing sessions, append truly new ones
         const existingIds = new Set(existing.map((s) => s.id));
@@ -137,7 +137,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
             return backendSession
               ? {
                   ...backendSession,
-                  recipeExecutionId: localSession.recipeExecutionId,
+                  skillExecutionId: localSession.skillExecutionId,
                   hostId: localSession.hostId,
                   interventionLocked: localSession.interventionLocked,
                 }
@@ -211,9 +211,9 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  /** Add a recipe terminal session (created externally by recipe runner) */
-  const addRecipeTerminal = useCallback((session: TerminalSession) => {
-    console.log("[TerminalProvider] Adding recipe terminal:", session);
+  /** Add a skill terminal session (created externally by skill runner) */
+  const addSkillTerminal = useCallback((session: TerminalSession) => {
+    console.log("[TerminalProvider] Adding skill terminal:", session);
     setSessions((prev) => {
       // Check if session already exists
       const existingIndex = prev.findIndex((s) => s.id === session.id);
@@ -251,10 +251,10 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
           // Find the terminal session with this execution_id and update its lock state
           setSessions((prev) => {
             return prev.map((s) => {
-              // Match by terminal_id if provided, otherwise by recipeExecutionId
+              // Match by terminal_id if provided, otherwise by skillExecutionId
               if (
                 (event.payload.terminal_id && s.id === event.payload.terminal_id) ||
-                s.recipeExecutionId === event.payload.execution_id
+                s.skillExecutionId === event.payload.execution_id
               ) {
                 return { ...s, interventionLocked: event.payload.locked };
               }
@@ -286,14 +286,14 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         openLocalTerminal,
         closeSession,
         refreshSessions,
-        addRecipeTerminal,
+        addSkillTerminal,
         setInterventionLocked,
         getSession,
         isLoading,
-        recipeDetailsExpanded,
-        setRecipeDetailsExpanded,
-        toggleRecipeDetails,
-        hasActiveRecipe,
+        skillDetailsExpanded,
+        setSkillDetailsExpanded,
+        toggleSkillDetails,
+        hasActiveSkill,
         workspaceVisible,
         setWorkspaceVisible,
         showWorkspace,

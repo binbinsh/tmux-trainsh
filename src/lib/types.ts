@@ -1041,6 +1041,9 @@ export type RecipeSummary = {
   step_count: number;
 };
 
+// Alias for RecipeSummary (used in UI as "Skills")
+export type SkillSummary = RecipeSummary;
+
 export type ValidationResult = {
   valid: boolean;
   errors: ValidationError[];

@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo, useCallback, memo } from "react";
 import { Plus, Settings, Database, Terminal, FlaskConical, X, SquareTerminal, Server } from "lucide-react";
-import type { Host, InteractiveExecution, RecipeSummary } from "@/lib/types";
+import type { Host, InteractiveExecution, SkillSummary } from "@/lib/types";
 import { useTerminalOptional, type TerminalSession } from "@/contexts/TerminalContext";
 import {
   Sidebar as UiSidebar,
@@ -26,10 +26,10 @@ import appLogo from "@/assets/icons/app-logo.png";
 
 type SidebarProps = {
   hosts: Host[];
-  recipes: RecipeSummary[];
+  skills: SkillSummary[];
   executions: InteractiveExecution[];
   isLoadingHosts?: boolean;
-  isLoadingRecipes?: boolean;
+  isLoadingSkills?: boolean;
 };
 
 // Terminal session item in sidebar
@@ -44,7 +44,7 @@ const TerminalSessionItem = memo(function TerminalSessionItem({
   onClick: () => void;
   onClose: () => void;
 }) {
-  const isRecipe = !!session.recipeExecutionId;
+  const isSkill = !!session.skillExecutionId;
   const isPlaceholder = session.isPlaceholder;
 
   return (
@@ -55,7 +55,7 @@ const TerminalSessionItem = memo(function TerminalSessionItem({
         onClick={onClick}
         tooltip={session.title}
       >
-        {isRecipe ? (
+        {isSkill ? (
           <FlaskConical className="size-3.5" />
         ) : isPlaceholder ? (
           <Plus className="size-3.5" />
@@ -80,7 +80,7 @@ const TerminalSessionItem = memo(function TerminalSessionItem({
   );
 });
 
-export const Sidebar = memo(function Sidebar({ hosts, recipes, executions }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ hosts, skills, executions }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentPath = location.pathname;
@@ -183,26 +183,26 @@ export const Sidebar = memo(function Sidebar({ hosts, recipes, executions }: Sid
               </SidebarMenuItem>
 
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={isActive("/recipes")} tooltip="Recipes">
-                  <Link to="/recipes">
-                    <FlaskConical />
-                    <span>Recipes</span>
-                  </Link>
-                </SidebarMenuButton>
-                {activeExecutions.length > 0 && (
-                  <SidebarMenuBadge className={isActive("/recipes") ? "text-[rgb(var(--doppio-accent-blue))]" : ""}>
-                    {activeExecutions.length}
-                  </SidebarMenuBadge>
-                )}
-              </SidebarMenuItem>
-
-              <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={isActive("/storage")} tooltip="Storage">
                   <Link to="/storage">
                     <Database />
                     <span>Storage</span>
                   </Link>
                 </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={isActive("/skills")} tooltip="Skills">
+                  <Link to="/skills">
+                    <FlaskConical />
+                    <span>Skills</span>
+                  </Link>
+                </SidebarMenuButton>
+                {activeExecutions.length > 0 && (
+                  <SidebarMenuBadge className={isActive("/skills") ? "text-[rgb(var(--doppio-accent-blue))]" : ""}>
+                    {activeExecutions.length}
+                  </SidebarMenuBadge>
+                )}
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>

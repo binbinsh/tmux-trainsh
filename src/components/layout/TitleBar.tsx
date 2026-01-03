@@ -22,11 +22,11 @@ function TerminalTab({
   onClose: () => void;
   isDragging?: boolean;
 }) {
-  const isRecipe = !!session.recipeExecutionId;
+  const isSkill = !!session.skillExecutionId;
   const isPlaceholder = session.isPlaceholder;
 
   // Determine icon based on session type
-  const TabIcon = isRecipe ? FlaskConical : isPlaceholder ? Plus : SquareTerminal;
+  const TabIcon = isSkill ? FlaskConical : isPlaceholder ? Plus : SquareTerminal;
 
   return (
     <motion.div

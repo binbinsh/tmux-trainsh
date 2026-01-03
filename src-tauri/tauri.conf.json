@@ -1,7 +1,7 @@
 {
   "$schema": "https://tauri.app/schema.json",
   "productName": "trainsh Doppio",
-  "version": "0.6.0",
+  "version": "0.10.0",
   "identifier": "sh.train.doppio",
   "bundle": {
     "active": true,
