@@ -398,6 +398,140 @@ async fn list_vast_files(
     Ok(entries)
 }
 
+/// Delete a local file or directory
+#[tauri::command]
+async fn delete_local_file(path: String) -> Result<(), AppError> {
+    if path.trim().is_empty() {
+        return Err(AppError::invalid_input("Path is required"));
+    }
+
+    let path = PathBuf::from(&path);
+    if !path.exists() {
+        return Err(AppError::not_found("File or directory not found"));
+    }
+
+    if path.is_dir() {
+        tokio::fs::remove_dir_all(&path)
+            .await
+            .map_err(|e| AppError::io(format!("Failed to delete directory: {}", e)))?;
+    } else {
+        tokio::fs::remove_file(&path)
+            .await
+            .map_err(|e| AppError::io(format!("Failed to delete file: {}", e)))?;
+    }
+    Ok(())
+}
+
+/// Delete a file or directory on a remote host via SSH
+#[tauri::command]
+async fn delete_host_file(host_id: String, path: String) -> Result<(), AppError> {
+    if path.trim().is_empty() {
+        return Err(AppError::invalid_input("Path is required"));
+    }
+
+    let host = host::get_host(&host_id).await?;
+    let ssh = host
+        .ssh
+        .as_ref()
+        .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
+
+    let escaped_path = shell_escape::unix::escape(path.into()).to_string();
+    let cmd = format!("rm -rf {}", escaped_path);
+
+    let mut ssh_cmd = tokio::process::Command::new("ssh");
+    for arg in ssh.common_ssh_options() {
+        ssh_cmd.arg(arg);
+    }
+    ssh_cmd.arg(ssh.target());
+    ssh_cmd.arg(&cmd);
+
+    let output = ssh_cmd
+        .output()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to execute SSH: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::command(format!(
+            "Failed to delete remote file: {}",
+            stderr.trim()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Delete a file or directory on a Vast.ai instance via SSH
+#[tauri::command]
+async fn delete_vast_file(instance_id: i64, path: String) -> Result<(), AppError> {
+    if path.trim().is_empty() {
+        return Err(AppError::invalid_input("Path is required"));
+    }
+
+    let cfg = load_config().await?;
+    let client = VastClient::from_cfg(&cfg)?;
+    let inst = client.get_instance(instance_id).await?;
+
+    let host = inst.ssh_host.clone().unwrap_or_default().trim().to_string();
+    let port = inst.ssh_port.unwrap_or(0);
+    if host.is_empty() || port <= 0 {
+        return Err(AppError::invalid_input(
+            "Instance does not have SSH info yet (is it running and provisioned?)",
+        ));
+    }
+
+    let ssh = SshSpec {
+        host,
+        port,
+        user: {
+            let u = cfg.vast.ssh_user.trim();
+            if u.is_empty() {
+                "root".to_string()
+            } else {
+                u.to_string()
+            }
+        },
+        key_path: match cfg
+            .vast
+            .ssh_key_path
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+        {
+            Some(s) => {
+                let p = ssh_keys::materialize_private_key_path(&s).await?;
+                Some(p.to_string_lossy().to_string())
+            }
+            None => None,
+        },
+        extra_args: vec![],
+    };
+
+    let escaped_path = shell_escape::unix::escape(path.into()).to_string();
+    let cmd = format!("rm -rf {}", escaped_path);
+
+    let mut ssh_cmd = tokio::process::Command::new("ssh");
+    for arg in ssh.common_ssh_options() {
+        ssh_cmd.arg(arg);
+    }
+    ssh_cmd.arg(ssh.target());
+    ssh_cmd.arg(&cmd);
+
+    let output = ssh_cmd
+        .output()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to execute SSH: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::command(format!(
+            "Failed to delete file on Vast instance: {}",
+            stderr.trim()
+        )));
+    }
+
+    Ok(())
+}
+
 // ============================================================
 // SSH Key Commands
 // ============================================================
@@ -1150,6 +1284,9 @@ fn main() {
             list_vast_files,
             create_local_dir,
             create_host_dir,
+            delete_local_file,
+            delete_host_file,
+            delete_vast_file,
             // External Editor
             open_in_external_editor,
             // SSH Keys

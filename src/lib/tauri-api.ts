@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion as tauriGetVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Currency,
@@ -103,6 +104,14 @@ async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
 }
 
 // ============================================================
+// App Info API
+// ============================================================
+
+export async function getAppVersion(): Promise<string> {
+  return tauriGetVersion();
+}
+
+// ============================================================
 // Config API
 // ============================================================
 
@@ -136,6 +145,18 @@ export async function createLocalDir(path: string): Promise<void> {
 
 export async function createHostDir(hostId: string, path: string): Promise<void> {
   await safeInvoke("create_host_dir", { hostId, path });
+}
+
+export async function deleteLocalFile(path: string): Promise<void> {
+  await safeInvoke("delete_local_file", { path });
+}
+
+export async function deleteHostFile(hostId: string, path: string): Promise<void> {
+  await safeInvoke("delete_host_file", { hostId, path });
+}
+
+export async function deleteVastFile(instanceId: number, path: string): Promise<void> {
+  await safeInvoke("delete_vast_file", { instanceId, path });
 }
 
 // ============================================================

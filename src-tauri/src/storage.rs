@@ -1565,26 +1565,40 @@ pub async fn storage_delete_file(
             Ok(())
         }
         StorageBackend::SshRemote { host_id, root_path } => {
-            let (config, _) = get_sftp_config_for_host(host_id).await?;
-            let remote_name = create_temp_remote("sftp", &config)?;
+            // Use SSH rm command instead of rclone for SSH-based storage
+            let host_info = crate::host::get_host(host_id).await?;
+            let ssh = host_info.ssh.ok_or_else(|| {
+                AppError::invalid_input(format!("Host {} has no SSH configuration", host_id))
+            })?;
 
             let full_path = format!(
                 "{}/{}",
                 root_path.trim_end_matches('/'),
                 path.trim_start_matches('/')
             );
-            let delete_opts = serde_json::json!({
-                "fs": format!("{}:{}", remote_name, full_path),
-                "remote": "",
-            });
+            let escaped_path = shell_escape::unix::escape(full_path.into()).to_string();
+            let cmd = format!("rm -rf {}", escaped_path);
 
-            // Try deletefile first, then purge for directories
-            let result = librclone::rpc("operations/deletefile", &delete_opts.to_string());
-            if result.is_err() {
-                let _ = librclone::rpc("operations/purge", &delete_opts.to_string());
+            let mut ssh_cmd = tokio::process::Command::new("ssh");
+            for arg in ssh.common_ssh_options() {
+                ssh_cmd.arg(arg);
+            }
+            ssh_cmd.arg(ssh.target());
+            ssh_cmd.arg(&cmd);
+
+            let output = ssh_cmd
+                .output()
+                .await
+                .map_err(|e| AppError::command(format!("Failed to execute SSH: {e}")))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(AppError::command(format!(
+                    "Failed to delete remote file: {}",
+                    stderr.trim()
+                )));
             }
 
-            delete_temp_remote(&remote_name);
             Ok(())
         }
         StorageBackend::Smb { share, .. } => {

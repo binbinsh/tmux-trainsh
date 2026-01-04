@@ -1,8 +1,10 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo, useCallback, memo } from "react";
 import { Plus, Settings, Database, Terminal, FlaskConical, X, SquareTerminal, Server, ArrowLeftRight } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import type { Host, InteractiveExecution, SkillSummary } from "@/lib/types";
 import { useTerminalOptional, type TerminalSession } from "@/contexts/TerminalContext";
+import { getAppVersion } from "@/lib/tauri-api";
 import {
   Sidebar as UiSidebar,
   SidebarContent,
@@ -85,6 +87,12 @@ export const Sidebar = memo(function Sidebar({ hosts }: SidebarProps) {
   const currentPath = location.pathname;
   const terminal = useTerminalOptional();
 
+  const { data: version } = useQuery({
+    queryKey: ["appVersion"],
+    queryFn: getAppVersion,
+    staleTime: Infinity,
+  });
+
   const activeHosts = useMemo(
     () => hosts.filter((h) => h.status === "online"),
     [hosts]
@@ -137,9 +145,12 @@ export const Sidebar = memo(function Sidebar({ hosts }: SidebarProps) {
   return (
     <UiSidebar collapsible="icon" variant="floating" className="top-9">
       <SidebarHeader data-tauri-drag-region>
-        <div className="flex items-center gap-2 px-2 py-1.5 pointer-events-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <img src={appLogo} alt="Doppio" className="size-6" />
-          <span className="text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">Doppio</span>
+        <div className="flex items-center gap-3 px-2 py-1.5 pointer-events-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+          <img src={appLogo} alt="Doppio" className="w-10 h-10 rounded-xl shadow-sm" />
+          <div className="group-data-[collapsible=icon]:hidden">
+            <h1 className="text-base font-semibold">Doppio</h1>
+            <p className="text-sm text-muted-foreground">v{version ?? "..."}</p>
+          </div>
         </div>
       </SidebarHeader>
 

@@ -37,14 +37,29 @@ import {
   RefreshCw,
   Search,
   Server,
+  Trash2,
   X,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
+import {
+  DndContext,
+  DragOverlay,
+  useDraggable,
+  useDroppable,
+  type DragEndEvent,
+  type DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import {
   createHostDir,
   createLocalDir,
+  deleteHostFile,
+  deleteLocalFile,
+  deleteVastFile,
   listHostFiles,
   listLocalFiles,
   listVastFiles,
@@ -529,39 +544,32 @@ function EndpointPicker({ storages, hosts, vastInstances, value, onChange }: End
 }
 
 // ============================================================
-// File Row Component (Whole row draggable)
+// File Row Component (Whole row draggable with dnd-kit)
 // ============================================================
 
 type FileRowProps = {
   entry: FileEntry;
+  side: "left" | "right";
   isSelected: boolean;
+  selectedCount: number;
   onSelect: (e: React.MouseEvent) => void;
   onNavigate: () => void;
-  onDragStart: (e: DragEvent<HTMLDivElement>) => void;
-  dragCount?: number;
 };
 
-function FileRow({ entry, isSelected, onSelect, onNavigate, onDragStart, dragCount }: FileRowProps) {
-  const [isDragging, setIsDragging] = useState(false);
-
-  function handleDragStart(e: DragEvent<HTMLDivElement>) {
-    setIsDragging(true);
-    // Required for HTML5 drag and drop to work
-    e.dataTransfer.effectAllowed = "copyMove";
-    e.dataTransfer.setData("text/plain", entry.path);
-    e.dataTransfer.setData("application/x-transfer-files", JSON.stringify([entry.path]));
-    onDragStart(e);
-  }
-
-  function handleDragEnd() {
-    setIsDragging(false);
-  }
+function FileRow({ entry, side, isSelected, selectedCount, onSelect, onNavigate }: FileRowProps) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${side}:${entry.path}`,
+    data: {
+      entry,
+      side,
+      isSelected,
+      selectedCount,
+    },
+  });
 
   return (
     <div
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
+      ref={setNodeRef}
       onClick={onSelect}
       onDoubleClick={entry.is_dir ? onNavigate : undefined}
       className={cn(
@@ -570,11 +578,16 @@ function FileRow({ entry, isSelected, onSelect, onNavigate, onDragStart, dragCou
         isSelected && "bg-primary/10 ring-1 ring-primary/30",
         isDragging && "opacity-50"
       )}
+      {...listeners}
+      {...attributes}
     >
       <Checkbox
         checked={isSelected}
         onCheckedChange={() => {}}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          // Let the click bubble up to the row's onClick handler
+          // Don't stop propagation - the row handler will handle selection
+        }}
         className="flex-shrink-0"
       />
       {entry.is_dir ? <IconFolder /> : <IconFile />}
@@ -584,11 +597,6 @@ function FileRow({ entry, isSelected, onSelect, onNavigate, onDragStart, dragCou
       <span className="text-xs text-muted-foreground flex-shrink-0">
         {entry.is_dir ? "-" : formatBytes(entry.size)}
       </span>
-      {isDragging && dragCount && dragCount > 1 && (
-        <Badge className="absolute -top-2 -right-2 h-5 min-w-5 text-xs">
-          {dragCount}
-        </Badge>
-      )}
     </div>
   );
 }
@@ -608,10 +616,7 @@ type FilePaneProps = {
   onPathChange: (path: string) => void;
   selectedFiles: Set<string>;
   onSelectionChange: (files: Set<string>) => void;
-  onDragStart: (files: FileEntry[], side: "left" | "right") => void;
-  onDrop: (destPath: string) => void;
-  isDragOver: boolean;
-  onDragOver: (over: boolean) => void;
+  isDropTarget: boolean;
 };
 
 function FilePane({
@@ -625,17 +630,21 @@ function FilePane({
   onPathChange,
   selectedFiles,
   onSelectionChange,
-  onDragStart,
-  onDrop,
-  isDragOver,
-  onDragOver,
+  isDropTarget,
 }: FilePaneProps) {
+  // Setup droppable
+  const { setNodeRef, isOver } = useDroppable({
+    id: `drop-${side}`,
+    data: { side, currentPath },
+  });
+
   const filesQuery = useEndpointFiles(endpoint, currentPath, vastInstances);
   const queryClient = useQueryClient();
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   // Editable path bar state
   const [isEditingPath, setIsEditingPath] = useState(false);
@@ -677,9 +686,14 @@ function FilePane({
       onSelectionChange(next);
       setLastSelectedIndex(index);
     } else {
-      // Single selection
-      onSelectionChange(new Set([entry.path]));
-      setLastSelectedIndex(index);
+      // Single selection - toggle if already selected alone
+      if (selectedFiles.size === 1 && selectedFiles.has(entry.path)) {
+        onSelectionChange(new Set());
+        setLastSelectedIndex(null);
+      } else {
+        onSelectionChange(new Set([entry.path]));
+        setLastSelectedIndex(index);
+      }
     }
   }, [files, lastSelectedIndex, selectedFiles, onSelectionChange]);
 
@@ -743,41 +757,6 @@ function FilePane({
     }
   }
 
-  // Drag and drop
-  function handleDragStartEvent(e: DragEvent<HTMLDivElement>, entry: FileEntry) {
-    const selectedEntries = files.filter((f) => selectedFiles.has(f.path));
-    if (selectedEntries.length === 0 || !selectedFiles.has(entry.path)) {
-      onDragStart([entry], side);
-    } else {
-      onDragStart(selectedEntries, side);
-    }
-  }
-
-  function handleDragOver(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-    onDragOver(true);
-  }
-
-  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
-    // Only trigger leave if we're actually leaving the container
-    const relatedTarget = e.relatedTarget as Node | null;
-    const currentTarget = e.currentTarget as Node;
-    if (relatedTarget && currentTarget.contains(relatedTarget)) {
-      return; // Still within the same container
-    }
-    onDragOver(false);
-  }
-
-  function handleDropEvent(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log("[FilePane] Drop event on", side, "path:", currentPath);
-    onDragOver(false);
-    onDrop(currentPath);
-  }
-
   // Create folder
   const createFolderMutation = useMutation({
     mutationFn: async () => {
@@ -802,6 +781,39 @@ function FilePane({
       }
       setNewFolderOpen(false);
       setNewFolderName("");
+    },
+  });
+
+  // Delete files
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!endpoint) return;
+      const pathsToDelete = Array.from(selectedFiles);
+
+      for (const path of pathsToDelete) {
+        if (endpoint.type === "storage") {
+          await storageApi.deleteFile(endpoint.storageId, path);
+        } else if (endpoint.type === "host") {
+          await deleteHostFile(endpoint.hostId, path);
+        } else if (endpoint.type === "local") {
+          await deleteLocalFile(path);
+        } else if (endpoint.type === "vast") {
+          await deleteVastFile(endpoint.instanceId, path);
+        }
+      }
+    },
+    onSuccess: () => {
+      if (endpoint?.type === "storage") {
+        queryClient.invalidateQueries({ queryKey: ["storages", endpoint.storageId, "files"] });
+      } else if (endpoint?.type === "host") {
+        queryClient.invalidateQueries({ queryKey: ["host-files", endpoint.hostId] });
+      } else if (endpoint?.type === "local") {
+        queryClient.invalidateQueries({ queryKey: ["local-files"] });
+      } else if (endpoint?.type === "vast") {
+        queryClient.invalidateQueries({ queryKey: ["vast-files", endpoint.instanceId] });
+      }
+      setDeleteConfirmOpen(false);
+      onSelectionChange(new Set());
     },
   });
 
@@ -831,20 +843,29 @@ function FilePane({
     return items;
   }, [currentPath]);
 
-  const dragCount = selectedFiles.size > 1 ? selectedFiles.size : undefined;
+  const showDropOverlay = isDropTarget && isOver;
 
   return (
     <div
+      ref={setNodeRef}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       className={cn(
-        "flex flex-col h-full border rounded-lg bg-background transition-colors outline-none",
-        isDragOver && "ring-2 ring-primary/50 bg-primary/5"
+        "flex flex-col h-full border rounded-lg bg-background transition-colors outline-none relative",
+        showDropOverlay && "ring-2 ring-primary/50"
       )}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDropEvent}
     >
+      {/* Drop overlay - shows when dragging over */}
+      {showDropOverlay && (
+        <div
+          className="absolute inset-0 z-50 bg-primary/10 flex items-center justify-center pointer-events-none rounded-lg"
+        >
+          <div className="bg-background/90 px-4 py-2 rounded-lg shadow-lg border">
+            <span className="text-sm font-medium">Drop files here</span>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex-shrink-0 p-2 border-b border-border space-y-2">
         {/* Unified endpoint picker */}
@@ -900,6 +921,20 @@ function FilePane({
             title={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
           >
             {showHiddenFiles ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6 flex-shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={() => setDeleteConfirmOpen(true)}
+            disabled={selectedFiles.size === 0 || deleteMutation.isPending}
+            title="Delete selected"
+          >
+            {deleteMutation.isPending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Trash2 className="h-3 w-3" />
+            )}
           </Button>
 
           {/* Editable path bar */}
@@ -990,11 +1025,11 @@ function FilePane({
                 <FileRow
                   key={entry.path}
                   entry={entry}
+                  side={side}
                   isSelected={selectedFiles.has(entry.path)}
+                  selectedCount={selectedFiles.size}
                   onSelect={(e) => handleSelect(index, e)}
                   onNavigate={() => navigateToPath(entry.path)}
-                  onDragStart={(e) => handleDragStartEvent(e, entry)}
-                  dragCount={dragCount}
                 />
               ))}
             </div>
@@ -1028,6 +1063,43 @@ function FilePane({
             >
               {createFolderMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete {selectedFiles.size} {selectedFiles.size === 1 ? "item" : "items"}?</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            This action cannot be undone. The following will be permanently deleted:
+            <ul className="mt-2 max-h-32 overflow-y-auto space-y-1">
+              {Array.from(selectedFiles).slice(0, 5).map((path) => (
+                <li key={path} className="font-mono text-xs truncate">
+                  {path.split("/").pop()}
+                </li>
+              ))}
+              {selectedFiles.size > 5 && (
+                <li className="text-xs text-muted-foreground/70">
+                  ...and {selectedFiles.size - 5} more
+                </li>
+              )}
+            </ul>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1337,13 +1409,11 @@ export function TransferPage() {
   const [leftEndpoint, setLeftEndpoint] = useState<Endpoint | null>(null);
   const [leftPath, setLeftPath] = useState("/");
   const [leftSelected, setLeftSelected] = useState<Set<string>>(new Set());
-  const [leftDragOver, setLeftDragOver] = useState(false);
 
   // Right pane state
   const [rightEndpoint, setRightEndpoint] = useState<Endpoint | null>(null);
   const [rightPath, setRightPath] = useState("/");
   const [rightSelected, setRightSelected] = useState<Set<string>>(new Set());
-  const [rightDragOver, setRightDragOver] = useState(false);
 
   // Drag state
   const [dragSource, setDragSource] = useState<{ files: FileEntry[]; side: "left" | "right" } | null>(null);
@@ -1377,6 +1447,40 @@ export function TransferPage() {
   const leftFilesQuery = useEndpointFiles(leftEndpoint, leftPath, vastInstances);
   const rightFilesQuery = useEndpointFiles(rightEndpoint, rightPath, vastInstances);
 
+  // Track completed transfers to auto-refresh file lists
+  const transfersQuery = useTransfers();
+  const prevTransfersRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    const currentTasks = transfersQuery.data ?? [];
+    const prevStatuses = prevTransfersRef.current;
+    let shouldRefresh = false;
+
+    for (const task of currentTasks) {
+      const prevStatus = prevStatuses.get(task.id);
+      // If task was running/queued and is now completed, refresh files
+      if (prevStatus && (prevStatus === "running" || prevStatus === "queued") &&
+          (task.status === "completed" || task.status === "failed")) {
+        shouldRefresh = true;
+      }
+    }
+
+    // Update prev statuses
+    const newStatuses = new Map<string, string>();
+    for (const task of currentTasks) {
+      newStatuses.set(task.id, task.status);
+    }
+    prevTransfersRef.current = newStatuses;
+
+    // Refresh all file queries if any transfer completed
+    if (shouldRefresh) {
+      queryClient.invalidateQueries({ queryKey: ["local-files"] });
+      queryClient.invalidateQueries({ queryKey: ["host-files"] });
+      queryClient.invalidateQueries({ queryKey: ["vast-files"] });
+      queryClient.invalidateQueries({ queryKey: ["storages"] });
+    }
+  }, [transfersQuery.data, queryClient]);
+
   // Create transfer mutation
   const createTransferMutation = useMutation({
     mutationFn: async (params: {
@@ -1402,27 +1506,97 @@ export function TransferPage() {
     },
   });
 
-  // Drag handlers
-  function handleDragStart(files: FileEntry[], side: "left" | "right") {
-    console.log("[Transfer] Drag started:", { files: files.length, side });
-    setDragSource({ files, side });
+  // DnD-kit sensors with activation distance
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // Require 8px movement before starting drag
+      },
+    })
+  );
+
+  // Active drag item for overlay
+  const [activeDragData, setActiveDragData] = useState<{
+    entry: FileEntry;
+    side: "left" | "right";
+    selectedCount: number;
+  } | null>(null);
+
+  // DnD handlers
+  function handleDragStart(event: DragStartEvent) {
+    const { active } = event;
+    const data = active.data.current as {
+      entry: FileEntry;
+      side: "left" | "right";
+      isSelected: boolean;
+      selectedCount: number;
+    };
+
+    console.log("[Transfer] Drag started:", { entry: data.entry.name, side: data.side });
+
+    // Get selected files for this side
+    const selectedSet = data.side === "left" ? leftSelected : rightSelected;
+    const files = data.side === "left" ? leftFilesQuery.data as FileEntry[] ?? [] : rightFilesQuery.data as FileEntry[] ?? [];
+
+    let filesToDrag: FileEntry[];
+    if (selectedSet.has(data.entry.path)) {
+      filesToDrag = files.filter((f) => selectedSet.has(f.path));
+    } else {
+      filesToDrag = [data.entry];
+    }
+
+    setDragSource({ files: filesToDrag, side: data.side });
+    setActiveDragData({
+      entry: data.entry,
+      side: data.side,
+      selectedCount: filesToDrag.length,
+    });
   }
 
-  function handleDrop(side: "left" | "right", destPath: string) {
-    console.log("[Transfer] Drop:", { side, destPath, dragSource });
-    if (!dragSource || dragSource.side === side) {
-      console.log("[Transfer] Drop ignored - same side or no source");
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+
+    console.log("[Transfer] Drag ended:", { active: active.id, over: over?.id });
+
+    setActiveDragData(null);
+
+    if (!over || !dragSource) {
+      setDragSource(null);
+      return;
+    }
+
+    // Parse the drop target
+    const dropId = over.id as string;
+    if (!dropId.startsWith("drop-")) {
+      setDragSource(null);
+      return;
+    }
+
+    const dropSide = dropId.replace("drop-", "") as "left" | "right";
+    const dropData = over.data.current as { side: string; currentPath: string };
+
+    // Don't allow drop on same side
+    if (dragSource.side === dropSide) {
+      console.log("[Transfer] Drop ignored - same side");
       setDragSource(null);
       return;
     }
 
     const sourceEndpoint = dragSource.side === "left" ? leftEndpoint : rightEndpoint;
-    const destEndpoint = side === "left" ? leftEndpoint : rightEndpoint;
+    const destEndpoint = dropSide === "left" ? leftEndpoint : rightEndpoint;
+    const destPath = dropData.currentPath;
 
     if (!sourceEndpoint || !destEndpoint) {
       setDragSource(null);
       return;
     }
+
+    console.log("[Transfer] Drop successful:", {
+      files: dragSource.files.length,
+      from: dragSource.side,
+      to: dropSide,
+      destPath,
+    });
 
     setPendingTransfer({
       files: dragSource.files,
@@ -1490,53 +1664,55 @@ export function TransferPage() {
     getEndpointKey(leftEndpoint) !== getEndpointKey(rightEndpoint);
 
   return (
-    <div className="h-full flex flex-col p-4 gap-4">
-      {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between">
-        <h1 className="text-lg font-semibold">File Transfer</h1>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>Drag files or use arrows</span>
-          <span className="text-muted-foreground/50">|</span>
-          <span className="font-mono">Shift+Click</span>
-          <span>range select</span>
-          <span className="text-muted-foreground/50">|</span>
-          <span className="font-mono">Cmd+A</span>
-          <span>select all</span>
-        </div>
-      </div>
-
-      {/* File panes */}
-      <div className="flex-1 flex gap-4 min-h-0">
-        {/* Left pane */}
-        <div className="flex-1 min-w-0">
-          <FilePane
-            side="left"
-            storages={storages}
-            hosts={hosts}
-            vastInstances={vastInstances}
-            endpoint={leftEndpoint}
-            onEndpointChange={(ep) => {
-              setLeftEndpoint(ep);
-              setLeftPath("/");
-              setLeftSelected(new Set());
-            }}
-            currentPath={leftPath}
-            onPathChange={setLeftPath}
-            selectedFiles={leftSelected}
-            onSelectionChange={setLeftSelected}
-            onDragStart={handleDragStart}
-            onDrop={(destPath) => handleDrop("left", destPath)}
-            isDragOver={leftDragOver}
-            onDragOver={setLeftDragOver}
-          />
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="h-full flex flex-col p-4 gap-4">
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-center justify-between">
+          <h1 className="text-lg font-semibold">File Transfer</h1>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Drag files or use arrows</span>
+            <span className="text-muted-foreground/50">|</span>
+            <span className="font-mono">Shift+Click</span>
+            <span>range select</span>
+            <span className="text-muted-foreground/50">|</span>
+            <span className="font-mono">Cmd+A</span>
+            <span>select all</span>
+          </div>
         </div>
 
-        {/* Center controls */}
-        <div className="flex-shrink-0 flex flex-col items-center justify-center gap-2">
-          <Button
-            size="icon"
-            variant="outline"
-            onClick={handleTransferToRight}
+        {/* File panes */}
+        <div className="flex-1 grid grid-cols-[1fr_auto_1fr] gap-4 min-h-0">
+          {/* Left pane */}
+          <div className="min-w-0 relative">
+            <FilePane
+              side="left"
+              storages={storages}
+              hosts={hosts}
+              vastInstances={vastInstances}
+              endpoint={leftEndpoint}
+              onEndpointChange={(ep) => {
+                setLeftEndpoint(ep);
+                setLeftPath("/");
+                setLeftSelected(new Set());
+              }}
+              currentPath={leftPath}
+              onPathChange={setLeftPath}
+              selectedFiles={leftSelected}
+              onSelectionChange={setLeftSelected}
+              isDropTarget={dragSource?.side === "right"}
+            />
+          </div>
+
+          {/* Center controls */}
+          <div className="flex flex-col items-center justify-center gap-2">
+            <Button
+              size="icon"
+              variant="outline"
+              onClick={handleTransferToRight}
             disabled={!canTransferToRight}
             title="Copy to right"
           >
@@ -1554,7 +1730,7 @@ export function TransferPage() {
         </div>
 
         {/* Right pane */}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 relative">
           <FilePane
             side="right"
             storages={storages}
@@ -1570,10 +1746,7 @@ export function TransferPage() {
             onPathChange={setRightPath}
             selectedFiles={rightSelected}
             onSelectionChange={setRightSelected}
-            onDragStart={handleDragStart}
-            onDrop={(destPath) => handleDrop("right", destPath)}
-            isDragOver={rightDragOver}
-            onDragOver={setRightDragOver}
+            isDropTarget={dragSource?.side === "left"}
           />
         </div>
       </div>
@@ -1600,6 +1773,20 @@ export function TransferPage() {
           />
         )}
       </AnimatePresence>
+
+      {/* Drag overlay */}
+      <DragOverlay>
+        {activeDragData && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background border shadow-lg">
+            {activeDragData.entry.is_dir ? <IconFolder /> : <IconFile />}
+            <span className="text-sm font-medium">{activeDragData.entry.name}</span>
+            {activeDragData.selectedCount > 1 && (
+              <Badge className="ml-1">{activeDragData.selectedCount}</Badge>
+            )}
+          </div>
+        )}
+      </DragOverlay>
     </div>
+    </DndContext>
   );
 }

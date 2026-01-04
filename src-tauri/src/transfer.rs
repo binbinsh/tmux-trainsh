@@ -1,13 +1,19 @@
 //! Transfer task management module
 //!
 //! Manages file transfer operations between storages with progress tracking.
+//!
+//! Uses rsync/scp for SSH-based endpoints (Host, Vast, Local) and rclone for
+//! cloud storage backends (Google Drive, Cloudflare R2, GCS, SMB).
 
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::RwLock;
 
 use crate::error::AppError;
@@ -390,10 +396,511 @@ impl TransferStore {
 }
 
 // ============================================================
-// Transfer Execution
+// Transfer Execution - Rsync/SSH helpers
 // ============================================================
 
-/// Execute a transfer task using rclone
+/// Build a bash script that wraps SSH with the right options for rsync
+fn build_rsync_ssh_wrapper(ssh: &SshSpec) -> Result<PathBuf, AppError> {
+    let mut lines = vec![
+        "#!/usr/bin/env bash".to_string(),
+        "set -e".to_string(),
+        "cmd=(ssh)".to_string(),
+    ];
+
+    for opt in ssh.common_ssh_options() {
+        lines.push(format!("cmd+=({})", bash_quote(&opt)));
+    }
+
+    lines.push(r#"exec "${cmd[@]}" "$@""#.to_string());
+
+    let script_path =
+        std::env::temp_dir().join(format!("doppio_rsync_ssh_{}.sh", uuid::Uuid::new_v4()));
+    std::fs::write(&script_path, format!("{}\n", lines.join("\n")))
+        .map_err(|e| AppError::io(format!("Failed to write rsync ssh wrapper: {}", e)))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).map_err(
+        |e| {
+            AppError::io(format!(
+                "Failed to set rsync ssh wrapper permissions: {}",
+                e
+            ))
+        },
+    )?;
+
+    Ok(script_path)
+}
+
+fn bash_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Escape a remote path for rsync (handles spaces and special characters)
+/// For rsync over SSH, the remote path needs to be escaped for the remote shell
+fn escape_rsync_remote_path(path: &str) -> String {
+    // For rsync, we need to escape spaces and special chars with backslashes
+    // This works because rsync passes the path to the remote shell
+    path.chars()
+        .map(|c| {
+            if c == ' ' || c == '\'' || c == '"' || c == '\\' || c == '(' || c == ')'
+               || c == '[' || c == ']' || c == '{' || c == '}' || c == '$' || c == '`'
+               || c == '!' || c == '&' || c == ';' || c == '*' || c == '?' {
+                format!("\\{}", c)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// Run rsync with SSH wrapper and emit progress events
+async fn run_rsync_transfer(
+    ssh_wrapper: &PathBuf,
+    args: Vec<String>,
+    task_id: &str,
+    app: &AppHandle,
+) -> Result<(), AppError> {
+    use std::process::Stdio;
+
+    let mut cmd = tokio::process::Command::new("rsync");
+    cmd.args(&args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::command(format!("Failed to spawn rsync: {}", e)))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Stream stdout for progress
+    let task_id_clone = task_id.to_string();
+    let app_clone = app.clone();
+    let stdout_handle = tokio::spawn(async move {
+        if let Some(stdout) = stdout {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            let mut files_done: u64 = 0;
+            while let Ok(Some(line)) = lines.next_line().await {
+                // Parse rsync progress output
+                if line.contains('%') {
+                    // Try to extract percentage
+                    if let Some(pct_str) = line.split_whitespace().find(|s| s.ends_with('%')) {
+                        let _pct = pct_str.trim_end_matches('%').parse::<u64>().unwrap_or(0);
+                    }
+                }
+                // Count files transferred
+                if !line.trim().is_empty() && !line.starts_with(' ') && !line.contains("sending") && !line.contains("total") {
+                    files_done += 1;
+                }
+                emit_transfer_progress(
+                    &app_clone,
+                    &task_id_clone,
+                    TransferProgress {
+                        files_done,
+                        current_file: Some(line.trim().to_string()),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    });
+
+    // Stream stderr
+    let stderr_output = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let stderr_output_clone = stderr_output.clone();
+    let stderr_handle = tokio::spawn(async move {
+        if let Some(stderr) = stderr {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                stderr_output_clone.lock().await.push(line);
+            }
+        }
+    });
+
+    // Wait for the process to complete
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to wait for rsync: {}", e)))?;
+
+    // Clean up SSH wrapper
+    let _ = std::fs::remove_file(ssh_wrapper);
+
+    // Wait for output streams to finish
+    let _ = stdout_handle.await;
+    let _ = stderr_handle.await;
+
+    if !status.success() {
+        let stderr_lines = stderr_output.lock().await;
+        let stderr_str = stderr_lines.join("\n");
+        return Err(AppError::command(format!(
+            "rsync failed (code={:?}): {}",
+            status.code(),
+            if stderr_str.is_empty() {
+                "(no output)".to_string()
+            } else {
+                stderr_str
+            }
+        )));
+    }
+
+    Ok(())
+}
+
+/// Get SshSpec for an endpoint (Host or Vast)
+async fn get_endpoint_ssh_spec(endpoint: &TransferEndpoint) -> Result<SshSpec, AppError> {
+    match endpoint {
+        TransferEndpoint::Host { host_id } => {
+            let host_info = host::get_host(host_id).await?;
+            host_info.ssh.ok_or_else(|| {
+                AppError::invalid_input(format!("Host {} has no SSH configuration", host_id))
+            })
+        }
+        TransferEndpoint::Vast { instance_id } => {
+            let cfg = crate::config::load_config().await?;
+            let client = crate::vast::VastClient::from_cfg(&cfg)?;
+            let inst = client.get_instance(*instance_id).await?;
+
+            let host = inst.ssh_host.clone().unwrap_or_default().trim().to_string();
+            let port = inst.ssh_port.unwrap_or(0);
+            if host.is_empty() || port <= 0 {
+                return Err(AppError::invalid_input(
+                    "Vast instance does not have SSH info yet (is it running and provisioned?)",
+                ));
+            }
+
+            Ok(SshSpec {
+                host,
+                port,
+                user: {
+                    let u = cfg.vast.ssh_user.trim();
+                    if u.is_empty() {
+                        "root".to_string()
+                    } else {
+                        u.to_string()
+                    }
+                },
+                key_path: match cfg
+                    .vast
+                    .ssh_key_path
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    Some(s) => {
+                        let p = crate::ssh_keys::materialize_private_key_path(&s).await?;
+                        Some(p.to_string_lossy().to_string())
+                    }
+                    None => None,
+                },
+                extra_args: vec![],
+            })
+        }
+        _ => Err(AppError::invalid_input("Endpoint is not SSH-based")),
+    }
+}
+
+/// Check if an endpoint is SSH-based (Host, Vast) - not cloud storage
+fn is_ssh_endpoint(endpoint: &TransferEndpoint) -> bool {
+    matches!(endpoint, TransferEndpoint::Host { .. } | TransferEndpoint::Vast { .. })
+}
+
+/// Check if an endpoint is local filesystem
+fn is_local_endpoint(endpoint: &TransferEndpoint) -> bool {
+    matches!(endpoint, TransferEndpoint::Local)
+}
+
+/// Check if transfer should use rsync (both endpoints are SSH-based or local)
+fn should_use_rsync(source: &TransferEndpoint, dest: &TransferEndpoint) -> bool {
+    let src_rsync = is_ssh_endpoint(source) || is_local_endpoint(source);
+    let dst_rsync = is_ssh_endpoint(dest) || is_local_endpoint(dest);
+    src_rsync && dst_rsync
+}
+
+/// Expand local path (handle ~ and /)
+fn expand_local_path(path: &str) -> String {
+    if path == "/" || path.is_empty() {
+        dirs::home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string())
+    } else if path == "~" {
+        dirs::home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string())
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|p| p.join(rest).to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("/{}", rest))
+    } else if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{}", path)
+    }
+}
+
+/// Execute rsync transfer between two SSH-based or local endpoints
+async fn execute_rsync_transfer(
+    task: &TransferTask,
+    app: &AppHandle,
+) -> Result<(), AppError> {
+    let source_endpoint = task.get_source_endpoint();
+    let dest_endpoint = task.get_dest_endpoint();
+
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            current_file: Some("Starting rsync transfer...".to_string()),
+            ..Default::default()
+        },
+    );
+
+    // Determine the rsync source and destination specs
+    let (src_spec, src_path) = match &source_endpoint {
+        TransferEndpoint::Local => {
+            (None, expand_local_path(&task.source_path))
+        }
+        TransferEndpoint::Host { .. } | TransferEndpoint::Vast { .. } => {
+            let ssh = get_endpoint_ssh_spec(&source_endpoint).await?;
+            let path = if task.source_path.starts_with('/') || task.source_path.starts_with('~') {
+                task.source_path.clone()
+            } else {
+                format!("~/{}", task.source_path)
+            };
+            (Some(ssh), path)
+        }
+        _ => return Err(AppError::invalid_input("Source endpoint not supported for rsync")),
+    };
+
+    let (dst_spec, dst_path) = match &dest_endpoint {
+        TransferEndpoint::Local => {
+            (None, expand_local_path(&task.dest_path))
+        }
+        TransferEndpoint::Host { .. } | TransferEndpoint::Vast { .. } => {
+            let ssh = get_endpoint_ssh_spec(&dest_endpoint).await?;
+            let path = if task.dest_path.starts_with('/') || task.dest_path.starts_with('~') {
+                task.dest_path.clone()
+            } else {
+                format!("~/{}", task.dest_path)
+            };
+            (Some(ssh), path)
+        }
+        _ => return Err(AppError::invalid_input("Destination endpoint not supported for rsync")),
+    };
+
+    // Get source filename for destination path construction
+    let source_name = std::path::Path::new(&task.source_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Construct final destination path
+    let final_dst_path = if !source_name.is_empty() && !source_name.starts_with('.') {
+        if dst_path.ends_with('/') {
+            format!("{}{}", dst_path, source_name)
+        } else {
+            format!("{}/{}", dst_path, source_name)
+        }
+    } else {
+        dst_path.clone()
+    };
+
+    // Build rsync args based on source/dest combination
+    match (&src_spec, &dst_spec) {
+        // Local to Local
+        (None, None) => {
+            // Create destination directory if needed
+            if let Some(parent) = std::path::Path::new(&final_dst_path).parent() {
+                tokio::fs::create_dir_all(parent).await.ok();
+            }
+
+            let args = vec![
+                "-avz".to_string(),
+                "--progress".to_string(),
+                src_path,
+                final_dst_path,
+            ];
+
+            // For local-to-local, we don't need SSH wrapper
+            let dummy_wrapper = std::env::temp_dir().join("dummy");
+            run_rsync_transfer(&dummy_wrapper, args, &task.id, app).await?;
+        }
+
+        // Local to Remote
+        (None, Some(dst_ssh)) => {
+            let ssh_wrapper = build_rsync_ssh_wrapper(dst_ssh)?;
+            let remote = format!("{}@{}:{}", dst_ssh.user, dst_ssh.host, escape_rsync_remote_path(&final_dst_path));
+
+            // Ensure destination directory exists
+            let mkdir_cmd = format!(
+                r#"mkdir -p "$(dirname '{}')""#,
+                final_dst_path.replace('\'', "'\\''")
+            );
+            let mut ssh_cmd = tokio::process::Command::new("ssh");
+            for arg in dst_ssh.common_ssh_options() {
+                ssh_cmd.arg(arg);
+            }
+            ssh_cmd.arg(dst_ssh.target());
+            ssh_cmd.arg(&mkdir_cmd);
+            let _ = ssh_cmd.output().await;
+
+            let mut args = vec![
+                "-avz".to_string(),
+                "--progress".to_string(),
+                "-e".to_string(),
+                ssh_wrapper.to_string_lossy().to_string(),
+            ];
+
+            if task.operation == TransferOperation::Sync {
+                args.push("--delete".to_string());
+            }
+
+            args.push(src_path);
+            args.push(remote);
+
+            run_rsync_transfer(&ssh_wrapper, args, &task.id, app).await?;
+        }
+
+        // Remote to Local
+        (Some(src_ssh), None) => {
+            let ssh_wrapper = build_rsync_ssh_wrapper(src_ssh)?;
+            let remote = format!("{}@{}:{}", src_ssh.user, src_ssh.host, escape_rsync_remote_path(&src_path));
+
+            // Create local directory if needed
+            if let Some(parent) = std::path::Path::new(&final_dst_path).parent() {
+                tokio::fs::create_dir_all(parent).await.ok();
+            }
+
+            let mut args = vec![
+                "-avz".to_string(),
+                "--progress".to_string(),
+                "-e".to_string(),
+                ssh_wrapper.to_string_lossy().to_string(),
+            ];
+
+            args.push(remote);
+            args.push(final_dst_path);
+
+            run_rsync_transfer(&ssh_wrapper, args, &task.id, app).await?;
+        }
+
+        // Remote to Remote (via local staging)
+        (Some(src_ssh), Some(dst_ssh)) => {
+            // Create temp staging directory
+            let temp_dir = std::env::temp_dir().join(format!("transfer-{}", uuid::Uuid::new_v4()));
+            tokio::fs::create_dir_all(&temp_dir).await
+                .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
+
+            emit_transfer_progress(
+                app,
+                &task.id,
+                TransferProgress {
+                    current_file: Some(format!("Downloading from source...")),
+                    ..Default::default()
+                },
+            );
+
+            // Download from source to temp
+            let src_wrapper = build_rsync_ssh_wrapper(src_ssh)?;
+            let remote_src = format!("{}@{}:{}", src_ssh.user, src_ssh.host, escape_rsync_remote_path(&src_path));
+            let temp_path = temp_dir.to_string_lossy().to_string();
+
+            let download_args = vec![
+                "-avz".to_string(),
+                "--progress".to_string(),
+                "-e".to_string(),
+                src_wrapper.to_string_lossy().to_string(),
+                remote_src,
+                temp_path.clone(),
+            ];
+
+            run_rsync_transfer(&src_wrapper, download_args, &task.id, app).await?;
+
+            emit_transfer_progress(
+                app,
+                &task.id,
+                TransferProgress {
+                    current_file: Some(format!("Uploading to destination...")),
+                    ..Default::default()
+                },
+            );
+
+            // Upload from temp to destination
+            let dst_wrapper = build_rsync_ssh_wrapper(dst_ssh)?;
+            let remote_dst = format!("{}@{}:{}", dst_ssh.user, dst_ssh.host, escape_rsync_remote_path(&final_dst_path));
+
+            // Ensure destination directory exists
+            let mkdir_cmd = format!(
+                r#"mkdir -p "$(dirname '{}')""#,
+                final_dst_path.replace('\'', "'\\''")
+            );
+            let mut ssh_cmd = tokio::process::Command::new("ssh");
+            for arg in dst_ssh.common_ssh_options() {
+                ssh_cmd.arg(arg);
+            }
+            ssh_cmd.arg(dst_ssh.target());
+            ssh_cmd.arg(&mkdir_cmd);
+            let _ = ssh_cmd.output().await;
+
+            // Determine upload source path
+            let upload_src = if source_name.is_empty() || source_name.starts_with('.') {
+                format!("{}/", temp_path.trim_end_matches('/'))
+            } else {
+                let staged = temp_dir.join(&source_name);
+                if staged.exists() {
+                    staged.to_string_lossy().to_string()
+                } else {
+                    format!("{}/", temp_path.trim_end_matches('/'))
+                }
+            };
+
+            let mut upload_args = vec![
+                "-avz".to_string(),
+                "--progress".to_string(),
+                "-e".to_string(),
+                dst_wrapper.to_string_lossy().to_string(),
+            ];
+
+            if task.operation == TransferOperation::Sync {
+                upload_args.push("--delete".to_string());
+            }
+
+            upload_args.push(upload_src);
+            upload_args.push(remote_dst);
+
+            let result = run_rsync_transfer(&dst_wrapper, upload_args, &task.id, app).await;
+
+            // Cleanup temp directory
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+            result?;
+        }
+    }
+
+    // Emit completion
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            files_done: 1,
+            files_total: 1,
+            bytes_done: 1,
+            bytes_total: 1,
+            current_file: None,
+            ..Default::default()
+        },
+    );
+
+    Ok(())
+}
+
+// ============================================================
+// Transfer Execution - Rclone (for cloud storage)
+// ============================================================
+
+/// Execute a transfer task using rclone (legacy, for storage backends)
 pub async fn execute_transfer(
     task: &TransferTask,
     source_storage: &Storage,
@@ -592,68 +1099,27 @@ fn build_remote_spec(
     }
 }
 
-/// Build SFTP config for rclone from SSH spec
-/// This is async because it may need to materialize SSH keys from secrets
-async fn build_sftp_config(ssh: &SshSpec) -> Result<serde_json::Value, AppError> {
-    let mut config = serde_json::json!({
-        "type": "sftp",
-        "host": ssh.host,
-        "port": ssh.port.to_string(),
-        "user": ssh.user,
-        "shell_type": "unix",
-        "md5sum_command": "md5sum",
-        "sha1sum_command": "sha1sum",
-    });
-
-    // Resolve SSH key path (handles secrets and ~ expansion)
-    if let Some(key_path) = &ssh.key_path {
-        if !key_path.trim().is_empty() {
-            let resolved_path = crate::ssh_keys::materialize_private_key_path(key_path).await?;
-            config["key_file"] = serde_json::json!(resolved_path.to_string_lossy());
-        }
-    }
-
-    // Handle proxy command for cloudflared tunnels
-    for i in 0..ssh.extra_args.len() {
-        if ssh.extra_args[i] == "-o" && i + 1 < ssh.extra_args.len() {
-            let arg = &ssh.extra_args[i + 1];
-            if arg.starts_with("ProxyCommand=") {
-                let proxy_cmd = arg.strip_prefix("ProxyCommand=").unwrap_or("");
-                config["ssh"] = serde_json::json!(format!(
-                    "ssh -o ProxyCommand={} -o StrictHostKeyChecking=accept-new",
-                    proxy_cmd
-                ));
-            }
-        }
-    }
-
-    Ok(config)
-}
-
-/// Async version that can resolve SSH hosts
+/// Async version that can resolve storage backends
+/// Note: SSH remote storage should use Host endpoint for rsync transfers
 async fn build_remote_spec_async(
     storage: &Storage,
     path: &str,
 ) -> Result<(Option<serde_json::Value>, String), AppError> {
     match &storage.backend {
-        StorageBackend::SshRemote { host_id, root_path } => {
-            let host_info = host::get_host(host_id).await?;
-            let ssh = host_info.ssh.ok_or_else(|| {
-                AppError::invalid_input(format!("Host {} has no SSH configuration", host_id))
-            })?;
-            let config = build_sftp_config(&ssh).await?;
-            let full_path = format!(
-                "{}/{}",
-                root_path.trim_end_matches('/'),
-                path.trim_start_matches('/')
-            );
-            Ok((Some(config), full_path))
+        StorageBackend::SshRemote { host_id, root_path: _ } => {
+            // SSH remote storage should use Host endpoint with rsync instead
+            Err(AppError::invalid_input(format!(
+                "SSH remote storage '{}' should use Host endpoint (host_id={}) for transfers. \
+                 Rsync is more reliable than rclone SFTP for SSH transfers.",
+                storage.id, host_id
+            )))
         }
         _ => build_remote_spec(storage, path),
     }
 }
 
-/// Build remote spec from a unified endpoint
+/// Build remote spec from a unified endpoint (for rclone transfers)
+/// Note: Host and Vast endpoints are handled by rsync, not rclone
 async fn build_endpoint_spec(
     endpoint: &TransferEndpoint,
     path: &str,
@@ -662,94 +1128,24 @@ async fn build_endpoint_spec(
     match endpoint {
         TransferEndpoint::Local => {
             // Local filesystem - no remote config needed
-            // Expand ~ and / to home directory (matching list_local_files behavior)
-            let full_path = if path == "/" || path.is_empty() {
-                // "/" shows home directory in the UI, so expand it here too
-                dirs::home_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "/".to_string())
-            } else if path == "~" {
-                dirs::home_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "/".to_string())
-            } else if let Some(rest) = path.strip_prefix("~/") {
-                dirs::home_dir()
-                    .map(|p| p.join(rest).to_string_lossy().to_string())
-                    .unwrap_or_else(|| format!("/{}", rest))
-            } else if path.starts_with('/') {
-                path.to_string()
-            } else {
-                format!("/{}", path)
-            };
+            let full_path = expand_local_path(path);
             Ok((None, full_path))
         }
         TransferEndpoint::Host { host_id } => {
-            // Direct SSH/SFTP to a host
-            let host_info = host::get_host(host_id).await?;
-            let ssh = host_info.ssh.ok_or_else(|| {
-                AppError::invalid_input(format!("Host {} has no SSH configuration", host_id))
-            })?;
-            let config = build_sftp_config(&ssh).await?;
-            // For hosts, path is absolute
-            let full_path = if path.starts_with('/') {
-                path.to_string()
-            } else if path == "~" || path.starts_with("~/") {
-                path.to_string()
-            } else {
-                format!("~/{}", path)
-            };
-            Ok((Some(config), full_path))
+            // Host endpoints should use rsync, not rclone
+            // This path is only reached for mixed transfers (Host <-> Storage)
+            // In that case, we stage through local temp directory
+            Err(AppError::invalid_input(format!(
+                "Host {} transfers to/from cloud storage should use local staging. Use rsync for SSH-based transfers.",
+                host_id
+            )))
         }
         TransferEndpoint::Vast { instance_id } => {
-            // Vast.ai instance - get SSH config from Vast API
-            let cfg = crate::config::load_config().await?;
-            let client = crate::vast::VastClient::from_cfg(&cfg)?;
-            let inst = client.get_instance(*instance_id).await?;
-
-            let host = inst.ssh_host.clone().unwrap_or_default().trim().to_string();
-            let port = inst.ssh_port.unwrap_or(0);
-            if host.is_empty() || port <= 0 {
-                return Err(AppError::invalid_input(
-                    "Vast instance does not have SSH info yet (is it running and provisioned?)",
-                ));
-            }
-
-            let ssh = SshSpec {
-                host,
-                port,
-                user: {
-                    let u = cfg.vast.ssh_user.trim();
-                    if u.is_empty() {
-                        "root".to_string()
-                    } else {
-                        u.to_string()
-                    }
-                },
-                key_path: match cfg
-                    .vast
-                    .ssh_key_path
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                {
-                    Some(s) => {
-                        let p = crate::ssh_keys::materialize_private_key_path(&s).await?;
-                        Some(p.to_string_lossy().to_string())
-                    }
-                    None => None,
-                },
-                extra_args: vec![],
-            };
-
-            let config = build_sftp_config(&ssh).await?;
-            // For Vast instances, path is absolute (typically /root or /workspace)
-            let full_path = if path.starts_with('/') {
-                path.to_string()
-            } else if path == "~" || path.starts_with("~/") {
-                path.to_string()
-            } else {
-                format!("~/{}", path)
-            };
-            Ok((Some(config), full_path))
+            // Vast endpoints should use rsync, not rclone
+            Err(AppError::invalid_input(format!(
+                "Vast instance {} transfers to/from cloud storage should use local staging. Use rsync for SSH-based transfers.",
+                instance_id
+            )))
         }
         TransferEndpoint::Storage { storage_id } => {
             // Get storage and build spec
@@ -842,15 +1238,30 @@ fn create_temp_remote(prefix: &str, config: &serde_json::Value) -> Result<String
     }
 
     // For other backends, use standard config/create
+    // Note: We need to remove the "type" field from parameters since it's specified separately
+    let mut parameters = config.clone();
+    if parameters.is_object() {
+        parameters.as_object_mut().unwrap().remove("type");
+    }
+
     let create_params = serde_json::json!({
         "name": remote_name,
         "type": remote_type,
-        "parameters": config,
+        "parameters": parameters,
         "opt": {
             "nonInteractive": true,
             "obscure": false,
         }
     });
+
+    // Debug log for SFTP remotes (hide sensitive data)
+    if remote_type == "sftp" {
+        let mut debug_params = parameters.clone();
+        if debug_params.get("key_file").is_some() {
+            debug_params["key_file"] = serde_json::json!("[REDACTED]");
+        }
+        eprintln!("[transfer] Creating SFTP remote {} with params: {}", remote_name, debug_params);
+    }
 
     librclone::rpc("config/create", &create_params.to_string())
         .map_err(|e| AppError::command(format!("Failed to create rclone remote: {}", e)))?;
@@ -883,7 +1294,335 @@ async fn is_vast_instance_running(instance_id: i64) -> Result<bool, AppError> {
     Ok(status == "running")
 }
 
+/// Execute SSH -> Storage transfer (via local staging)
+async fn execute_ssh_to_storage_transfer(
+    task: &TransferTask,
+    storage_store: &StorageStore,
+    app: &AppHandle,
+) -> Result<(), AppError> {
+    let source_endpoint = task.get_source_endpoint();
+    let dest_endpoint = task.get_dest_endpoint();
+
+    // Create temp staging directory
+    let temp_dir = std::env::temp_dir().join(format!("transfer-{}", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(&temp_dir).await
+        .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
+
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            current_file: Some("Downloading from SSH host...".to_string()),
+            ..Default::default()
+        },
+    );
+
+    // Step 1: Download from SSH to local temp using rsync
+    let ssh = get_endpoint_ssh_spec(&source_endpoint).await?;
+    let ssh_wrapper = build_rsync_ssh_wrapper(&ssh)?;
+
+    let src_path = if task.source_path.starts_with('/') || task.source_path.starts_with('~') {
+        task.source_path.clone()
+    } else {
+        format!("~/{}", task.source_path)
+    };
+    let remote_src = format!("{}@{}:{}", ssh.user, ssh.host, escape_rsync_remote_path(&src_path));
+    let temp_path = temp_dir.to_string_lossy().to_string();
+
+    let download_args = vec![
+        "-avz".to_string(),
+        "--progress".to_string(),
+        "-e".to_string(),
+        ssh_wrapper.to_string_lossy().to_string(),
+        remote_src,
+        temp_path.clone(),
+    ];
+
+    run_rsync_transfer(&ssh_wrapper, download_args, &task.id, app).await?;
+
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            current_file: Some("Uploading to cloud storage...".to_string()),
+            ..Default::default()
+        },
+    );
+
+    // Step 2: Upload from temp to storage using rclone
+    let storage_id = match &dest_endpoint {
+        TransferEndpoint::Storage { storage_id } => storage_id.clone(),
+        _ => return Err(AppError::invalid_input("Destination is not a storage")),
+    };
+
+    let storage = storage_store.get(&storage_id).await.ok_or_else(|| {
+        AppError::not_found(format!("Storage not found: {}", storage_id))
+    })?;
+
+    let (dst_remote, dst_full_path) = build_remote_spec_async(&storage, &task.dest_path).await?;
+
+    // Get source filename
+    let source_name = std::path::Path::new(&task.source_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Determine the actual file/folder path in temp
+    let upload_src = if source_name.is_empty() || source_name.starts_with('.') {
+        temp_path.clone()
+    } else {
+        let staged = temp_dir.join(&source_name);
+        if staged.exists() {
+            staged.to_string_lossy().to_string()
+        } else {
+            temp_path.clone()
+        }
+    };
+
+    // Create rclone remote and upload
+    if let Some(config) = dst_remote {
+        let remote_name = create_temp_remote("dst", &config)?;
+
+        // Construct destination path with source name
+        let final_dst = if !source_name.is_empty() && !source_name.starts_with('.') {
+            if dst_full_path.ends_with('/') {
+                format!("{}{}", dst_full_path, source_name)
+            } else {
+                format!("{}/{}", dst_full_path, source_name)
+            }
+        } else {
+            dst_full_path
+        };
+
+        let dst_fs = format!("{}:{}", remote_name, final_dst);
+
+        let result = librclone::rpc(
+            "sync/copy",
+            &serde_json::json!({
+                "srcFs": upload_src,
+                "dstFs": dst_fs,
+                "_async": false,
+            })
+            .to_string(),
+        );
+
+        delete_temp_remote(&remote_name);
+
+        // Cleanup temp
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        result.map_err(|e| AppError::command(format!("Upload to storage failed: {}", e)))?;
+    } else {
+        // Local storage - just copy
+        let final_dst = if !source_name.is_empty() && !source_name.starts_with('.') {
+            format!("{}/{}", dst_full_path.trim_end_matches('/'), source_name)
+        } else {
+            dst_full_path
+        };
+
+        let status = tokio::process::Command::new("rsync")
+            .args(["-av", &upload_src, &final_dst])
+            .status()
+            .await
+            .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        if !status.success() {
+            return Err(AppError::command("Copy to local storage failed"));
+        }
+    }
+
+    // Emit completion
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            files_done: 1,
+            files_total: 1,
+            bytes_done: 1,
+            bytes_total: 1,
+            current_file: None,
+            ..Default::default()
+        },
+    );
+
+    Ok(())
+}
+
+/// Execute Storage -> SSH transfer (via local staging)
+async fn execute_storage_to_ssh_transfer(
+    task: &TransferTask,
+    storage_store: &StorageStore,
+    app: &AppHandle,
+) -> Result<(), AppError> {
+    let source_endpoint = task.get_source_endpoint();
+    let dest_endpoint = task.get_dest_endpoint();
+
+    // Create temp staging directory
+    let temp_dir = std::env::temp_dir().join(format!("transfer-{}", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(&temp_dir).await
+        .map_err(|e| AppError::io(format!("Failed to create temp dir: {}", e)))?;
+
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            current_file: Some("Downloading from cloud storage...".to_string()),
+            ..Default::default()
+        },
+    );
+
+    // Step 1: Download from storage to local temp using rclone
+    let storage_id = match &source_endpoint {
+        TransferEndpoint::Storage { storage_id } => storage_id.clone(),
+        _ => return Err(AppError::invalid_input("Source is not a storage")),
+    };
+
+    let storage = storage_store.get(&storage_id).await.ok_or_else(|| {
+        AppError::not_found(format!("Storage not found: {}", storage_id))
+    })?;
+
+    let (src_remote, src_full_path) = build_remote_spec_async(&storage, &task.source_path).await?;
+    let temp_path = temp_dir.to_string_lossy().to_string();
+
+    if let Some(config) = src_remote {
+        let remote_name = create_temp_remote("src", &config)?;
+        let src_fs = format!("{}:{}", remote_name, src_full_path);
+
+        let result = librclone::rpc(
+            "sync/copy",
+            &serde_json::json!({
+                "srcFs": src_fs,
+                "dstFs": temp_path,
+                "_async": false,
+            })
+            .to_string(),
+        );
+
+        delete_temp_remote(&remote_name);
+        result.map_err(|e| AppError::command(format!("Download from storage failed: {}", e)))?;
+    } else {
+        // Local storage - just copy
+        let status = tokio::process::Command::new("rsync")
+            .args(["-av", &src_full_path, &temp_path])
+            .status()
+            .await
+            .map_err(|e| AppError::command(format!("Failed to run rsync: {}", e)))?;
+
+        if !status.success() {
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+            return Err(AppError::command("Copy from local storage failed"));
+        }
+    }
+
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            current_file: Some("Uploading to SSH host...".to_string()),
+            ..Default::default()
+        },
+    );
+
+    // Step 2: Upload from temp to SSH using rsync
+    let ssh = get_endpoint_ssh_spec(&dest_endpoint).await?;
+    let ssh_wrapper = build_rsync_ssh_wrapper(&ssh)?;
+
+    let dst_path = if task.dest_path.starts_with('/') || task.dest_path.starts_with('~') {
+        task.dest_path.clone()
+    } else {
+        format!("~/{}", task.dest_path)
+    };
+
+    // Get source filename
+    let source_name = std::path::Path::new(&task.source_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Construct final destination path
+    let final_dst_path = if !source_name.is_empty() && !source_name.starts_with('.') {
+        if dst_path.ends_with('/') {
+            format!("{}{}", dst_path, source_name)
+        } else {
+            format!("{}/{}", dst_path, source_name)
+        }
+    } else {
+        dst_path
+    };
+
+    // Ensure destination directory exists
+    let mkdir_cmd = format!(
+        r#"mkdir -p "$(dirname '{}')""#,
+        final_dst_path.replace('\'', "'\\''")
+    );
+    let mut ssh_cmd = tokio::process::Command::new("ssh");
+    for arg in ssh.common_ssh_options() {
+        ssh_cmd.arg(arg);
+    }
+    ssh_cmd.arg(ssh.target());
+    ssh_cmd.arg(&mkdir_cmd);
+    let _ = ssh_cmd.output().await;
+
+    // Determine upload source
+    let upload_src = if source_name.is_empty() || source_name.starts_with('.') {
+        format!("{}/", temp_path.trim_end_matches('/'))
+    } else {
+        let staged = temp_dir.join(&source_name);
+        if staged.exists() {
+            staged.to_string_lossy().to_string()
+        } else {
+            format!("{}/", temp_path.trim_end_matches('/'))
+        }
+    };
+
+    let remote_dst = format!("{}@{}:{}", ssh.user, ssh.host, escape_rsync_remote_path(&final_dst_path));
+
+    let mut upload_args = vec![
+        "-avz".to_string(),
+        "--progress".to_string(),
+        "-e".to_string(),
+        ssh_wrapper.to_string_lossy().to_string(),
+    ];
+
+    if task.operation == TransferOperation::Sync {
+        upload_args.push("--delete".to_string());
+    }
+
+    upload_args.push(upload_src);
+    upload_args.push(remote_dst);
+
+    let result = run_rsync_transfer(&ssh_wrapper, upload_args, &task.id, app).await;
+
+    // Cleanup temp
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+    result?;
+
+    // Emit completion
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            files_done: 1,
+            files_total: 1,
+            bytes_done: 1,
+            bytes_total: 1,
+            current_file: None,
+            ..Default::default()
+        },
+    );
+
+    Ok(())
+}
+
 /// Execute a unified transfer using endpoints
+///
+/// Uses rsync for SSH-based endpoints (Host, Vast, Local) and rclone for
+/// cloud storage backends (Google Drive, Cloudflare R2, GCS, SMB).
 pub async fn execute_unified_transfer(
     task: &TransferTask,
     storage_store: &StorageStore,
@@ -892,7 +1631,7 @@ pub async fn execute_unified_transfer(
     let source_endpoint = task.get_source_endpoint();
     let dest_endpoint = task.get_dest_endpoint();
 
-    // For Vast instances, require them to be running (use SFTP via rclone)
+    // For Vast instances, require them to be running
     match &source_endpoint {
         TransferEndpoint::Vast { instance_id } => {
             if !is_vast_instance_running(*instance_id).await.unwrap_or(false) {
@@ -915,6 +1654,36 @@ pub async fn execute_unified_transfer(
         }
         _ => {}
     }
+
+    // Decide which transfer method to use:
+    // - If both endpoints are SSH-based (Host, Vast) or Local, use rsync
+    // - If either endpoint is cloud Storage, use rclone (possibly with local staging)
+    if should_use_rsync(&source_endpoint, &dest_endpoint) {
+        eprintln!("[transfer] Using rsync for SSH/local transfer");
+        return execute_rsync_transfer(task, app).await;
+    }
+
+    // Check for mixed transfers: SSH-based endpoint <-> Storage
+    // These need to stage through local temp directory
+    let src_is_ssh = is_ssh_endpoint(&source_endpoint);
+    let dst_is_ssh = is_ssh_endpoint(&dest_endpoint);
+    let src_is_storage = matches!(&source_endpoint, TransferEndpoint::Storage { .. });
+    let dst_is_storage = matches!(&dest_endpoint, TransferEndpoint::Storage { .. });
+
+    if src_is_ssh && dst_is_storage {
+        // SSH -> Storage: download from SSH to temp, then upload to storage via rclone
+        eprintln!("[transfer] Mixed transfer: SSH -> Storage (staging through local)");
+        return execute_ssh_to_storage_transfer(task, storage_store, app).await;
+    }
+
+    if src_is_storage && dst_is_ssh {
+        // Storage -> SSH: download from storage to temp via rclone, then upload to SSH
+        eprintln!("[transfer] Mixed transfer: Storage -> SSH (staging through local)");
+        return execute_storage_to_ssh_transfer(task, storage_store, app).await;
+    }
+
+    // Otherwise, use rclone for Local <-> Storage or Storage <-> Storage transfers
+    eprintln!("[transfer] Using rclone for cloud storage transfer");
 
     // Build source and destination paths
     let (src_remote, src_path) = build_endpoint_spec(&source_endpoint, &task.source_path, storage_store).await?;
