@@ -93,6 +93,11 @@ export function TitleBar() {
   const titleBarClassName = "h-9 flex items-center bg-[rgb(var(--doppio-titlebar-bg))] text-[rgb(var(--doppio-titlebar-text))] pr-3 border-b border-[rgb(var(--doppio-titlebar-tab-border))]/50";
   const sidebarCollapsed = sidebar.state === "collapsed";
 
+  // Check if current terminal session has an associated skill
+  const activeSession = terminal?.sessions.find((s) => s.id === terminal.activeId);
+  const hasActiveSkillInTerminal = isTerminalPage && !!activeSession?.skillExecutionId;
+  const showSkillSidebarToggle = isSkillRunPage || hasActiveSkillInTerminal;
+
   const handleMouseDown = async (e: React.MouseEvent) => {
     if (e.buttons === 1) {
       if (e.detail === 2) {
@@ -167,7 +172,7 @@ export function TitleBar() {
         <div className="flex-1 h-full" />
       )}
 
-      {isSkillRunPage ? (
+      {showSkillSidebarToggle ? (
         <div onMouseDown={(e) => e.stopPropagation()}>
           <Tooltip>
             <TooltipTrigger asChild>

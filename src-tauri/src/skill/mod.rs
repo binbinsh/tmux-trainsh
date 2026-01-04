@@ -8,6 +8,7 @@ pub mod interactive;
 pub mod operations;
 pub mod parser;
 pub mod run_logs;
+pub mod stream_exec;
 pub mod types;
 
 use std::collections::HashMap;
@@ -1487,7 +1488,109 @@ async fn run_interactive_skill(
                 )
                 .await;
 
-                let exec_id_clone = exec_id.clone();
+                // Check if this is a RunCommands or SshCommand that should use streaming execution
+                let is_streaming_op = matches!(
+                    &step.operation,
+                    types::Operation::RunCommands(_) | types::Operation::SshCommand(_)
+                );
+
+                if is_streaming_op {
+                    // Use streaming execution for RunCommands and SshCommand
+                    let (command, workdir, target, is_local) = match &step.operation {
+                        types::Operation::RunCommands(op) => {
+                            let target = op
+                                .host_id
+                                .as_ref()
+                                .map(|h| parser::interpolate(h, &variables))
+                                .or_else(|| variables.get("target").cloned())
+                                .unwrap_or_else(|| LOCAL_TARGET.to_string());
+                            let is_local = target == LOCAL_TARGET;
+                            let command = parser::interpolate(&op.commands, &variables);
+                            let workdir = op.workdir.as_ref().map(|w| parser::interpolate(w, &variables));
+                            (command, workdir, target, is_local)
+                        }
+                        types::Operation::SshCommand(op) => {
+                            let target = parser::interpolate(&op.host_id, &variables);
+                            let is_local = target == LOCAL_TARGET;
+                            let command = parser::interpolate(&op.command, &variables);
+                            let workdir = op.workdir.as_ref().map(|w| parser::interpolate(w, &variables));
+                            (command, workdir, target, is_local)
+                        }
+                        _ => unreachable!(),
+                    };
+
+                    if let types::Operation::RunCommands(op) = &step.operation {
+                        let preview = interpolate_for_log(&op.commands, &variables);
+                        if !preview.trim().is_empty() {
+                            append_skill_log(
+                                &app,
+                                log_lock.as_ref(),
+                                &exec_id,
+                                Some(&step.id),
+                                run_logs::SkillLogStream::System,
+                                format!("Commands:\n{}", preview.trim_end()),
+                            )
+                            .await;
+                        }
+                    }
+
+                    let timeout = step.timeout_secs.filter(|t| *t > 0).map(std::time::Duration::from_secs);
+
+                    let result = execute_streaming_command(
+                        &app,
+                        log_lock.as_ref(),
+                        &exec_id,
+                        &step.id,
+                        &command,
+                        workdir.as_deref(),
+                        is_local,
+                        &target,
+                        &mut control_rx,
+                        &mut control_state,
+                        timeout,
+                    )
+                    .await;
+
+                    match result {
+                        Ok(exit_code) => {
+                            step_exit_code = Some(exit_code);
+                            if exit_code != 0 {
+                                append_skill_log(
+                                    &app,
+                                    log_lock.as_ref(),
+                                    &exec_id,
+                                    Some(&step.id),
+                                    run_logs::SkillLogStream::Stderr,
+                                    format!("Command failed (exit code {exit_code})"),
+                                )
+                                .await;
+                                step_failed = true;
+                                last_error = Some(format!(
+                                    "Step {} failed with exit code {}",
+                                    step.id, exit_code
+                                ));
+                            } else {
+                                step_failed = false;
+                                last_error = None;
+                            }
+                        }
+                        Err(e) => {
+                            append_skill_log(
+                                &app,
+                                log_lock.as_ref(),
+                                &exec_id,
+                                Some(&step.id),
+                                run_logs::SkillLogStream::Stderr,
+                                e.to_string(),
+                            )
+                            .await;
+                            step_failed = true;
+                            last_error = Some(e.to_string());
+                        }
+                    }
+                } else {
+                    // Use the standard execute_step for other operations
+                    let exec_id_clone = exec_id.clone();
                 let step_id_clone = step.id.clone();
                 let app_handle = app.clone();
                 let log_lock_for_progress = log_lock.clone();
@@ -1613,6 +1716,7 @@ async fn run_interactive_skill(
                         }),
                     );
                 });
+                } // Close the else branch for non-streaming ops
             }
 
             if step_failed && attempt < max_attempts {
@@ -1830,6 +1934,8 @@ struct ControlState {
     pause_requested: bool,
     cancel_requested: bool,
     skip_steps: std::collections::HashSet<String>,
+    /// Pending user input for interactive commands
+    pending_input: Option<String>,
 }
 
 async fn apply_control_signal(
@@ -1885,6 +1991,9 @@ async fn apply_control_signal(
                 state.skip_steps.insert(step_id);
             }
         }
+        interactive::InteractiveControl::SendInput(input) => {
+            state.pending_input = Some(input);
+        }
         _ => {}
     }
     Ok(())
@@ -1933,6 +2042,154 @@ async fn wait_if_paused(
     }
 
     Ok(())
+}
+
+/// Execute a command using the streaming executor with interactive input support
+async fn execute_streaming_command(
+    app: &tauri::AppHandle,
+    log_lock: &tokio::sync::Mutex<()>,
+    exec_id: &str,
+    step_id: &str,
+    command: &str,
+    workdir: Option<&str>,
+    is_local: bool,
+    host_id: &str,
+    control_rx: &mut tokio::sync::mpsc::Receiver<interactive::InteractiveControl>,
+    control_state: &mut ControlState,
+    timeout: Option<std::time::Duration>,
+) -> Result<i32, AppError> {
+    use stream_exec::{StreamEvent, StreamType};
+
+    let env = HashMap::new();
+
+    // Start the streaming execution
+    let mut execution = if is_local {
+        stream_exec::execute_streaming(command, workdir, &env, None).await?
+    } else {
+        stream_exec::execute_streaming_ssh(host_id, command, workdir, &env).await?
+    };
+
+    let start_time = std::time::Instant::now();
+
+    loop {
+        // Check for timeout
+        if let Some(timeout) = timeout {
+            if start_time.elapsed() > timeout {
+                execution.cancel();
+                return Err(AppError::command(format!(
+                    "Command timed out after {}s",
+                    timeout.as_secs()
+                )));
+            }
+        }
+
+        tokio::select! {
+            // Handle stream events
+            event = execution.events_rx.recv() => {
+                match event {
+                    Some(StreamEvent::Output { stream, data }) => {
+                        let log_stream = match stream {
+                            StreamType::Stdout => run_logs::SkillLogStream::Stdout,
+                            StreamType::Stderr => run_logs::SkillLogStream::Stderr,
+                        };
+                        append_skill_log(
+                            app,
+                            log_lock,
+                            exec_id,
+                            Some(step_id),
+                            log_stream,
+                            data,
+                        )
+                        .await;
+                    }
+                    Some(StreamEvent::InputNeeded { prompt }) => {
+                        // Update execution status to waiting_for_input
+                        let runner = interactive::get_runner().await;
+                        if let Err(e) = runner.set_pending_input(exec_id, step_id, &prompt).await {
+                            eprintln!("[execute_streaming_command] Failed to set pending input: {e}");
+                        }
+                        // Emit event so frontend knows to refetch execution state
+                        let _ = app.emit(
+                            "skill:execution_updated",
+                            serde_json::json!({
+                                "execution_id": exec_id,
+                                "status": "waiting_for_input",
+                            }),
+                        );
+                        append_skill_log(
+                            app,
+                            log_lock,
+                            exec_id,
+                            Some(step_id),
+                            run_logs::SkillLogStream::System,
+                            format!("Waiting for input: {}", prompt),
+                        )
+                        .await;
+                    }
+                    Some(StreamEvent::Exited { code }) => {
+                        // Clear pending input state
+                        let runner = interactive::get_runner().await;
+                        if let Err(e) = runner.clear_pending_input(exec_id).await {
+                            eprintln!("[execute_streaming_command] Failed to clear pending input: {e}");
+                        }
+                        let _ = app.emit(
+                            "skill:execution_updated",
+                            serde_json::json!({
+                                "execution_id": exec_id,
+                                "status": "running",
+                            }),
+                        );
+                        return Ok(code.unwrap_or(0));
+                    }
+                    None => {
+                        // Channel closed, process must have exited
+                        return Ok(0);
+                    }
+                }
+            }
+
+            // Handle control signals
+            signal = control_rx.recv() => {
+                if let Some(signal) = signal {
+                    // Check if it's a SendInput signal before applying
+                    if let interactive::InteractiveControl::SendInput(input) = &signal {
+                        // Send input directly to the process
+                        if let Err(e) = execution.input_handle.send(input.clone()).await {
+                            append_skill_log(
+                                app,
+                                log_lock,
+                                exec_id,
+                                Some(step_id),
+                                run_logs::SkillLogStream::Stderr,
+                                format!("Failed to send input: {}", e),
+                            )
+                            .await;
+                        }
+                        // Clear pending input state
+                        let runner = interactive::get_runner().await;
+                        if let Err(e) = runner.clear_pending_input(exec_id).await {
+                            eprintln!("[execute_streaming_command] Failed to clear pending input: {e}");
+                        }
+                        let _ = app.emit(
+                            "skill:execution_updated",
+                            serde_json::json!({
+                                "execution_id": exec_id,
+                                "status": "running",
+                            }),
+                        );
+                    } else {
+                        apply_control_signal(app, exec_id, signal, control_state).await?;
+                        if control_state.cancel_requested {
+                            execution.cancel();
+                            return Err(AppError::command("Execution cancelled"));
+                        }
+                    }
+                } else {
+                    return Err(AppError::command("Control channel closed"));
+                }
+            }
+        }
+    }
 }
 
 async fn open_terminal_for_resume(
@@ -2065,14 +2322,16 @@ async fn open_terminal_for_resume(
 
 /// Extract commands from a step's operation
 /// Returns Some(commands) if the operation can be executed as terminal commands
-/// Returns None if the operation must be executed via Rust backend
+/// Returns None if the operation must be executed via Rust backend (streaming executor)
 fn extract_commands_from_step(
     step: &types::Step,
     variables: &HashMap<String, String>,
 ) -> Option<String> {
     match &step.operation {
-        types::Operation::RunCommands(op) => Some(parser::interpolate(&op.commands, variables)),
-        types::Operation::SshCommand(op) => Some(parser::interpolate(&op.command, variables)),
+        // RunCommands and SshCommand now use the streaming executor (backend)
+        // This allows capturing output to sidebar and supporting interactive input
+        types::Operation::RunCommands(_) => None,
+        types::Operation::SshCommand(_) => None,
         types::Operation::GitClone(op) => {
             let repo = parser::interpolate(&op.repo_url, variables);
             let dest = parser::interpolate(&op.destination, variables);
@@ -3075,4 +3334,17 @@ pub async fn skill_interactive_exec_command(
     runner.unlock_intervention(&execution_id).await?;
 
     Ok(())
+}
+
+/// Send user input to an interactive skill execution waiting for input
+/// This is used when a command is waiting for password, y/n confirmation, etc.
+#[tauri::command]
+pub async fn skill_interactive_send_input(
+    execution_id: String,
+    input: String,
+) -> Result<(), AppError> {
+    let runner = interactive::get_runner().await;
+    runner
+        .send_control(&execution_id, interactive::InteractiveControl::SendInput(input))
+        .await
 }

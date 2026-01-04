@@ -1484,6 +1484,11 @@ export const interactiveSkillApi = {
     await safeInvoke("skill_interactive_mark_complete", { executionId });
   },
 
+  /** Send user input to a command waiting for input (password, y/n, etc.) */
+  sendInput: async (executionId: string, input: string): Promise<void> => {
+    await safeInvoke("skill_interactive_send_input", { executionId, input });
+  },
+
   /** Read persisted execution logs (JSONL) */
   logRead: async (params: {
     executionId: string;

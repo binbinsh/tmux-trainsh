@@ -25,6 +25,7 @@ import { TmuxSessionSelectModal } from "@/components/host/TmuxSessionSelectModal
 import { copyText } from "@/lib/clipboard";
 import { AppIcon, type AppIconName } from "@/components/AppIcon";
 import { EmptyHostState, HostRow, HostSection } from "@/components/shared/HostCard";
+import { SkillRunSidebar } from "@/components/skill/SkillRunSidebar";
 import { formatGpuCountLabel } from "@/lib/gpu";
 import {
   loadRecentConnections,
@@ -493,12 +494,24 @@ export function TerminalPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState({ current: 0, total: 0 });
   const [searchDirection, setSearchDirection] = useState<"next" | "prev" | null>(null);
+  const [skillSidebarOpen, setSkillSidebarOpen] = useState(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const showSearchRef = useRef(showSearch);
+
+  // Get the skillExecutionId for the active session
+  const activeSession = sessions.find((s) => s.id === activeId);
+  const activeSkillExecutionId = activeSession?.skillExecutionId ?? null;
 
   useEffect(() => {
     showSearchRef.current = showSearch;
   }, [showSearch]);
+
+  // Listen for skill sidebar toggle event from TitleBar
+  useEffect(() => {
+    const onToggle = () => setSkillSidebarOpen((prev) => !prev);
+    window.addEventListener("skillrun:toggle_right_sidebar", onToggle as EventListener);
+    return () => window.removeEventListener("skillrun:toggle_right_sidebar", onToggle as EventListener);
+  }, []);
 
   useEffect(() => {
     void refreshSessions();
@@ -805,6 +818,9 @@ export function TerminalPage() {
       }
 
       if (e.metaKey && e.key === "]") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSkillSidebarOpen((prev) => !prev);
         return;
       }
 
@@ -1330,7 +1346,7 @@ export function TerminalPage() {
             </div>
           </div>
         ) : (
-          <>
+          <div className="flex-1 min-h-0 flex gap-3 p-3">
             <div
               className="flex-1 min-h-0 relative border border-border overflow-hidden bg-card"
             >
@@ -1358,7 +1374,21 @@ export function TerminalPage() {
                 </div>
               ))}
             </div>
-          </>
+
+            <AnimatePresence initial={false}>
+              {activeSkillExecutionId && skillSidebarOpen ? (
+                <motion.div
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: 480, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: "easeInOut" }}
+                  className="min-h-0 overflow-hidden"
+                >
+                  <SkillRunSidebar executionId={activeSkillExecutionId} />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
         )}
       </div>
 

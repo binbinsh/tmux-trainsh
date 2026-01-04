@@ -67,6 +67,18 @@ impl Default for InteractiveTerminal {
     }
 }
 
+/// Pending input request from a running command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingInput {
+    /// Step ID that needs input
+    pub step_id: String,
+    /// The prompt displayed to the user
+    pub prompt: String,
+    /// Whether the input should be masked (e.g., password)
+    #[serde(default)]
+    pub is_password: bool,
+}
+
 /// State of an interactive execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteractiveExecution {
@@ -95,6 +107,9 @@ pub struct InteractiveExecution {
     /// Optional progress messages keyed by step_id
     #[serde(default)]
     pub step_progress: std::collections::HashMap<String, String>,
+    /// Pending input request (when status is waiting_for_input)
+    #[serde(default)]
+    pub pending_input: Option<PendingInput>,
     /// Effective variables used for interpolation
     #[serde(default)]
     pub variables: HashMap<String, String>,
@@ -299,6 +314,8 @@ pub enum InteractiveControl {
     LockIntervention,
     /// Unlock intervention (allow human input)
     UnlockIntervention,
+    /// Send user input to a waiting command (password, y/n, etc.)
+    SendInput(String),
 }
 
 impl Default for InteractiveRunner {
@@ -372,6 +389,7 @@ impl InteractiveRunner {
             current_step: None,
             steps,
             step_progress: std::collections::HashMap::new(),
+            pending_input: None,
             variables,
             created_at: now.clone(),
             started_at: None,
@@ -642,6 +660,58 @@ impl InteractiveRunner {
                 exec.completed_at = Some(chrono::Utc::now().to_rfc3339());
                 *state.active.write().await = false;
             }
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+
+        Ok(())
+    }
+
+    /// Set pending input request (transitions to WaitingForInput status)
+    pub async fn set_pending_input(
+        &self,
+        id: &str,
+        step_id: &str,
+        prompt: &str,
+    ) -> Result<(), AppError> {
+        let execs = self.executions.read().await;
+        let state = execs
+            .get(id)
+            .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
+
+        let is_password = prompt.to_lowercase().contains("password")
+            || prompt.to_lowercase().contains("passphrase");
+
+        let snapshot = {
+            let mut exec = state.execution.write().await;
+            exec.status = InteractiveStatus::WaitingForInput;
+            exec.pending_input = Some(PendingInput {
+                step_id: step_id.to_string(),
+                prompt: prompt.to_string(),
+                is_password,
+            });
+            Self::touch_execution(&mut exec);
+            exec.clone()
+        };
+        self.persist_execution(&snapshot).await?;
+
+        Ok(())
+    }
+
+    /// Clear pending input request (transitions back to Running status)
+    pub async fn clear_pending_input(&self, id: &str) -> Result<(), AppError> {
+        let execs = self.executions.read().await;
+        let state = execs
+            .get(id)
+            .ok_or_else(|| AppError::not_found(format!("Execution not found: {id}")))?;
+
+        let snapshot = {
+            let mut exec = state.execution.write().await;
+            if exec.status == InteractiveStatus::WaitingForInput {
+                exec.status = InteractiveStatus::Running;
+            }
+            exec.pending_input = None;
             Self::touch_execution(&mut exec);
             exec.clone()
         };

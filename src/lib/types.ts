@@ -586,6 +586,8 @@ export type TransferProgress = {
   speed_bps: number;
   eta_seconds?: number | null;
   current_file?: string | null;
+  /** Status message describing the current transfer phase/method */
+  status_message?: string | null;
 };
 
 export type TransferTask = {
@@ -1106,6 +1108,12 @@ export type InteractiveStepState = {
   command?: string | null;
 };
 
+export type PendingInput = {
+  step_id: string;
+  prompt: string;
+  is_password: boolean;
+};
+
 export type InteractiveExecution = {
   id: string;
   skill_path: string;
@@ -1118,6 +1126,7 @@ export type InteractiveExecution = {
   current_step?: string | null;
   steps: InteractiveStepState[];
   step_progress?: Record<string, string>;
+  pending_input?: PendingInput | null;
   variables: Record<string, string>;
   created_at: string;
   started_at?: string | null;

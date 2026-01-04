@@ -58,6 +58,8 @@ pub struct TransferProgress {
     pub speed_bps: u64,
     pub eta_seconds: Option<u64>,
     pub current_file: Option<String>,
+    /// Status message describing the current transfer phase/method
+    pub status_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -461,6 +463,8 @@ async fn run_rsync_transfer(
 ) -> Result<(), AppError> {
     use std::process::Stdio;
 
+    eprintln!("[rsync] Starting with args: {:?}", args);
+
     let mut cmd = tokio::process::Command::new("rsync");
     cmd.args(&args);
     cmd.stdout(Stdio::piped());
@@ -474,34 +478,92 @@ async fn run_rsync_transfer(
     let stderr = child.stderr.take();
 
     // Stream stdout for progress
+    // rsync --info=progress2 output format:
+    //   1,234,567  50%   10.00MB/s    0:00:30 (xfr#1, to-chk=10/100)
     let task_id_clone = task_id.to_string();
     let app_clone = app.clone();
     let stdout_handle = tokio::spawn(async move {
         if let Some(stdout) = stdout {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
-            let mut files_done: u64 = 0;
+            let mut last_progress = TransferProgress::default();
+
             while let Ok(Some(line)) = lines.next_line().await {
-                // Parse rsync progress output
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+
+                eprintln!("[rsync stdout] {}", line);
+
+                // Parse progress2 format: "1,234,567  50%   10.00MB/s    0:00:30"
+                // Also handles: "1,234,567 100%   10.00MB/s    0:00:30 (xfr#1, to-chk=0/100)"
                 if line.contains('%') {
-                    // Try to extract percentage
-                    if let Some(pct_str) = line.split_whitespace().find(|s| s.ends_with('%')) {
-                        let _pct = pct_str.trim_end_matches('%').parse::<u64>().unwrap_or(0);
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+
+                    // Find bytes (first number with commas or just digits)
+                    if let Some(bytes_str) = parts.first() {
+                        let bytes_clean: String = bytes_str.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if let Ok(bytes) = bytes_clean.parse::<u64>() {
+                            last_progress.bytes_done = bytes;
+                        }
                     }
+
+                    // Find percentage
+                    if let Some(pct_str) = parts.iter().find(|s| s.ends_with('%')) {
+                        if let Ok(pct) = pct_str.trim_end_matches('%').parse::<u64>() {
+                            if pct > 0 && last_progress.bytes_done > 0 {
+                                // Calculate total from percentage
+                                last_progress.bytes_total = (last_progress.bytes_done * 100) / pct.max(1);
+                            }
+                        }
+                    }
+
+                    // Find speed (e.g., "10.00MB/s" or "1.23kB/s")
+                    if let Some(speed_str) = parts.iter().find(|s| s.contains("/s")) {
+                        last_progress.speed_bps = parse_rsync_speed(speed_str);
+                    }
+
+                    // Find ETA (e.g., "0:00:30" or "1:23:45")
+                    if let Some(eta_str) = parts.iter().find(|s| s.contains(':') && !s.contains('/')) {
+                        last_progress.eta_seconds = parse_rsync_eta(eta_str);
+                    }
+
+                    // Find file counts from (xfr#N, to-chk=M/T)
+                    if let Some(xfr_part) = parts.iter().find(|s| s.starts_with("(xfr#")) {
+                        // Parse xfr#N for files done
+                        if let Some(n_str) = xfr_part.strip_prefix("(xfr#") {
+                            if let Some(n_end) = n_str.find(',') {
+                                if let Ok(n) = n_str[..n_end].parse::<u64>() {
+                                    last_progress.files_done = n;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(chk_part) = parts.iter().find(|s| s.starts_with("to-chk=") || s.contains("to-chk=")) {
+                        // Parse to-chk=M/T for remaining/total
+                        if let Some(eq_pos) = chk_part.find("to-chk=") {
+                            let after_eq = &chk_part[eq_pos + 7..];
+                            let clean: String = after_eq.chars().filter(|c| c.is_ascii_digit() || *c == '/').collect();
+                            let nums: Vec<&str> = clean.split('/').collect();
+                            if nums.len() == 2 {
+                                if let (Ok(remaining), Ok(total)) = (nums[0].parse::<u64>(), nums[1].parse::<u64>()) {
+                                    last_progress.files_total = total;
+                                    last_progress.files_done = total.saturating_sub(remaining);
+                                }
+                            }
+                        }
+                    }
+
+                    last_progress.current_file = Some(line.to_string());
+                    emit_transfer_progress(&app_clone, &task_id_clone, last_progress.clone());
+                } else if !line.starts_with("sending") && !line.starts_with("receiving")
+                    && !line.starts_with("total") && !line.starts_with("sent ")
+                    && !line.contains("bytes/sec") {
+                    // This is likely a filename being transferred
+                    last_progress.current_file = Some(line.to_string());
+                    emit_transfer_progress(&app_clone, &task_id_clone, last_progress.clone());
                 }
-                // Count files transferred
-                if !line.trim().is_empty() && !line.starts_with(' ') && !line.contains("sending") && !line.contains("total") {
-                    files_done += 1;
-                }
-                emit_transfer_progress(
-                    &app_clone,
-                    &task_id_clone,
-                    TransferProgress {
-                        files_done,
-                        current_file: Some(line.trim().to_string()),
-                        ..Default::default()
-                    },
-                );
             }
         }
     });
@@ -514,6 +576,7 @@ async fn run_rsync_transfer(
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("[rsync stderr] {}", line);
                 stderr_output_clone.lock().await.push(line);
             }
         }
@@ -524,6 +587,8 @@ async fn run_rsync_transfer(
         .wait()
         .await
         .map_err(|e| AppError::command(format!("Failed to wait for rsync: {}", e)))?;
+
+    eprintln!("[rsync] Process exited with status: {:?}", status);
 
     // Clean up SSH wrapper
     let _ = std::fs::remove_file(ssh_wrapper);
@@ -547,6 +612,50 @@ async fn run_rsync_transfer(
     }
 
     Ok(())
+}
+
+/// Parse rsync speed string like "10.00MB/s" or "1.23kB/s" to bytes per second
+fn parse_rsync_speed(s: &str) -> u64 {
+    let s = s.trim();
+    // Find where the number ends
+    let num_end = s.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(s.len());
+    let num_str = &s[..num_end];
+    let unit_str = &s[num_end..].to_lowercase();
+
+    let num: f64 = num_str.parse().unwrap_or(0.0);
+
+    let multiplier = if unit_str.contains("gb") {
+        1024.0 * 1024.0 * 1024.0
+    } else if unit_str.contains("mb") {
+        1024.0 * 1024.0
+    } else if unit_str.contains("kb") {
+        1024.0
+    } else {
+        1.0
+    };
+
+    (num * multiplier) as u64
+}
+
+/// Parse rsync ETA string like "0:00:30" or "1:23:45" to seconds
+fn parse_rsync_eta(s: &str) -> Option<u64> {
+    let parts: Vec<&str> = s.split(':').collect();
+    match parts.len() {
+        2 => {
+            // MM:SS
+            let mins: u64 = parts[0].parse().ok()?;
+            let secs: u64 = parts[1].parse().ok()?;
+            Some(mins * 60 + secs)
+        }
+        3 => {
+            // HH:MM:SS
+            let hours: u64 = parts[0].parse().ok()?;
+            let mins: u64 = parts[1].parse().ok()?;
+            let secs: u64 = parts[2].parse().ok()?;
+            Some(hours * 3600 + mins * 60 + secs)
+        }
+        _ => None,
+    }
 }
 
 /// Get SshSpec for an endpoint (Host or Vast)
@@ -718,7 +827,7 @@ async fn execute_rsync_transfer(
 
             let args = vec![
                 "-avz".to_string(),
-                "--progress".to_string(),
+                "--info=progress2".to_string(),
                 src_path,
                 final_dst_path,
             ];
@@ -748,7 +857,7 @@ async fn execute_rsync_transfer(
 
             let mut args = vec![
                 "-avz".to_string(),
-                "--progress".to_string(),
+                "--info=progress2".to_string(),
                 "-e".to_string(),
                 ssh_wrapper.to_string_lossy().to_string(),
             ];
@@ -775,7 +884,7 @@ async fn execute_rsync_transfer(
 
             let mut args = vec![
                 "-avz".to_string(),
-                "--progress".to_string(),
+                "--info=progress2".to_string(),
                 "-e".to_string(),
                 ssh_wrapper.to_string_lossy().to_string(),
             ];
@@ -809,7 +918,7 @@ async fn execute_rsync_transfer(
 
             let download_args = vec![
                 "-avz".to_string(),
-                "--progress".to_string(),
+                "--info=progress2".to_string(),
                 "-e".to_string(),
                 src_wrapper.to_string_lossy().to_string(),
                 remote_src,
@@ -858,7 +967,7 @@ async fn execute_rsync_transfer(
 
             let mut upload_args = vec![
                 "-avz".to_string(),
-                "--progress".to_string(),
+                "--info=progress2".to_string(),
                 "-e".to_string(),
                 dst_wrapper.to_string_lossy().to_string(),
             ];
@@ -1331,7 +1440,7 @@ async fn execute_ssh_to_storage_transfer(
 
     let download_args = vec![
         "-avz".to_string(),
-        "--progress".to_string(),
+        "--info=progress2".to_string(),
         "-e".to_string(),
         ssh_wrapper.to_string_lossy().to_string(),
         remote_src,
@@ -1583,7 +1692,7 @@ async fn execute_storage_to_ssh_transfer(
 
     let mut upload_args = vec![
         "-avz".to_string(),
-        "--progress".to_string(),
+        "--info=progress2".to_string(),
         "-e".to_string(),
         ssh_wrapper.to_string_lossy().to_string(),
     ];
@@ -1660,6 +1769,14 @@ pub async fn execute_unified_transfer(
     // - If either endpoint is cloud Storage, use rclone (possibly with local staging)
     if should_use_rsync(&source_endpoint, &dest_endpoint) {
         eprintln!("[transfer] Using rsync for SSH/local transfer");
+        emit_transfer_progress(
+            app,
+            &task.id,
+            TransferProgress {
+                status_message: Some("Using rsync for SSH/local transfer".to_string()),
+                ..Default::default()
+            },
+        );
         return execute_rsync_transfer(task, app).await;
     }
 
@@ -1673,17 +1790,41 @@ pub async fn execute_unified_transfer(
     if src_is_ssh && dst_is_storage {
         // SSH -> Storage: download from SSH to temp, then upload to storage via rclone
         eprintln!("[transfer] Mixed transfer: SSH -> Storage (staging through local)");
+        emit_transfer_progress(
+            app,
+            &task.id,
+            TransferProgress {
+                status_message: Some("SSH → Storage (staging through local)".to_string()),
+                ..Default::default()
+            },
+        );
         return execute_ssh_to_storage_transfer(task, storage_store, app).await;
     }
 
     if src_is_storage && dst_is_ssh {
         // Storage -> SSH: download from storage to temp via rclone, then upload to SSH
         eprintln!("[transfer] Mixed transfer: Storage -> SSH (staging through local)");
+        emit_transfer_progress(
+            app,
+            &task.id,
+            TransferProgress {
+                status_message: Some("Storage → SSH (staging through local)".to_string()),
+                ..Default::default()
+            },
+        );
         return execute_storage_to_ssh_transfer(task, storage_store, app).await;
     }
 
     // Otherwise, use rclone for Local <-> Storage or Storage <-> Storage transfers
     eprintln!("[transfer] Using rclone for cloud storage transfer");
+    emit_transfer_progress(
+        app,
+        &task.id,
+        TransferProgress {
+            status_message: Some("Using rclone for cloud storage transfer".to_string()),
+            ..Default::default()
+        },
+    );
 
     // Build source and destination paths
     let (src_remote, src_path) = build_endpoint_spec(&source_endpoint, &task.source_path, storage_store).await?;
@@ -1911,6 +2052,7 @@ pub async fn execute_unified_transfer(
                         speed_bps: speed,
                         eta_seconds: eta,
                         current_file,
+                        ..Default::default()
                     },
                 );
 

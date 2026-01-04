@@ -1362,7 +1362,7 @@ export function HostDetailPage({ hostId, mode }: HostDetailPageProps) {
               <h1 className="text-2xl font-bold">{host.name}</h1>
               <StatusBadge status={host.status} />
               <Badge variant="secondary" className="h-5">
-                {host.type}
+                {host.type === "vast" ? "Vast.ai" : host.type}
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground">

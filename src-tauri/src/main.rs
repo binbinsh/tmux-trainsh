@@ -1428,6 +1428,7 @@ fn main() {
             skill::skill_interactive_toggle_skip_step,
             skill::skill_interactive_mark_complete,
             skill::skill_interactive_exec_command,
+            skill::skill_interactive_send_input,
             // Google Drive
             google_drive::gdrive_generate_auth_url,
             google_drive::gdrive_exchange_code,

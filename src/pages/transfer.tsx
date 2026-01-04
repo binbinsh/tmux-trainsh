@@ -984,7 +984,7 @@ function FilePane({
       </div>
 
       {/* File List */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-1">
           {!endpoint ? (
             <div className="p-4 text-center text-xs text-muted-foreground">
@@ -1248,9 +1248,16 @@ function TransferQueue() {
                           </span>
                         </div>
                         {task.status === "running" && (
-                          <div className="mt-1">
-                            <Progress value={percent} className="h-1.5" />
-                          </div>
+                          <>
+                            {progress.status_message && (
+                              <div className="text-[10px] text-muted-foreground mt-0.5">
+                                {progress.status_message}
+                              </div>
+                            )}
+                            <div className="mt-1">
+                              <Progress value={percent} className="h-1.5" />
+                            </div>
+                          </>
                         )}
                         {task.error && (
                           <div className="text-[10px] text-destructive truncate mt-0.5">
@@ -1687,7 +1694,7 @@ export function TransferPage() {
         {/* File panes */}
         <div className="flex-1 grid grid-cols-[1fr_auto_1fr] gap-4 min-h-0">
           {/* Left pane */}
-          <div className="min-w-0 relative">
+          <div className="min-w-0 min-h-0 h-full">
             <FilePane
               side="left"
               storages={storages}
@@ -1730,7 +1737,7 @@ export function TransferPage() {
         </div>
 
         {/* Right pane */}
-        <div className="min-w-0 relative">
+        <div className="min-w-0 min-h-0 h-full">
           <FilePane
             side="right"
             storages={storages}
