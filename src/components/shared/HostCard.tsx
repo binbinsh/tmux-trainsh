@@ -78,13 +78,12 @@ export function HostRow({
         <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
           {icon}
         </div>
-        {/* Status dot */}
-        <span
-          className={cn(
-            "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-muted",
-            isOnline ? "bg-success" : "bg-foreground/30"
-          )}
-        />
+        {/* Status dot - only show when online */}
+        {isOnline && (
+          <span
+            className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-muted bg-success"
+          />
+        )}
       </div>
 
       {/* Info - left side */}
@@ -170,7 +169,7 @@ export function SavedHostRow({
 
   return (
     <HostRow
-      icon={<AppIcon name={hostIcon} className="w-4 h-4" alt={host.type} />}
+      icon={<AppIcon name={hostIcon} className="w-5 h-5" alt={host.type} />}
       title={host.name}
       subtitle={sshAddress}
       rightTags={rightTags}
@@ -220,7 +219,7 @@ export function VastInstanceRow({
 
   return (
     <HostRow
-      icon={<AppIcon name="vast" className="w-4 h-4" alt="Vast.ai" />}
+      icon={<AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />}
       title={title}
       subtitle={sshAddress ?? undefined}
       rightTags={rightTags}

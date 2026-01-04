@@ -558,7 +558,8 @@ pub async fn resolve_ssh_spec_with_retry(
                 let elapsed = start.elapsed();
                 let retryable = if is_auth_error(&e) {
                     // Vast key attachment can take a moment to propagate; retry briefly.
-                    elapsed < Duration::from_secs(30)
+                    // After instance start, SSH key propagation may take up to 90 seconds.
+                    elapsed < Duration::from_secs(90)
                 } else {
                     is_retryable_ssh_error(&e)
                 };

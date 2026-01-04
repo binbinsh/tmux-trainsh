@@ -1096,7 +1096,7 @@ export function TerminalPage() {
                           return (
                             <HostRow
                               key={conn.id}
-                              icon={<AppIcon name="ssh" className="w-4 h-4" alt="Local" />}
+                              icon={<AppIcon name="ssh" className="w-5 h-5" alt="Local" />}
                               title="Local"
                               subtitle="On this machine"
                               isOnline={true}
@@ -1149,7 +1149,7 @@ export function TerminalPage() {
                           return (
                             <HostRow
                               key={conn.id}
-                              icon={<AppIcon name={iconName} className="w-4 h-4" alt={host?.type ?? "Host"} />}
+                              icon={<AppIcon name={iconName} className="w-5 h-5" alt={host?.type ?? "Host"} />}
                               title={title}
                               subtitle={subtitle}
                               rightTags={rightTags}
@@ -1200,7 +1200,7 @@ export function TerminalPage() {
                         return (
                           <HostRow
                             key={conn.id}
-                            icon={<AppIcon name="vast" className="w-4 h-4" alt="Vast.ai" />}
+                            icon={<AppIcon name="vast" className="w-5 h-5" alt="Vast.ai" />}
                             title={title}
                             subtitle={subtitle}
                             rightTags={rightTags}
