@@ -259,7 +259,7 @@
   }
 
   .doppio-page-content {
-    @apply max-w-7xl mx-auto p-6;
+    @apply w-full p-6;
   }
 
   .doppio-page-header {
@@ -323,7 +323,12 @@
 
   /* Stats grid */
   .doppio-stats-grid {
-    @apply grid grid-cols-2 md:grid-cols-4 gap-4 mb-6;
+    @apply flex flex-wrap gap-4 mb-6;
+  }
+
+  .doppio-stats-grid > * {
+    width: 180px;
+    flex-shrink: 0;
   }
 
   .doppio-stat-card {
@@ -340,14 +345,19 @@
 
   /* Card grid */
   .doppio-card-grid {
-    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4;
+    @apply flex flex-wrap gap-4;
+  }
+
+  .doppio-card-grid > * {
+    width: 300px;
+    flex-shrink: 0;
   }
 
   /* Host row - Termius style */
   .termius-host-row {
     @apply flex items-center px-3 rounded-lg cursor-default;
     @apply bg-card border border-border;
-    width: calc(33.333% - 8px);
+    width: 300px;
     height: 56px;
     flex-shrink: 0;
     box-shadow: var(--doppio-shadow-sm);
