@@ -10,8 +10,10 @@ import { JobPage } from "./pages/job";
 import { TerminalPage } from "./pages/terminal";
 import { StoragePage } from "./pages/storage";
 import { FileBrowserPage } from "./pages/file-browser";
+import { TransferPage } from "./pages/transfer";
 import { SkillsPage } from "./pages/skills";
 import { SkillEditorPage } from "./pages/skill-editor";
+import { SkillRunPage } from "./pages/skill-run";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -70,15 +72,6 @@ const tasksRedirectRoute = createRoute({
   },
 });
 
-// Legacy recipes route - redirect to skills
-const recipesRedirectRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/recipes",
-  beforeLoad: () => {
-    throw redirect({ to: "/skills" });
-  },
-});
-
 // Legacy routes
 const colabRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -123,6 +116,12 @@ const storageBrowseRoute = createRoute({
   component: FileBrowserPage,
 });
 
+const transferRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/transfer",
+  component: TransferPage,
+});
+
 // Skill routes
 const skillsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -136,6 +135,12 @@ const skillEditorRoute = createRoute({
   component: SkillEditorPage,
 });
 
+const skillRunRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/skills/runs/$id",
+  component: SkillRunPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   // Host routes
@@ -145,14 +150,15 @@ const routeTree = rootRoute.addChildren([
   vastHostDetailRoute,
   // Skill routes
   skillsRoute,
+  skillRunRoute,
   skillEditorRoute,
   // Storage routes
   storageRoute,
   storageBrowseRoute,
+  transferRoute,
   // Legacy redirects
   sessionsRedirectRoute,
   tasksRedirectRoute,
-  recipesRedirectRoute,
   // Legacy routes
   colabRoute,
   jobRoute,

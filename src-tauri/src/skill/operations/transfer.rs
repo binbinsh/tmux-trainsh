@@ -1,4 +1,4 @@
-//! Transfer operation for recipes
+//! Transfer operation for skills
 //!
 //! Handles file transfers between any combination of:
 //! - Local filesystem
@@ -17,7 +17,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use super::ssh as ssh_ops;
 use crate::error::AppError;
 use crate::host;
-use crate::recipe::types::{TransferEndpoint, TransferOp};
+use crate::skill::types::{TransferEndpoint, TransferOp};
 use crate::storage::{get_storage, Storage, StorageBackend};
 
 /// Progress callback type alias
@@ -92,8 +92,14 @@ pub async fn execute(
                 .await?;
                 Ok(Some(format!("Copied {} to {}", remote_path, local_path)))
             } else {
-                download_from_host(&host_id, &remote_path, &local_path, &op.exclude_patterns, progress.clone())
-                    .await?;
+                download_from_host(
+                    &host_id,
+                    &remote_path,
+                    &local_path,
+                    &op.exclude_patterns,
+                    progress.clone(),
+                )
+                .await?;
                 Ok(Some(format!(
                     "Downloaded {}:{} to {}",
                     host_id, remote_path, local_path
@@ -146,8 +152,14 @@ pub async fn execute(
                 )))
             } else if dst_is_local {
                 // Source is remote, dest is local - download
-                download_from_host(&src_host_id, &src_path, &dst_path, &op.exclude_patterns, progress.clone())
-                    .await?;
+                download_from_host(
+                    &src_host_id,
+                    &src_path,
+                    &dst_path,
+                    &op.exclude_patterns,
+                    progress.clone(),
+                )
+                .await?;
                 Ok(Some(format!(
                     "Downloaded {}:{} to {}",
                     src_host_id, src_path, dst_path
@@ -627,7 +639,14 @@ async fn transfer_between_hosts_rsync(
         if let Some(ref cb) = progress_clone {
             cb(&format!("Downloading from {}:{}", src_host_id, src_path));
         }
-        download_from_host(src_host_id, src_path, &temp_root, excludes, progress_clone.clone()).await?;
+        download_from_host(
+            src_host_id,
+            src_path,
+            &temp_root,
+            excludes,
+            progress_clone.clone(),
+        )
+        .await?;
 
         // Preserve rsync trailing-slash semantics when re-uploading.
         let mut copy_contents =
@@ -660,7 +679,15 @@ async fn transfer_between_hosts_rsync(
         if let Some(ref cb) = progress_clone {
             cb(&format!("Uploading to {}:{}", dst_host_id, dst_path));
         }
-        upload_to_host(dst_host_id, &upload_source, dst_path, excludes, delete, progress_clone).await?;
+        upload_to_host(
+            dst_host_id,
+            &upload_source,
+            dst_path,
+            excludes,
+            delete,
+            progress_clone,
+        )
+        .await?;
         Ok(())
     }
     .await;
@@ -848,7 +875,15 @@ async fn transfer_storage_to_host(
     download_from_storage(storage_id, storage_path, temp_dir.to_str().unwrap()).await?;
 
     // Upload from temp to host
-    upload_to_host(host_id, temp_dir.to_str().unwrap(), remote_path, &[], false, None).await?;
+    upload_to_host(
+        host_id,
+        temp_dir.to_str().unwrap(),
+        remote_path,
+        &[],
+        false,
+        None,
+    )
+    .await?;
 
     // Cleanup
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;

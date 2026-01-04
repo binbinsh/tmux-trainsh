@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo, useCallback, memo } from "react";
-import { Plus, Settings, Database, Terminal, FlaskConical, X, SquareTerminal, Server } from "lucide-react";
+import { Plus, Settings, Database, Terminal, FlaskConical, X, SquareTerminal, Server, ArrowLeftRight } from "lucide-react";
 import type { Host, InteractiveExecution, SkillSummary } from "@/lib/types";
 import { useTerminalOptional, type TerminalSession } from "@/contexts/TerminalContext";
 import {
@@ -21,7 +21,6 @@ import {
   SidebarRail,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { cn } from "@/lib/utils";
 import appLogo from "@/assets/icons/app-logo.png";
 
 type SidebarProps = {
@@ -80,7 +79,7 @@ const TerminalSessionItem = memo(function TerminalSessionItem({
   );
 });
 
-export const Sidebar = memo(function Sidebar({ hosts, skills, executions }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ hosts }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentPath = location.pathname;
@@ -89,19 +88,6 @@ export const Sidebar = memo(function Sidebar({ hosts, skills, executions }: Side
   const activeHosts = useMemo(
     () => hosts.filter((h) => h.status === "online"),
     [hosts]
-  );
-
-  const activeExecutions = useMemo(
-    () =>
-      executions.filter(
-        (e) =>
-          !!e.terminal_id &&
-          (e.status === "running" ||
-            e.status === "paused" ||
-            e.status === "waiting_for_input" ||
-            e.status === "connecting")
-      ),
-    [executions]
   );
 
   const terminalSessions = useMemo(
@@ -114,12 +100,20 @@ export const Sidebar = memo(function Sidebar({ hosts, skills, executions }: Side
     [terminalSessions]
   );
 
-  const handleTerminalSessionClick = useCallback((sessionId: string) => {
+  const handleTerminalSessionClick = useCallback((session: TerminalSession) => {
     if (!terminal) return;
-    terminal.setActiveId(sessionId);
-    // Navigate to terminal page if not already there
+    terminal.setActiveId(session.id);
+
+    if (session.skillExecutionId) {
+      navigate({ to: "/skills/runs/$id", params: { id: session.skillExecutionId } });
+      return;
+    }
+
     if (currentPath !== "/terminal") {
-      navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
+      navigate({
+        to: "/terminal",
+        search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined },
+      });
     }
   }, [terminal, currentPath, navigate]);
 
@@ -192,17 +186,21 @@ export const Sidebar = memo(function Sidebar({ hosts, skills, executions }: Side
               </SidebarMenuItem>
 
               <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={isActive("/transfer")} tooltip="Transfer">
+                  <Link to="/transfer">
+                    <ArrowLeftRight />
+                    <span>Transfer</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={isActive("/skills")} tooltip="Skills">
                   <Link to="/skills">
                     <FlaskConical />
                     <span>Skills</span>
                   </Link>
                 </SidebarMenuButton>
-                {activeExecutions.length > 0 && (
-                  <SidebarMenuBadge className={isActive("/skills") ? "text-[rgb(var(--doppio-accent-blue))]" : ""}>
-                    {activeExecutions.length}
-                  </SidebarMenuBadge>
-                )}
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
@@ -227,7 +225,7 @@ export const Sidebar = memo(function Sidebar({ hosts, skills, executions }: Side
                       key={session.id}
                       session={session}
                       isActive={currentPath === "/terminal" && terminal?.activeId === session.id}
-                      onClick={() => handleTerminalSessionClick(session.id)}
+                      onClick={() => handleTerminalSessionClick(session)}
                       onClose={() => handleCloseSession(session.id)}
                     />
                   ))}
@@ -237,59 +235,6 @@ export const Sidebar = memo(function Sidebar({ hosts, skills, executions }: Side
           </>
         )}
 
-        {activeExecutions.length > 0 && (
-          <>
-            <SidebarSeparator className="group-data-[collapsible=icon]:hidden" />
-            <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-              <SidebarGroupLabel>Running</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {activeExecutions.map((execution) => {
-                    const stepsCompleted = execution.steps.filter((s) => s.status === "success").length;
-                    const stepsTotal = execution.steps.length;
-                    const statusColor =
-                      execution.status === "running" || execution.status === "waiting_for_input"
-                        ? "bg-success animate-pulse"
-                        : execution.status === "connecting"
-                        ? "bg-warning animate-pulse"
-                        : execution.status === "paused"
-                        ? "bg-warning"
-                        : execution.status === "failed"
-                        ? "bg-destructive"
-                        : "bg-foreground/20";
-
-                    return (
-                      <SidebarMenuItem key={execution.id}>
-                        <SidebarMenuButton
-                          asChild
-                          size="sm"
-                          isActive={currentPath === "/terminal" && execution.terminal_id === terminal?.activeId}
-                          tooltip={execution.recipe_name}
-                        >
-                          <Link
-                            to="/terminal"
-                            search={{ connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined }}
-                            onClick={() => {
-                              if (terminal && execution.terminal_id) {
-                                terminal.setActiveId(execution.terminal_id);
-                              }
-                            }}
-                          >
-                            <span className={cn("size-2 rounded-full", statusColor)} />
-                            <span>{execution.recipe_name}</span>
-                          </Link>
-                        </SidebarMenuButton>
-                        <SidebarMenuBadge>
-                          {stepsCompleted}/{stepsTotal}
-                        </SidebarMenuBadge>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </>
-        )}
       </SidebarContent>
 
       <SidebarFooter>

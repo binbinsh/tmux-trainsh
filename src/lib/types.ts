@@ -549,6 +549,12 @@ export type StorageUsage = {
   fetched_at: string;
 };
 
+export type R2PurgeDeleteResult = {
+  deleted_objects: number;
+  bucket_deleted: boolean;
+  local_storage_deleted: boolean;
+};
+
 export type FileEntry = {
   name: string;
   path: string;
@@ -601,6 +607,21 @@ export type TransferCreateInput = {
   source_storage_id: string;
   source_paths: string[];
   dest_storage_id: string;
+  dest_path: string;
+  operation: TransferOperation;
+};
+
+// Unified endpoint for file transfers (used by transfer API)
+export type UnifiedEndpoint =
+  | { type: "storage"; storage_id: string }
+  | { type: "host"; host_id: string }
+  | { type: "vast"; instance_id: number }
+  | { type: "local" };
+
+export type UnifiedTransferInput = {
+  source: UnifiedEndpoint;
+  source_paths: string[];
+  dest: UnifiedEndpoint;
   dest_path: string;
   operation: TransferOperation;
 };
@@ -717,10 +738,10 @@ export type PricingSettings = {
 };
 
 // ============================================================
-// Recipe Types
+// Skill Types
 // ============================================================
 
-export type Recipe = {
+export type Skill = {
   name: string;
   version: string;
   description?: string | null;
@@ -730,7 +751,7 @@ export type Recipe = {
   steps: Step[];
 };
 
-/** Target host requirements for a recipe */
+/** Target host requirements for a skill */
 export type TargetRequirements = {
   /** Required host type */
   type: TargetHostType;
@@ -799,7 +820,7 @@ export type Operation =
 
 /** Run commands on target host with optional tmux support */
 export type RunCommandsOp = {
-  /** Host ID (if null, uses recipe target) */
+  /** Host ID (if null, uses skill target) */
   host_id?: string | null;
   /** Commands to execute (one per line) */
   commands: string;
@@ -842,7 +863,7 @@ export type TransferEndpoint =
 
 /** Git clone operation */
 export type GitCloneOp = {
-  /** Host ID (if null, uses recipe target) */
+  /** Host ID (if null, uses skill target) */
   host_id?: string | null;
   /** Repository URL */
   repo_url: string;
@@ -858,7 +879,7 @@ export type GitCloneOp = {
 
 /** HuggingFace download operation */
 export type HfDownloadOp = {
-  /** Host ID (if null, uses recipe target) */
+  /** Host ID (if null, uses skill target) */
   host_id?: string | null;
   /** Repo ID (e.g., "meta-llama/Llama-2-7b") */
   repo_id: string;
@@ -1033,16 +1054,13 @@ export type StepStatus =
   | "retrying"
   | "cancelled";
 
-export type RecipeSummary = {
+export type SkillSummary = {
   path: string;
   name: string;
   version: string;
   description?: string | null;
   step_count: number;
 };
-
-// Alias for RecipeSummary (used in UI as "Skills")
-export type SkillSummary = RecipeSummary;
 
 export type ValidationResult = {
   valid: boolean;
@@ -1061,7 +1079,7 @@ export type ValidationWarning = {
 };
 
 // ============================================================
-// Interactive Recipe Execution Types
+// Interactive Skill Execution Types
 // ============================================================
 
 export type InteractiveStatus =
@@ -1090,8 +1108,8 @@ export type InteractiveStepState = {
 
 export type InteractiveExecution = {
   id: string;
-  recipe_path: string;
-  recipe_name: string;
+  skill_path: string;
+  skill_name: string;
   terminal_id?: string | null;
   terminal: InteractiveTerminal;
   host_id: string;
@@ -1107,8 +1125,34 @@ export type InteractiveExecution = {
   updated_at?: string | null;
 };
 
-// Interactive recipe events
-export type InteractiveRecipeEvent =
+// ============================================================
+// Skill Run Logs (Persisted)
+// ============================================================
+
+export type SkillLogStream = "system" | "progress" | "stdout" | "stderr";
+
+export type SkillRunLogEntry = {
+  timestamp: string;
+  stream: SkillLogStream;
+  step_id?: string | null;
+  message: string;
+};
+
+export type SkillRunLogChunk = {
+  execution_id: string;
+  cursor: number;
+  next_cursor: number;
+  eof: boolean;
+  entries: SkillRunLogEntry[];
+};
+
+export type SkillLogAppendedEvent = {
+  execution_id: string;
+  entry: SkillRunLogEntry;
+};
+
+// Interactive skill events
+export type InteractiveSkillEvent =
   | { type: "interactive_started"; execution_id: string; terminal_id: string }
   | { type: "connected"; execution_id: string; host_id: string }
   | { type: "step_started"; execution_id: string; step_id: string; command?: string | null }

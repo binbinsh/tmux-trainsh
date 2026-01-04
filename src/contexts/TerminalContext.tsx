@@ -29,10 +29,6 @@ type TerminalContextType = {
   /** Get session by terminal ID */
   getSession: (id: string) => TerminalSession | undefined;
   isLoading: boolean;
-  /** Whether the skill details panel is expanded in the top bar */
-  skillDetailsExpanded: boolean;
-  setSkillDetailsExpanded: (expanded: boolean) => void;
-  toggleSkillDetails: () => void;
   /** Check if current terminal has an associated skill */
   hasActiveSkill: boolean;
   /** Whether the workspace panel is visible (for connecting to hosts) */
@@ -63,7 +59,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [skillDetailsExpanded, setSkillDetailsExpanded] = useState(false);
   const [workspaceVisible, setWorkspaceVisible] = useState(false);
   const lastSessionCount = useRef(0);
 
@@ -71,10 +66,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const hasActiveSkill = sessions.some(
     (s) => s.id === activeId && s.skillExecutionId
   );
-
-  const toggleSkillDetails = useCallback(() => {
-    setSkillDetailsExpanded((prev) => !prev);
-  }, []);
 
   // Show workspace panel (hides terminal, shows host connection UI)
   const showWorkspace = useCallback(() => {
@@ -218,7 +209,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       // Check if session already exists
       const existingIndex = prev.findIndex((s) => s.id === session.id);
       if (existingIndex >= 0) {
-        // Update existing session with recipe info
+        // Update existing session with skill info
         const updated = [...prev];
         updated[existingIndex] = { ...updated[existingIndex], ...session };
         return updated;
@@ -240,13 +231,13 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Listen for intervention lock changes from backend
-  // This is critical to block user input while recipe is sending commands
+  // This is critical to block user input while skill is sending commands
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     
     (async () => {
       unlisten = await listen<{ execution_id: string; locked: boolean; terminal_id?: string }>(
-        "recipe:intervention_lock_changed",
+        "skill:intervention_lock_changed",
         (event) => {
           // Find the terminal session with this execution_id and update its lock state
           setSessions((prev) => {
@@ -290,9 +281,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         setInterventionLocked,
         getSession,
         isLoading,
-        skillDetailsExpanded,
-        setSkillDetailsExpanded,
-        toggleSkillDetails,
         hasActiveSkill,
         workspaceVisible,
         setWorkspaceVisible,

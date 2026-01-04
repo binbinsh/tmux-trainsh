@@ -7,6 +7,7 @@ import {
   jobFetchGpu,
   jobGetExitCode,
   jobTailLogs,
+  vastAttachSshKey,
   vastDestroyInstance,
   vastListInstances,
   vastRunJob
@@ -155,6 +156,9 @@ export function JobPage() {
     }
 
     try {
+      await vastAttachSshKey(id);
+      await new Promise((r) => setTimeout(r, 1200));
+
       const input: RunVastJobInput = {
         project_dir: projectDir.trim(),
         command: command.trim(),
@@ -176,7 +180,12 @@ export function JobPage() {
       const defaultLocal = projectDir.trim() ? `${projectDir.trim()}/doppio-output/${jobName}` : `./doppio-output/${jobName}`;
       setLocalDownloadDir((prev) => (prev.trim() ? prev : defaultLocal));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: unknown }).message)
+          : err instanceof Error
+            ? err.message
+            : String(err);
       setRunError(msg);
     }
   }
@@ -494,5 +503,4 @@ export function JobPage() {
     </div>
   );
 }
-
 

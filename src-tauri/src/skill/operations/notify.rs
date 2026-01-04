@@ -1,7 +1,7 @@
 //! Notification operations
 
 use crate::error::AppError;
-use crate::recipe::types::NotifyLevel;
+use crate::skill::types::NotifyLevel;
 
 /// Send a notification (macOS native)
 pub async fn send(

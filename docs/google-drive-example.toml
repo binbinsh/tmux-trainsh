@@ -1,13 +1,13 @@
-# Example Recipe: Mount Google Drive on Colab/Vast.ai
+# Example Skill: Mount Google Drive on Colab/Vast.ai
 #
-# This recipe demonstrates how to mount Google Drive on remote hosts:
+# This skill demonstrates how to mount Google Drive on remote hosts:
 # 1. Ensure the host is online
 # 2. Mount Google Drive using rclone
 # 3. Verify the mount
 # 4. Run training with data from Google Drive
 # 5. Unmount when done
 
-[recipe]
+[skill]
 name = "gdrive-training"
 version = "1.0.0"
 description = "Train model with data from Google Drive on Colab/Vast.ai"

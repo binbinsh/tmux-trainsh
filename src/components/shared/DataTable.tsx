@@ -54,6 +54,8 @@ type DataTableProps<T> = {
   emptyContent?: ReactNode;
   className?: string;
   compact?: boolean;
+  /** Disable row hover effect */
+  noHover?: boolean;
 };
 
 // ============================================================
@@ -140,6 +142,7 @@ export function DataTable<T>({
   emptyContent,
   className = "",
   compact = false,
+  noHover = false,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -229,9 +232,10 @@ export function DataTable<T>({
                 <TableRow
                   key={key}
                   className={cn(
-                    "group transition-colors border-border",
+                    "group border-border",
+                    !noHover && "transition-colors",
                     isClickable && "cursor-pointer",
-                    isHovered ? "bg-primary/5" : "hover:bg-muted/50"
+                    noHover ? "hover:bg-transparent" : (isHovered ? "bg-primary/5" : "hover:bg-muted/50")
                   )}
                   onClick={() => onRowClick?.(item)}
                   onMouseEnter={() => setHoveredRow(key)}

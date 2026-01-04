@@ -4,6 +4,38 @@ use crate::error::AppError;
 use crate::host;
 use std::time::Duration;
 
+/// Capture tmux pane content with optional scrollback start and join-wrapped-lines.
+pub async fn capture_pane_advanced(
+    host_id: &str,
+    session_name: &str,
+    start_line: Option<i64>,
+    join_wrapped: bool,
+) -> Result<String, AppError> {
+    let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
+
+    let mut tmux_cmd = format!("tmux capture-pane -t {} -p", session_name);
+    if join_wrapped {
+        tmux_cmd.push_str(" -J");
+    }
+    if let Some(start) = start_line {
+        tmux_cmd.push_str(&format!(" -S {}", start));
+    }
+
+    let mut cmd = tokio::process::Command::new("ssh");
+    for arg in ssh.common_ssh_options() {
+        cmd.arg(arg);
+    }
+    cmd.arg(ssh.target());
+    cmd.arg(&tmux_cmd);
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to capture pane: {e}")))?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 /// Create a new tmux session
 pub async fn new_session(
     host_id: &str,

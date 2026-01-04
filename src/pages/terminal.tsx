@@ -6,13 +6,13 @@ import { DEFAULT_TERMINAL_THEME, type TerminalThemeName } from "@/lib/terminal-t
 import { useQuery } from "@tanstack/react-query";
 import {
   getConfig,
+  interactiveSkillApi,
   hostApi,
   sshCheck,
   termOpenSshTmux,
   termOpenLocal,
   useHosts,
   useInteractiveExecutions,
-  useRunInteractiveRecipe,
   useVastInstances,
   vastAttachSshKey,
   vastGetInstance,
@@ -21,7 +21,6 @@ import {
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useTerminal } from "@/contexts/TerminalContext";
 import { AnimatePresence, motion } from "framer-motion";
-import { RecipeTerminalControls } from "@/components/recipe/RecipeTerminalControls";
 import { TmuxSessionSelectModal } from "@/components/host/TmuxSessionSelectModal";
 import { copyText } from "@/lib/clipboard";
 import { AppIcon, type AppIconName } from "@/components/AppIcon";
@@ -269,10 +268,7 @@ export function TerminalPage() {
     openLocalTerminal,
     closeSession,
     refreshSessions,
-    addSkillTerminal,
     isLoading,
-    skillDetailsExpanded,
-    toggleSkillDetails,
     workspaceVisible,
     setWorkspaceVisible,
     removeCurrentPlaceholder,
@@ -281,7 +277,7 @@ export function TerminalPage() {
   const hostsQuery = useHosts();
   const vastQuery = useVastInstances();
   const executionsQuery = useInteractiveExecutions();
-  const runRecipeMutation = useRunInteractiveRecipe();
+  const [isPreparingSkill, setIsPreparingSkill] = useState(false);
 
   // Fetch terminal theme from config
   const configQuery = useQuery({
@@ -300,7 +296,7 @@ export function TerminalPage() {
   const [launcherError, setLauncherError] = useState<string | null>(null);
   const [recentConnections, setRecentConnections] = useState<RecentConnection[]>(() => loadRecentConnections());
   const [selectedRecentId, setSelectedRecentId] = useState<string | null>(null);
-  const [selectedRecipePath, setSelectedRecipePath] = useState<string | null>(null);
+  const [selectedSkillPath, setSelectedSkillPath] = useState<string | null>(null);
 
   const [tmuxSelect, setTmuxSelect] = useState<{
     kind: "host" | "vast";
@@ -384,13 +380,13 @@ export function TerminalPage() {
     }
   }, [filteredRecentConnections, selectedRecentId]);
 
-  const recipeHistory = useMemo(() => {
+  const skillHistory = useMemo(() => {
     const sorted = [...executions].sort((a, b) => b.created_at.localeCompare(a.created_at));
     const seen = new Set<string>();
     const out: InteractiveExecution[] = [];
     for (const exec of sorted) {
-      if (seen.has(exec.recipe_path)) continue;
-      seen.add(exec.recipe_path);
+      if (seen.has(exec.skill_path)) continue;
+      seen.add(exec.skill_path);
       out.push(exec);
       if (out.length >= 12) break;
     }
@@ -398,17 +394,17 @@ export function TerminalPage() {
     const needle = launcherQuery.trim().toLowerCase();
     if (!needle) return out;
     return out.filter((exec) => {
-      const haystack = `${exec.recipe_name} ${exec.recipe_path} ${exec.host_id} ${exec.status}`.toLowerCase();
+      const haystack = `${exec.skill_name} ${exec.skill_path} ${exec.host_id} ${exec.status}`.toLowerCase();
       return haystack.includes(needle);
     });
   }, [executions, launcherQuery]);
 
   useEffect(() => {
-    if (!selectedRecipePath) return;
-    if (!recipeHistory.some((e) => e.recipe_path === selectedRecipePath)) {
-      setSelectedRecipePath(null);
+    if (!selectedSkillPath) return;
+    if (!skillHistory.some((e) => e.skill_path === selectedSkillPath)) {
+      setSelectedSkillPath(null);
     }
-  }, [recipeHistory, selectedRecipePath]);
+  }, [skillHistory, selectedSkillPath]);
 
   const hostNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -426,9 +422,9 @@ export function TerminalPage() {
   }, [recentConnections, selectedRecentId]);
 
   const selectedExecution = useMemo(() => {
-    if (!selectedRecipePath) return null;
-    return recipeHistory.find((e) => e.recipe_path === selectedRecipePath) ?? null;
-  }, [recipeHistory, selectedRecipePath]);
+    if (!selectedSkillPath) return null;
+    return skillHistory.find((e) => e.skill_path === selectedSkillPath) ?? null;
+  }, [skillHistory, selectedSkillPath]);
 
   function parseVastHostId(hostId: string): number | null {
     if (!hostId.startsWith("vast:")) return null;
@@ -473,32 +469,25 @@ export function TerminalPage() {
         variables.target = exec.host_id;
       }
 
-      const execution = await runRecipeMutation.mutateAsync({
-        path: exec.recipe_path,
+      setIsPreparingSkill(true);
+      const execution = await interactiveSkillApi.prepare({
+        path: exec.skill_path,
         hostId: exec.host_id,
         variables,
       });
-
-      if (!execution.terminal_id) {
-        throw new Error("Execution did not return a terminal session");
-      }
-
-      addSkillTerminal({
-        id: execution.terminal_id,
-        title: `Skill: ${execution.recipe_name}`,
-        skillExecutionId: execution.id,
-        hostId: execution.host_id,
-      });
       recordConnectionByHostId(execution.host_id);
+      navigate({ to: "/skills/runs/$id", params: { id: execution.id } });
     } catch (e) {
       console.error("Failed to run skill from terminal launcher:", e);
       setLauncherError(getErrorMessage(e));
+    } finally {
+      setIsPreparingSkill(false);
     }
-  }, [addSkillTerminal, removeCurrentPlaceholder, runRecipeMutation, setActiveId, setWorkspaceVisible]);
+  }, [navigate, removeCurrentPlaceholder, setActiveId, setWorkspaceVisible]);
 
-  const launcherPrimaryLabel = selectedRecipePath ? "Run" : "Connect";
-  const canLauncherPrimary = Boolean(selectedRecipePath ? selectedExecution : selectedRecent);
-  const launcherPrimaryLoading = selectedRecipePath ? runRecipeMutation.isPending : false;
+  const launcherPrimaryLabel = selectedSkillPath ? "Run" : "Connect";
+  const canLauncherPrimary = Boolean(selectedSkillPath ? selectedExecution : selectedRecent);
+  const launcherPrimaryLoading = selectedSkillPath ? isPreparingSkill : false;
 
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -816,9 +805,6 @@ export function TerminalPage() {
       }
 
       if (e.metaKey && e.key === "]") {
-        e.preventDefault();
-        e.stopPropagation();
-        toggleSkillDetails();
         return;
       }
 
@@ -856,7 +842,7 @@ export function TerminalPage() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [closeSession, createNewTab, toggleSkillDetails, workspaceVisible, openLocalTerminal]);
+  }, [closeSession, createNewTab, workspaceVisible, openLocalTerminal]);
 
   const handleSearchResult = useCallback((current: number, total: number) => {
     setSearchResult({ current, total });
@@ -1025,7 +1011,7 @@ export function TerminalPage() {
                     <div className="relative flex-1 min-w-0">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
                       <Input
-                        placeholder="Search recent connections & recipes..."
+                        placeholder="Search recent connections & skills..."
                         value={launcherQuery}
                         onChange={(e) => setLauncherQuery(e.target.value)}
                         className="h-12 w-full pl-10 pr-28"
@@ -1117,7 +1103,7 @@ export function TerminalPage() {
                               isSelected={isSelected}
                               onClick={() => {
                                 setSelectedRecentId(conn.id);
-                                setSelectedRecipePath(null);
+                                setSelectedSkillPath(null);
                               }}
                               onDoubleClick={() => void launchRecentConnection(conn)}
                               hoverActions={
@@ -1171,7 +1157,7 @@ export function TerminalPage() {
                               isSelected={isSelected}
                               onClick={() => {
                                 setSelectedRecentId(conn.id);
-                                setSelectedRecipePath(null);
+                                setSelectedSkillPath(null);
                               }}
                               onDoubleClick={() => void launchRecentConnection(conn)}
                               hoverActions={
@@ -1222,7 +1208,7 @@ export function TerminalPage() {
                             isSelected={isSelected}
                             onClick={() => {
                               setSelectedRecentId(conn.id);
-                              setSelectedRecipePath(null);
+                              setSelectedSkillPath(null);
                             }}
                             onDoubleClick={() => void launchRecentConnection(conn)}
                             hoverActions={
@@ -1255,26 +1241,26 @@ export function TerminalPage() {
                     </HostSection>
                   )}
 
-                  {recipeHistory.length > 0 && (
-                    <HostSection title="RECENT RECIPES" count={recipeHistory.length}>
-                      {recipeHistory.map((exec) => {
+                  {skillHistory.length > 0 && (
+                    <HostSection title="RECENT SKILLS" count={skillHistory.length}>
+                      {skillHistory.map((exec) => {
                         const hostName = hostNameById.get(exec.host_id) || exec.host_id;
-                        const isSelected = selectedRecipePath === exec.recipe_path;
+                        const isSelected = selectedSkillPath === exec.skill_path;
                         const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [
                           { label: getExecutionStatusLabel(exec.status), color: exec.status === "running" || exec.status === "waiting_for_input" ? "primary" : "default" },
                         ];
 
                         return (
                           <HostRow
-                            key={exec.recipe_path}
+                            key={exec.skill_path}
                             icon={<span className="text-lg">📜</span>}
-                            title={exec.recipe_name}
+                            title={exec.skill_name}
                             subtitle={`${hostName} · ${new Date(exec.created_at).toLocaleString()}`}
                             rightTags={rightTags}
                             isOnline={exec.status === "running" || exec.status === "waiting_for_input"}
                             isSelected={isSelected}
                             onClick={() => {
-                              setSelectedRecipePath(exec.recipe_path);
+                              setSelectedSkillPath(exec.skill_path);
                               setSelectedRecentId(null);
                             }}
                             onDoubleClick={() => void launchExecution(exec)}
@@ -1304,7 +1290,7 @@ export function TerminalPage() {
                                       size="icon"
                                       className="w-7 h-7 opacity-60 hover:opacity-100"
                                       onClick={() => {
-                                        navigate({ to: "/skills/$path", params: { path: encodeURIComponent(exec.recipe_path) } });
+                                        navigate({ to: "/skills/$path", params: { path: encodeURIComponent(exec.skill_path) } });
                                       }}
                                     >
                                       <Pencil className="w-3.5 h-3.5" />
@@ -1320,11 +1306,11 @@ export function TerminalPage() {
                     </HostSection>
                   )}
 
-                  {filteredRecentConnections.length === 0 && recipeHistory.length === 0 && (
+                  {filteredRecentConnections.length === 0 && skillHistory.length === 0 && (
                     <EmptyHostState
                       icon={<TerminalIcon className="w-5 h-5" />}
                       title={launcherQuery ? "No matches" : "Nothing recent yet"}
-                      description={launcherQuery ? "Try a different search term." : "Connect to a host or run a recipe to see it here."}
+                      description={launcherQuery ? "Try a different search term." : "Connect to a host or run a skill to see it here."}
                       action={
                         !launcherQuery ? (
                           <div className="flex items-center gap-2">
@@ -1345,12 +1331,6 @@ export function TerminalPage() {
           </div>
         ) : (
           <>
-            {activeId && sessions.find((s) => s.id === activeId)?.skillExecutionId && (
-              <RecipeTerminalControls
-                terminalId={activeId}
-                executionId={sessions.find((s) => s.id === activeId)?.skillExecutionId}
-              />
-            )}
             <div
               className="flex-1 min-h-0 relative border border-border overflow-hidden bg-card"
             >

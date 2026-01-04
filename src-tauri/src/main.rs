@@ -6,9 +6,9 @@ mod host;
 mod job;
 mod logs;
 mod pricing;
-mod recipe;
 mod secrets;
 mod session;
+mod skill;
 mod ssh;
 mod ssh_keys;
 mod storage;
@@ -30,7 +30,7 @@ use ssh::SshSpec;
 use vast::{VastClient, VastCreateInstanceInput, VastInstance, VastOffer, VastSearchOffersInput};
 
 use pricing::PricingStore;
-use recipe::RecipeStore;
+use skill::SkillStore;
 use std::sync::Arc;
 use storage::StorageStore;
 use tokio::sync::RwLock;
@@ -55,11 +55,6 @@ fn get_data_dir() -> String {
     config::get_data_dir_path()
 }
 
-#[tauri::command]
-async fn migrate_legacy_data() -> Result<bool, AppError> {
-    config::migrate_legacy_data().await
-}
-
 // ============================================================
 // File Listing Commands (for FilePicker)
 // ============================================================
@@ -69,8 +64,12 @@ async fn migrate_legacy_data() -> Result<bool, AppError> {
 async fn list_local_files(path: String) -> Result<Vec<storage::FileEntry>, AppError> {
     use std::fs;
 
-    let path = if path.is_empty() || path == "/" {
+    let path = if path.is_empty() || path == "/" || path == "~" {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|p| p.join(rest))
+            .unwrap_or_else(|| PathBuf::from(&path))
     } else {
         PathBuf::from(&path)
     };
@@ -296,6 +295,109 @@ async fn create_host_dir(host_id: String, path: String) -> Result<(), AppError> 
     Ok(())
 }
 
+/// List files on a Vast.ai instance via SSH
+/// Only works for running instances with SSH access
+#[tauri::command]
+async fn list_vast_files(
+    instance_id: i64,
+    path: String,
+) -> Result<Vec<storage::FileEntry>, AppError> {
+    let cfg = load_config().await?;
+    let client = VastClient::from_cfg(&cfg)?;
+    let inst = client.get_instance(instance_id).await?;
+
+    let host = inst.ssh_host.clone().unwrap_or_default().trim().to_string();
+    let port = inst.ssh_port.unwrap_or(0);
+    if host.is_empty() || port <= 0 {
+        return Err(AppError::invalid_input(
+            "Instance does not have SSH info yet (is it running and provisioned?)",
+        ));
+    }
+
+    let ssh = SshSpec {
+        host,
+        port,
+        user: {
+            let u = cfg.vast.ssh_user.trim();
+            if u.is_empty() {
+                "root".to_string()
+            } else {
+                u.to_string()
+            }
+        },
+        key_path: match cfg
+            .vast
+            .ssh_key_path
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+        {
+            Some(s) => {
+                let p = ssh_keys::materialize_private_key_path(&s).await?;
+                Some(p.to_string_lossy().to_string())
+            }
+            None => None,
+        },
+        extra_args: vec![],
+    };
+
+    let path = if path.is_empty() { "~".to_string() } else { path };
+
+    let cmd = format!(
+        r#"cd {} 2>/dev/null && ls -la --time-style='+%Y-%m-%dT%H:%M:%S' 2>/dev/null | tail -n +2 | while read perms links owner group size datetime name_and_rest; do
+      name=$(echo "$name_and_rest" | awk '{{print $1}}')
+      if [ -n "$name" ] && [ "$name" != "." ] && [ "$name" != ".." ]; then
+        is_dir="false"
+        if [ "${{perms:0:1}}" = "d" ]; then is_dir="true"; fi
+        echo "$is_dir|$size|$datetime|$name"
+      fi
+    done"#,
+        path
+    );
+
+    let mut ssh_cmd = tokio::process::Command::new("ssh");
+    for arg in ssh.common_ssh_options() {
+        ssh_cmd.arg(arg);
+    }
+    ssh_cmd.arg(ssh.target());
+    ssh_cmd.arg(&cmd);
+
+    let output = ssh_cmd
+        .output()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to execute SSH: {e}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let base_path = if path == "~" {
+        "/root".to_string() // Vast instances typically run as root
+    } else {
+        path.clone()
+    };
+
+    let mut entries = Vec::new();
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.splitn(4, '|').collect();
+        if parts.len() == 4 {
+            let is_dir = parts[0] == "true";
+            let size: u64 = parts[1].parse().unwrap_or(0);
+            let modified_at = Some(parts[2].to_string());
+            let name = parts[3].to_string();
+            let full_path = format!("{}/{}", base_path.trim_end_matches('/'), name);
+
+            entries.push(storage::FileEntry {
+                name,
+                path: full_path,
+                is_dir,
+                size,
+                modified_at,
+                mime_type: None,
+            });
+        }
+    }
+
+    Ok(entries)
+}
+
 // ============================================================
 // SSH Key Commands
 // ============================================================
@@ -352,8 +454,8 @@ async fn ssh_secret_key_candidates() -> Result<Vec<String>, AppError> {
             Err(_) => continue,
         };
         let t = value.trim();
-        let looks_like_private_key =
-            t.contains("PRIVATE KEY") && (t.contains("-----BEGIN") || t.contains("OPENSSH PRIVATE KEY"));
+        let looks_like_private_key = t.contains("PRIVATE KEY")
+            && (t.contains("-----BEGIN") || t.contains("OPENSSH PRIVATE KEY"));
         if looks_like_private_key {
             out.push(format!("${{secret:{}}}", meta.name));
         }
@@ -469,7 +571,9 @@ async fn host_list_tmux_sessions(id: String) -> Result<Vec<host::RemoteTmuxSessi
 }
 
 #[tauri::command]
-async fn host_list_tmux_sessions_by_ssh(ssh: SshSpec) -> Result<Vec<host::RemoteTmuxSession>, AppError> {
+async fn host_list_tmux_sessions_by_ssh(
+    ssh: SshSpec,
+) -> Result<Vec<host::RemoteTmuxSession>, AppError> {
     host::list_tmux_sessions_by_ssh(&ssh).await
 }
 
@@ -702,21 +806,28 @@ async fn vast_fetch_system_info(instance_id: i64) -> Result<host::SystemInfo, Ap
     let inst = client.get_instance(instance_id).await?;
 
     // Extract fields from the instance data (many are in the `extra` HashMap)
-    let cpu_model = inst.extra.get("cpu_name")
+    let cpu_model = inst
+        .extra
+        .get("cpu_name")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let cpu_cores = inst.extra.get("cpu_cores_effective")
+    let cpu_cores = inst
+        .extra
+        .get("cpu_cores_effective")
         .and_then(|v| v.as_i64())
         .or_else(|| inst.extra.get("cpu_cores").and_then(|v| v.as_i64()))
         .map(|n| n as i32);
 
     // Memory: cpu_ram is in MB, mem_limit is in GB
-    let memory_total_gb = inst.extra.get("mem_limit")
+    let memory_total_gb = inst
+        .extra
+        .get("mem_limit")
         .and_then(|v| v.as_f64())
         .filter(|&v| v > 0.0)
         .or_else(|| {
-            inst.extra.get("cpu_ram")
+            inst.extra
+                .get("cpu_ram")
                 .and_then(|v| v.as_f64())
                 .filter(|&v| v > 0.0)
                 .map(|mb| mb / 1024.0)
@@ -736,7 +847,9 @@ async fn vast_fetch_system_info(instance_id: i64) -> Result<host::SystemInfo, Ap
 
     // Disk
     let disk_total_gb = inst.disk_space;
-    let disk_util = inst.extra.get("disk_util")
+    let disk_util = inst
+        .extra
+        .get("disk_util")
         .and_then(|v| v.as_f64())
         .or_else(|| inst.extra.get("disk_usage").and_then(|v| v.as_f64()));
 
@@ -753,7 +866,9 @@ async fn vast_fetch_system_info(instance_id: i64) -> Result<host::SystemInfo, Ap
         _ => (0.0, 0.0),
     };
 
-    let disk_name = inst.extra.get("disk_name")
+    let disk_name = inst
+        .extra
+        .get("disk_name")
         .and_then(|v| v.as_str())
         .unwrap_or("/")
         .to_string();
@@ -770,11 +885,14 @@ async fn vast_fetch_system_info(instance_id: i64) -> Result<host::SystemInfo, Ap
     };
 
     // OS
-    let os = inst.extra.get("os_version")
+    let os = inst
+        .extra
+        .get("os_version")
         .and_then(|v| v.as_f64())
         .map(|v| format!("Ubuntu {}", v))
         .or_else(|| {
-            inst.extra.get("os_version")
+            inst.extra
+                .get("os_version")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
         });
@@ -784,22 +902,39 @@ async fn vast_fetch_system_info(instance_id: i64) -> Result<host::SystemInfo, Ap
     let num_gpus = inst.num_gpus.unwrap_or(1).max(1) as usize;
 
     // gpu_ram is per-GPU in MB, gpu_totalram is total for all GPUs
-    let per_gpu_ram_mb = inst.extra.get("gpu_ram")
+    let per_gpu_ram_mb = inst
+        .extra
+        .get("gpu_ram")
         .and_then(|v| v.as_f64())
         .or_else(|| {
-            inst.extra.get("gpu_totalram")
+            inst.extra
+                .get("gpu_totalram")
                 .and_then(|v| v.as_f64())
                 .map(|total| total / num_gpus as f64)
         })
         .unwrap_or(0.0);
 
     let gpu_util = inst.gpu_util.map(|u| u.round() as i32);
-    let gpu_temp = inst.extra.get("gpu_temp").and_then(|v| v.as_i64()).map(|t| t as i32);
-    let driver_version = inst.extra.get("driver_version")
+    let gpu_temp = inst
+        .extra
+        .get("gpu_temp")
+        .and_then(|v| v.as_i64())
+        .map(|t| t as i32);
+    let driver_version = inst
+        .extra
+        .get("driver_version")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let pcie_gen = inst.extra.get("pci_gen").and_then(|v| v.as_i64()).map(|g| g as i32);
-    let pcie_width = inst.extra.get("gpu_lanes").and_then(|v| v.as_i64()).map(|w| w as i32);
+    let pcie_gen = inst
+        .extra
+        .get("pci_gen")
+        .and_then(|v| v.as_i64())
+        .map(|g| g as i32);
+    let pcie_width = inst
+        .extra
+        .get("gpu_lanes")
+        .and_then(|v| v.as_i64())
+        .map(|w| w as i32);
 
     // Look up GPU capability info
     let capability = gpu::lookup_gpu_capability(&gpu_name);
@@ -910,7 +1045,12 @@ async fn vast_run_job(input: RunVastJobInput) -> Result<RemoteJobMeta, AppError>
                 u.to_string()
             }
         },
-        key_path: match cfg.vast.ssh_key_path.clone().filter(|s| !s.trim().is_empty()) {
+        key_path: match cfg
+            .vast
+            .ssh_key_path
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+        {
             Some(s) => {
                 let p = ssh_keys::materialize_private_key_path(&s).await?;
                 Some(p.to_string_lossy().to_string())
@@ -990,11 +1130,11 @@ fn main() {
         .manage(Arc::new(StorageStore::new(&data_dir)))
         .manage(Arc::new(TransferStore::new(&data_dir)))
         .manage(Arc::new(PricingStore::new(&data_dir)))
-        .manage(Arc::new(RwLock::new(RecipeStore::new(&data_dir))))
+        .manage(Arc::new(RwLock::new(SkillStore::new(&data_dir))))
         .setup(|_app| {
-            tauri::async_runtime::spawn(async {
-                if let Err(e) = recipe::interactive::restore_persisted_executions().await {
-                    eprintln!("[interactive_recipe] Failed to restore executions: {}", e);
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = skill::interactive::restore_persisted_executions().await {
+                    eprintln!("[interactive_skill] Failed to restore executions: {}", e);
                 }
             });
             Ok(())
@@ -1004,10 +1144,10 @@ fn main() {
             get_config,
             save_config,
             get_data_dir,
-            migrate_legacy_data,
             // File Listing (for FilePicker)
             list_local_files,
             list_host_files,
+            list_vast_files,
             create_local_dir,
             create_host_dir,
             // External Editor
@@ -1090,6 +1230,7 @@ fn main() {
             storage::storage_create,
             storage::storage_update,
             storage::storage_delete,
+            storage::storage_r2_purge_and_delete_bucket,
             storage::storage_test,
             storage::storage_list_files,
             storage::storage_mkdir,
@@ -1100,6 +1241,7 @@ fn main() {
             transfer::transfer_list,
             transfer::transfer_get,
             transfer::transfer_create,
+            transfer::transfer_create_unified,
             transfer::transfer_cancel,
             transfer::transfer_clear_completed,
             // Pricing (unified)
@@ -1121,28 +1263,34 @@ fn main() {
             pricing::pricing_sync_vast_instance,
             pricing::pricing_get_r2_cache,
             pricing::pricing_save_r2_cache,
-            // Recipe
-            recipe::recipe_list,
-            recipe::recipe_get,
-            recipe::recipe_save,
-            recipe::recipe_delete,
-            recipe::recipe_validate,
-            recipe::recipe_create,
-            recipe::recipe_import,
-            recipe::recipe_export,
-            recipe::recipe_duplicate,
-            // Recipe Interactive Execution
-            recipe::recipe_run_interactive,
-            recipe::recipe_interactive_send,
-            recipe::recipe_interactive_interrupt,
-            recipe::recipe_interactive_lock,
-            recipe::recipe_interactive_get,
-            recipe::recipe_interactive_list,
-            recipe::recipe_interactive_pause,
-            recipe::recipe_interactive_resume,
-            recipe::recipe_interactive_cancel,
-            recipe::recipe_interactive_mark_complete,
-            recipe::recipe_interactive_exec_command,
+            // Skill
+            skill::skill_list,
+            skill::skill_get,
+            skill::skill_save,
+            skill::skill_delete,
+            skill::skill_validate,
+            skill::skill_create,
+            skill::skill_import,
+            skill::skill_export,
+            skill::skill_duplicate,
+            // Skill Interactive Execution
+            skill::skill_run_interactive,
+            skill::skill_interactive_send,
+            skill::skill_interactive_interrupt,
+            skill::skill_interactive_lock,
+            skill::skill_interactive_get,
+            skill::skill_interactive_list,
+            skill::skill_interactive_log_read,
+            skill::skill_interactive_log_clear,
+            skill::skill_interactive_pause,
+            skill::skill_interactive_resume,
+            skill::skill_interactive_start,
+            skill::skill_interactive_reconnect_terminal,
+            skill::skill_interactive_cancel,
+            skill::skill_interactive_skip_step,
+            skill::skill_interactive_toggle_skip_step,
+            skill::skill_interactive_mark_complete,
+            skill::skill_interactive_exec_command,
             // Google Drive
             google_drive::gdrive_generate_auth_url,
             google_drive::gdrive_exchange_code,

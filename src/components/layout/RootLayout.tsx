@@ -6,7 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
 import { TerminalProvider } from "@/contexts/TerminalContext";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { getConfig, hostApi, recipeApi, useInteractiveExecutions } from "@/lib/tauri-api";
+import { getConfig, hostApi, skillApi, useInteractiveExecutions } from "@/lib/tauri-api";
 import { applyAppTheme, getStoredAppTheme, DEFAULT_APP_THEME } from "@/lib/terminal-themes";
 
 const pageTransitionVariants = {
@@ -69,7 +69,7 @@ function RootLayoutShell() {
 
   const skillsQuery = useQuery({
     queryKey: ["skills"],
-    queryFn: recipeApi.list,
+    queryFn: skillApi.list,
     staleTime: 30_000,
   });
 

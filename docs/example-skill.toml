@@ -1,6 +1,6 @@
-# Example Recipe: Train LLaMA Model on Vast.ai
+# Example Skill: Train LLaMA Model on Vast.ai
 #
-# This recipe demonstrates how to automate a complete training workflow:
+# This skill demonstrates how to automate a complete training workflow:
 # 1. Start a Vast.ai instance
 # 2. Wait for it to come online
 # 3. Sync code and data
@@ -10,7 +10,7 @@
 # 7. Download results
 # 8. Stop the instance
 
-[recipe]
+[skill]
 name = "train-llama"
 version = "1.0.0"
 description = "Train LLaMA model on Vast.ai with automatic provisioning"
@@ -33,58 +33,36 @@ batch_size = "32"
 # Steps
 # ============================================================
 
-# Step 1: Start the Vast.ai instance
 [[step]]
 id = "start_instance"
 name = "Start Vast Instance"
 vast_start = {}
 retry = { max_attempts = 3, delay_secs = 10 }
 
-# Step 2: Wait for the host to come online
 [[step]]
 id = "wait_online"
 name = "Wait for Host to be Online"
 depends_on = ["start_instance"]
-wait_condition = { 
-  condition = { host_online = { host_id = "${target}" } },
-  timeout_secs = 300,
-  poll_interval_secs = 10
-}
+wait_condition = { condition = { host_online = { host_id = "${target}" } }, timeout_secs = 300, poll_interval_secs = 10 }
 
-# Step 3: Sync source code
 [[step]]
 id = "sync_code"
 name = "Upload Source Code"
 depends_on = ["wait_online"]
-rsync_upload = {
-  host_id = "${host_id}",
-  local_path = "${local_project}",
-  remote_path = "${remote_workdir}",
-  excludes = ["*.pth", "wandb/", "__pycache__/", ".git/", "data/"],
-  use_gitignore = true
-}
+rsync_upload = { host_id = "${target}", local_path = "${local_project}", remote_path = "${remote_workdir}", excludes = ["*.pth", "wandb/", "__pycache__/", ".git/", "data/"], use_gitignore = true }
 
-# Step 4: Install Python dependencies
 [[step]]
 id = "install_deps"
 name = "Install Dependencies"
 depends_on = ["sync_code"]
-ssh_command = {
-  host_id = "${host_id}",
-  command = "cd ${remote_workdir} && pip install -r requirements.txt",
-  timeout_secs = 600
-}
+ssh_command = { host_id = "${target}", command = "cd ${remote_workdir} && pip install -r requirements.txt", timeout_secs = 600 }
 retry = { max_attempts = 2, delay_secs = 30 }
 
-# Step 5: Setup environment and authenticate services
-# Secrets are stored securely in OS keychain and referenced with ${secret:name}
 [[step]]
 id = "setup_env"
 name = "Setup Environment"
 depends_on = ["install_deps"]
-ssh_command = {
-  host_id = "${host_id}",
-  command = """
+ssh_command = { host_id = "${target}", command = """
 cd ${remote_workdir}
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export HF_HOME=/workspace/.cache/huggingface
@@ -102,95 +80,55 @@ export GITHUB_TOKEN=${secret:github/token}
 git config --global credential.helper store
 
 mkdir -p output logs
-echo "Environment ready with authenticated services"
-"""
-}
+echo \"Environment ready with authenticated services\"
+""" }
 
-# Step 6: Start training in tmux
 [[step]]
 id = "start_training"
 name = "Start Training"
 depends_on = ["setup_env"]
-tmux_new = {
-  host_id = "${host_id}",
-  session_name = "train",
-  command = "cd ${remote_workdir} && python train.py --model ${model_name} --epochs ${epochs} --batch-size ${batch_size} 2>&1 | tee logs/train.log",
-  workdir = "${remote_workdir}"
-}
+tmux_new = { host_id = "${target}", session_name = "train", command = "cd ${remote_workdir} && python train.py --model ${model_name} --epochs ${epochs} --batch-size ${batch_size} 2>&1 | tee logs/train.log", workdir = "${remote_workdir}" }
 
-# Step 7: Notify that training started
 [[step]]
 id = "notify_start"
 name = "Send Start Notification"
 depends_on = ["start_training"]
-notify = {
-  title = "Training Started",
-  message = "Training ${model_name} has started on ${host_id}",
-  level = "info"
-}
+notify = { title = "Training Started", message = "Training ${model_name} has started on ${target}", level = "info" }
 
-# Step 8: Wait for training to complete
-# This checks for a sentinel file that the training script creates when done
 [[step]]
 id = "wait_training"
 name = "Wait for Training to Complete"
 depends_on = ["start_training"]
-wait_condition = {
-  condition = { file_exists = { 
-    host_id = "${host_id}", 
-    path = "${remote_workdir}/output/training_complete.txt" 
-  }},
-  timeout_secs = 86400,  # 24 hours
-  poll_interval_secs = 300  # Check every 5 minutes
-}
+wait_condition = { condition = { file_exists = { host_id = "${target}", path = "${remote_workdir}/output/training_complete.txt" } }, timeout_secs = 86400, poll_interval_secs = 300 }
 
-# Step 9: Download trained model
 [[step]]
 id = "download_model"
 name = "Download Model"
 depends_on = ["wait_training"]
-rsync_download = {
-  host_id = "${host_id}",
-  remote_path = "${remote_workdir}/output",
-  local_path = "${local_output}"
-}
+rsync_download = { host_id = "${target}", remote_path = "${remote_workdir}/output", local_path = "${local_output}" }
 
-# Step 10: Download logs
 [[step]]
 id = "download_logs"
 name = "Download Logs"
 depends_on = ["wait_training"]
-rsync_download = {
-  host_id = "${host_id}",
-  remote_path = "${remote_workdir}/logs",
-  local_path = "${local_output}/logs"
-}
+rsync_download = { host_id = "${target}", remote_path = "${remote_workdir}/logs", local_path = "${local_output}/logs" }
 
-# Step 11: Kill tmux session
 [[step]]
 id = "cleanup_tmux"
 name = "Cleanup Tmux Session"
 depends_on = ["download_model", "download_logs"]
-tmux_kill = {
-  host_id = "${target}",
-  session_name = "train"
-}
-continue_on_failure = true  # Don't fail if tmux session already dead
+tmux_kill = { host_id = "${target}", session_name = "train" }
+continue_on_failure = true
 
-# Step 12: Stop the instance
 [[step]]
 id = "stop_instance"
 name = "Stop Instance"
 depends_on = ["cleanup_tmux"]
 vast_stop = {}
 
-# Step 13: Final notification
 [[step]]
 id = "notify_complete"
 name = "Send Completion Notification"
 depends_on = ["stop_instance"]
-notify = {
-  title = "Training Complete!",
-  message = "Model saved to ${local_output}. Instance stopped.",
-  level = "success"
-}
+notify = { title = "Training Complete!", message = "Model saved to ${local_output}. Instance stopped.", level = "success" }
+

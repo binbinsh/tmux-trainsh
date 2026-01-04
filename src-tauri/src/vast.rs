@@ -74,32 +74,6 @@ impl Default for VastExecuteResponse {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct VastCopyResponse {
-    pub success: Option<bool>,
-    pub msg: Option<String>,
-    pub error: Option<String>,
-    pub src_addr: Option<String>,
-    pub src_port: Option<i64>,
-    pub dst_addr: Option<String>,
-    pub dst_port: Option<i64>,
-}
-
-impl Default for VastCopyResponse {
-    fn default() -> Self {
-        Self {
-            success: None,
-            msg: None,
-            error: None,
-            src_addr: None,
-            src_port: None,
-            dst_addr: None,
-            dst_port: None,
-        }
-    }
-}
-
 pub struct VastClient {
     http: reqwest::Client,
     api_base: String,
@@ -217,26 +191,57 @@ impl VastClient {
     }
 
     async fn get_json(&self, url: &str, extra_query: &[(&str, &str)]) -> Result<Value, AppError> {
-        let mut req = self.with_auth(self.http.get(url));
-        for (k, v) in extra_query {
-            req = req.query(&[(*k, *v)]);
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| AppError::vast_api(format!("Vast API request failed: {e}")))?;
+        const MAX_ATTEMPTS: usize = 5;
+        let mut last_err: Option<String> = None;
 
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        if status.is_success() {
-            let v: Value = serde_json::from_str(&text).map_err(|e| {
-                AppError::vast_api(format!("Invalid JSON from Vast API: {e}. Body: {text}"))
-            })?;
-            return Ok(v);
+        for attempt in 1..=MAX_ATTEMPTS {
+            let mut req = self.with_auth(self.http.get(url));
+            for (k, v) in extra_query {
+                req = req.query(&[(*k, *v)]);
+            }
+
+            let resp = req.send().await;
+            match resp {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        let v: Value = serde_json::from_str(&text).map_err(|e| {
+                            AppError::vast_api(format!("Invalid JSON from Vast API: {e}. Body: {text}"))
+                        })?;
+                        return Ok(v);
+                    }
+
+                    let retryable = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                        || status.is_server_error();
+                    if retryable && attempt < MAX_ATTEMPTS {
+                        last_err = Some(Self::format_api_error(status, &text));
+                        let backoff_ms = (300u64 * (1u64 << (attempt - 1))).min(3_000);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+
+                    return Err(AppError::vast_api(format!(
+                        "Vast API request failed: {}",
+                        Self::format_api_error(status, &text)
+                    )));
+                }
+                Err(e) => {
+                    let retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                    if retryable && attempt < MAX_ATTEMPTS {
+                        last_err = Some(e.to_string());
+                        let backoff_ms = (300u64 * (1u64 << (attempt - 1))).min(3_000);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    return Err(AppError::vast_api(format!("Vast API request failed: {e}")));
+                }
+            }
         }
+
         Err(AppError::vast_api(format!(
             "Vast API request failed: {}",
-            Self::format_api_error(status, &text)
+            last_err.unwrap_or_else(|| "unknown error".to_string())
         )))
     }
 
@@ -246,23 +251,54 @@ impl VastClient {
         url: &str,
         body: Option<Value>,
     ) -> Result<(), AppError> {
-        let mut req = self.with_auth(self.http.request(method, url));
-        if let Some(b) = body {
-            req = req.json(&b);
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| AppError::vast_api(format!("Vast API request failed: {e}")))?;
+        const MAX_ATTEMPTS: usize = 5;
+        let mut last_err: Option<String> = None;
 
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        if status.is_success() {
-            return Ok(());
+        for attempt in 1..=MAX_ATTEMPTS {
+            let mut req = self.with_auth(self.http.request(method.clone(), url));
+            if let Some(b) = body.clone() {
+                req = req.json(&b);
+            }
+
+            let resp = req.send().await;
+            match resp {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        return Ok(());
+                    }
+
+                    let retryable = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                        || status.is_server_error();
+                    if retryable && attempt < MAX_ATTEMPTS {
+                        last_err = Some(Self::format_api_error(status, &text));
+                        let backoff_ms = (300u64 * (1u64 << (attempt - 1))).min(3_000);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+
+                    return Err(AppError::vast_api(format!(
+                        "Vast API request failed: {}",
+                        Self::format_api_error(status, &text)
+                    )));
+                }
+                Err(e) => {
+                    let retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                    if retryable && attempt < MAX_ATTEMPTS {
+                        last_err = Some(e.to_string());
+                        let backoff_ms = (300u64 * (1u64 << (attempt - 1))).min(3_000);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    return Err(AppError::vast_api(format!("Vast API request failed: {e}")));
+                }
+            }
         }
+
         Err(AppError::vast_api(format!(
             "Vast API request failed: {}",
-            Self::format_api_error(status, &text)
+            last_err.unwrap_or_else(|| "unknown error".to_string())
         )))
     }
 
@@ -272,26 +308,57 @@ impl VastClient {
         url: &str,
         body: Option<Value>,
     ) -> Result<Value, AppError> {
-        let mut req = self.with_auth(self.http.request(method, url));
-        if let Some(b) = body {
-            req = req.json(&b);
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| AppError::vast_api(format!("Vast API request failed: {e}")))?;
+        const MAX_ATTEMPTS: usize = 5;
+        let mut last_err: Option<String> = None;
 
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        if status.is_success() {
-            let v: Value = serde_json::from_str(&text).map_err(|e| {
-                AppError::vast_api(format!("Invalid JSON from Vast API: {e}. Body: {text}"))
-            })?;
-            return Ok(v);
+        for attempt in 1..=MAX_ATTEMPTS {
+            let mut req = self.with_auth(self.http.request(method.clone(), url));
+            if let Some(b) = body.clone() {
+                req = req.json(&b);
+            }
+
+            let resp = req.send().await;
+            match resp {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        let v: Value = serde_json::from_str(&text).map_err(|e| {
+                            AppError::vast_api(format!("Invalid JSON from Vast API: {e}. Body: {text}"))
+                        })?;
+                        return Ok(v);
+                    }
+
+                    let retryable = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                        || status.is_server_error();
+                    if retryable && attempt < MAX_ATTEMPTS {
+                        last_err = Some(Self::format_api_error(status, &text));
+                        let backoff_ms = (300u64 * (1u64 << (attempt - 1))).min(3_000);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+
+                    return Err(AppError::vast_api(format!(
+                        "Vast API request failed: {}",
+                        Self::format_api_error(status, &text)
+                    )));
+                }
+                Err(e) => {
+                    let retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                    if retryable && attempt < MAX_ATTEMPTS {
+                        last_err = Some(e.to_string());
+                        let backoff_ms = (300u64 * (1u64 << (attempt - 1))).min(3_000);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    return Err(AppError::vast_api(format!("Vast API request failed: {e}")));
+                }
+            }
         }
+
         Err(AppError::vast_api(format!(
             "Vast API request failed: {}",
-            Self::format_api_error(status, &text)
+            last_err.unwrap_or_else(|| "unknown error".to_string())
         )))
     }
 
@@ -375,55 +442,6 @@ impl VastClient {
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| AppError::vast_api("Missing result_url from Vast execute response"))?;
         self.wait_for_execute_result(&result_url).await
-    }
-
-    pub async fn copy(
-        &self,
-        src_id: Option<String>,
-        dst_id: Option<String>,
-        src_path: String,
-        dst_path: String,
-        use_rsync_endpoint: bool,
-    ) -> Result<VastCopyResponse, AppError> {
-        if src_path.trim().is_empty() {
-            return Err(AppError::invalid_input("src_path is required"));
-        }
-        if dst_path.trim().is_empty() {
-            return Err(AppError::invalid_input("dst_path is required"));
-        }
-
-        let endpoint = if use_rsync_endpoint {
-            "commands/rsync"
-        } else {
-            "commands/copy_direct"
-        };
-        let url = self.url(endpoint);
-
-        // Build request body based on endpoint
-        // copy_direct requires src_id and dst_id as strings (both instances)
-        // rsync endpoint uses client_id for local operations
-        let body = if use_rsync_endpoint {
-            serde_json::json!({
-                "client_id": "me",
-                "src_id": src_id,
-                "dst_id": dst_id,
-                "src_path": src_path,
-                "dst_path": dst_path,
-            })
-        } else {
-            // copy_direct endpoint: src_id and dst_id are required strings
-            serde_json::json!({
-                "src_id": src_id.unwrap_or_default(),
-                "dst_id": dst_id.unwrap_or_default(),
-                "src_path": src_path,
-                "dst_path": dst_path,
-            })
-        };
-        let v = self
-            .send_json(reqwest::Method::PUT, &url, Some(body))
-            .await?;
-        serde_json::from_value(v)
-            .map_err(|e| AppError::vast_api(format!("Failed to parse Vast copy response: {e}")))
     }
 
     async fn wait_for_execute_result(&self, result_url: &str) -> Result<String, AppError> {

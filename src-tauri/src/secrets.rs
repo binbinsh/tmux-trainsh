@@ -3,7 +3,7 @@
 //! Provides secure storage for API keys, tokens, and other credentials.
 //! Uses OS-native keychain when available, falls back to encrypted file storage.
 //!
-//! Secrets are referenced in recipes using the `${secret:name}` syntax.
+//! Secrets are referenced in skills using the `${secret:name}` syntax.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

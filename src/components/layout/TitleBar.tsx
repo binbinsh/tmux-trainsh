@@ -1,7 +1,7 @@
 import { useLocation } from "@tanstack/react-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
-import { Plus, X, Terminal, SquareTerminal, FlaskConical, GripVertical } from "lucide-react";
+import { PanelRight, Plus, X, Terminal, SquareTerminal, FlaskConical, GripVertical } from "lucide-react";
 import { useTerminalOptional, type TerminalSession } from "@/contexts/TerminalContext";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
@@ -87,6 +87,7 @@ function TerminalTab({
 export function TitleBar() {
   const location = useLocation();
   const isTerminalPage = location.pathname.startsWith("/terminal");
+  const isSkillRunPage = location.pathname.startsWith("/skills/runs/");
   const terminal = useTerminalOptional();
   const sidebar = useSidebar();
   const titleBarClassName = "h-9 flex items-center bg-[rgb(var(--doppio-titlebar-bg))] text-[rgb(var(--doppio-titlebar-text))] pr-3 border-b border-[rgb(var(--doppio-titlebar-tab-border))]/50";
@@ -165,6 +166,34 @@ export function TitleBar() {
       ) : (
         <div className="flex-1 h-full" />
       )}
+
+      {isSkillRunPage ? (
+        <div onMouseDown={(e) => e.stopPropagation()}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("skillrun:toggle_right_sidebar"));
+                }}
+                className={cn(
+                  "min-w-7 w-7 h-7",
+                  "text-[rgb(var(--doppio-titlebar-text))]/50 hover:text-[rgb(var(--doppio-titlebar-text))] hover:bg-black/5 transition-colors"
+                )}
+                aria-label="Toggle skill run sidebar (⌘])"
+              >
+                <PanelRight className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="flex items-center gap-2">
+              <span>Toggle Skill Sidebar</span>
+              <kbd className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">⌘]</kbd>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
     </div>
   );
 }

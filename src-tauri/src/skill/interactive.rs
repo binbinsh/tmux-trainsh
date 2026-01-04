@@ -1,6 +1,6 @@
-//! Interactive recipe execution with PTY support
+//! Interactive skill execution with PTY support
 //!
-//! This module enables recipe execution through a terminal session,
+//! This module enables skill execution through a terminal session,
 //! allowing real-time output display and human intervention.
 
 use std::collections::HashMap;
@@ -59,7 +59,7 @@ pub struct InteractiveTerminal {
 impl Default for InteractiveTerminal {
     fn default() -> Self {
         Self {
-            title: "Recipe".to_string(),
+            title: "Skill".to_string(),
             tmux_session: None,
             cols: default_terminal_cols(),
             rows: default_terminal_rows(),
@@ -72,10 +72,10 @@ impl Default for InteractiveTerminal {
 pub struct InteractiveExecution {
     /// Unique execution ID
     pub id: String,
-    /// Recipe path
-    pub recipe_path: String,
-    /// Recipe name
-    pub recipe_name: String,
+    /// Skill path
+    pub skill_path: String,
+    /// Skill name
+    pub skill_name: String,
     /// Associated terminal session ID
     #[serde(default)]
     pub terminal_id: Option<String>,
@@ -204,7 +204,7 @@ pub enum InteractiveEvent {
 // ============================================================
 
 fn executions_dir() -> PathBuf {
-    doppio_data_dir().join("recipe_executions")
+    doppio_data_dir().join("skill_executions")
 }
 
 fn execution_path(id: &str) -> PathBuf {
@@ -241,7 +241,7 @@ async fn load_executions_from_disk() -> Result<Vec<InteractiveExecution>, AppErr
             Ok(data) => data,
             Err(e) => {
                 eprintln!(
-                    "[interactive_recipe] Failed to read execution file {:?}: {}",
+                    "[interactive_skill] Failed to read execution file {:?}: {}",
                     path, e
                 );
                 continue;
@@ -251,7 +251,7 @@ async fn load_executions_from_disk() -> Result<Vec<InteractiveExecution>, AppErr
             Ok(exec) => executions.push(exec),
             Err(e) => {
                 eprintln!(
-                    "[interactive_recipe] Failed to parse execution file {:?}: {}",
+                    "[interactive_skill] Failed to parse execution file {:?}: {}",
                     path, e
                 );
             }
@@ -262,7 +262,7 @@ async fn load_executions_from_disk() -> Result<Vec<InteractiveExecution>, AppErr
     Ok(executions)
 }
 
-/// Manages interactive recipe executions
+/// Manages interactive skill executions
 pub struct InteractiveRunner {
     /// Active interactive executions
     executions: RwLock<HashMap<String, Arc<InteractiveExecutionState>>>,
@@ -293,8 +293,8 @@ pub enum InteractiveControl {
     ConfirmCommand,
     /// Modify and confirm pending command
     ModifyCommand(String),
-    /// Skip current step
-    SkipStep,
+    /// Skip a step (typically a pending/waiting step)
+    SkipStep(String),
     /// Lock intervention (script is typing)
     LockIntervention,
     /// Unlock intervention (allow human input)
@@ -334,12 +334,12 @@ impl InteractiveRunner {
         execution.updated_at = Some(chrono::Utc::now().to_rfc3339());
     }
 
-    /// Start an interactive recipe execution
+    /// Start an interactive skill execution
     /// Returns (execution_id, terminal_id)
     pub async fn start(
         &self,
-        recipe: Recipe,
-        recipe_path: String,
+        skill: Skill,
+        skill_path: String,
         host_id: String,
         terminal_id: String,
         terminal: InteractiveTerminal,
@@ -349,7 +349,7 @@ impl InteractiveRunner {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Initialize step states
-        let steps: Vec<InteractiveStepState> = recipe
+        let steps: Vec<InteractiveStepState> = skill
             .steps
             .iter()
             .map(|s| InteractiveStepState {
@@ -362,8 +362,8 @@ impl InteractiveRunner {
 
         let execution = InteractiveExecution {
             id: id.clone(),
-            recipe_path,
-            recipe_name: recipe.name.clone(),
+            skill_path,
+            skill_name: skill.name.clone(),
             terminal_id: Some(terminal_id.clone()),
             terminal,
             host_id: host_id.clone(),

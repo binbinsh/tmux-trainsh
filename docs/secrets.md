@@ -11,33 +11,30 @@ Secrets are stored in:
 
 This ensures your sensitive data is encrypted at rest and protected by your system's security features.
 
-## Using Secrets in Recipes
+## Using Secrets in Skills
 
 ### Syntax
 
-Reference secrets in your recipe using the `${secret:name}` syntax:
+Reference secrets in your skill using the `${secret:name}` syntax:
 
 ```toml
 [[step]]
 id = "setup_auth"
-ssh_command = {
-  host_id = "${host_id}",
-  command = """
+ssh_command = { host_id = "${host_id}", command = """
 export HF_TOKEN=${secret:huggingface/token}
 export WANDB_API_KEY=${secret:wandb/api_key}
 export GITHUB_TOKEN=${secret:github/token}
 
 huggingface-cli login --token $HF_TOKEN
 wandb login --relogin
-"""
-}
+""" }
 ```
 
 ### Variable vs Secret Interpolation
 
 | Syntax | Source | Storage | Use Case |
 |--------|--------|---------|----------|
-| `${var_name}` | Recipe `[variables]` section | Plain text in TOML file | Paths, instance IDs, config values |
+| `${var_name}` | Skill `variables` | Plain text in skill TOML | Paths, instance IDs, config values |
 | `${secret:name}` | OS Keychain | Encrypted by OS | API keys, tokens, passwords |
 
 ## Managing Secrets
@@ -78,7 +75,7 @@ kaggle/key
 ## Example: Training with Private HuggingFace Model
 
 ```toml
-[recipe]
+[skill]
 name = "train-private-model"
 version = "1.0.0"
 
@@ -87,44 +84,31 @@ host_id = "vast-12345"
 model_repo = "my-org/my-private-model"
 remote_workdir = "/workspace/train"
 
-# Step 1: Authenticate with HuggingFace
 [[step]]
 id = "hf_login"
-ssh_command = {
-  host_id = "${host_id}",
-  command = """
+ssh_command = { host_id = "${host_id}", command = """
 export HF_TOKEN=${secret:huggingface/token}
 huggingface-cli login --token $HF_TOKEN --add-to-git-credential
-echo "Logged in to HuggingFace"
-"""
-}
+echo \"Logged in to HuggingFace\"
+""" }
 
-# Step 2: Clone private model
 [[step]]
 id = "clone_model"
 depends_on = ["hf_login"]
-ssh_command = {
-  host_id = "${host_id}",
-  command = "git clone https://huggingface.co/${model_repo} ${remote_workdir}/model"
-}
+ssh_command = { host_id = "${host_id}", command = "git clone https://huggingface.co/${model_repo} ${remote_workdir}/model" }
 
-# Step 3: Start training with W&B logging
 [[step]]
 id = "train"
 depends_on = ["clone_model"]
-tmux_new = {
-  host_id = "${host_id}",
-  session_name = "train",
-  command = """
+tmux_new = { host_id = "${host_id}", session_name = "train", command = """
 export WANDB_API_KEY=${secret:wandb/api_key}
 python train.py --model ${remote_workdir}/model --wandb-project my-project
-"""
-}
+""" }
 ```
 
 ## Security Notes
 
-1. **Secrets never appear in recipe files** - Only references like `${secret:huggingface/token}` are stored
+1. **Secrets never appear in skill files** - Only references like `${secret:huggingface/token}` are stored
 2. **Secrets are resolved at runtime** - Values are fetched from keychain only when the step executes
 3. **Secrets are injected via environment** - They're passed to remote commands as environment variables
 4. **Keychain access may require authentication** - Your OS may prompt for password/biometrics
@@ -154,4 +138,3 @@ sudo apt install gnome-keyring  # or dnf install
 # KDE
 sudo apt install kwalletmanager
 ```
-

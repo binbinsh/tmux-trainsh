@@ -33,43 +33,47 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  interactiveRecipeApi,
-  recipeApi,
-  useCreateRecipe,
-  useDeleteRecipe,
-  useDuplicateRecipe,
+  interactiveSkillApi,
+  skillApi,
+  useCreateSkill,
+  useDeleteSkill,
+  useDuplicateSkill,
   useHosts,
   useInteractiveExecutions,
   useVastInstances,
-  useRecipes,
+  useSkills,
+  vastAttachSshKey,
 } from "../lib/tauri-api";
 import { useTerminalOptional } from "../contexts/TerminalContext";
 import type {
   Host,
   InteractiveExecution,
   InteractiveStatus,
-  Recipe,
+  Skill,
 } from "../lib/types";
 import { vastInstanceToHostCandidate } from "../lib/vast-host";
 import { EmptyHostState, HostRow, HostSection } from "../components/shared/HostCard";
-import type { RecipeFolder } from "../lib/recipe-folders";
+import type { SkillFolder } from "../lib/skill-folders";
 import {
   getAssignedFolderId,
-  loadRecipeFolderAssignments,
-  loadRecipeFolders,
-  saveRecipeFolderAssignments,
-  saveRecipeFolders,
+  loadSkillFolderAssignments,
+  loadSkillFolders,
+  saveSkillFolderAssignments,
+  saveSkillFolders,
   setAssignedFolderId,
-} from "../lib/recipe-folders";
+} from "../lib/skill-folders";
 import { cn } from "@/lib/utils";
 import {
   Plus,
   Play,
+  Pause,
   Upload,
+  FlaskConical,
   Folder,
   Archive,
   RotateCcw,
   Terminal,
+  Square,
   X,
   Search,
   Filter,
@@ -145,41 +149,44 @@ export function SkillsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const terminalContext = useTerminalOptional();
-  const [createRecipeModalOpen, setCreateRecipeModalOpen] = useState(false);
+  const [createSkillModalOpen, setCreateSkillModalOpen] = useState(false);
   const [createFolderModalOpen, setCreateFolderModalOpen] = useState(false);
   const [deleteFolderModalOpen, setDeleteFolderModalOpen] = useState(false);
-  const [moveRecipeModalOpen, setMoveRecipeModalOpen] = useState(false);
+  const [moveSkillModalOpen, setMoveSkillModalOpen] = useState(false);
   const [isRunErrorOpen, setIsRunErrorOpen] = useState(false);
-  const [newRecipeName, setNewRecipeName] = useState("");
-  const [newRecipeFolderKey, setNewRecipeFolderKey] = useState<string>("__root__");
+  const [newSkillName, setNewSkillName] = useState("");
+  const [newSkillFolderKey, setNewSkillFolderKey] = useState<string>("__root__");
   const [isRunning, setIsRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [executionActions, setExecutionActions] = useState<
+    Record<string, null | "pause" | "resume" | "interrupt" | "cancel">
+  >({});
 
-  const [folders, setFolders] = useState<RecipeFolder[]>(() => loadRecipeFolders());
+  const [folders, setFolders] = useState<SkillFolder[]>(() => loadSkillFolders());
   const [folderAssignments, setFolderAssignments] = useState<Record<string, string>>(
-    () => loadRecipeFolderAssignments()
+    () => loadSkillFolderAssignments()
   );
   const [folderScopeKey, setFolderScopeKey] = useState<string>("all");
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
-  const [folderToDelete, setFolderToDelete] = useState<RecipeFolder | null>(null);
+  const [folderToDelete, setFolderToDelete] = useState<SkillFolder | null>(null);
   const [deletingFolder, setDeletingFolder] = useState(false);
-  const [moveRecipePath, setMoveRecipePath] = useState<string | null>(null);
+  const [moveSkillPath, setMoveSkillPath] = useState<string | null>(null);
   const [moveTargetFolderKey, setMoveTargetFolderKey] = useState<string>("__root__");
 
-  const recipesQuery = useRecipes();
+  const skillsQuery = useSkills();
   const executionsQuery = useInteractiveExecutions();
-  const createMutation = useCreateRecipe();
-  const deleteMutation = useDeleteRecipe();
-  const duplicateMutation = useDuplicateRecipe();
+  const createMutation = useCreateSkill();
+  const deleteMutation = useDeleteSkill();
+  const duplicateMutation = useDuplicateSkill();
 
   // Delete confirmation modal
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-  const [recipeToDelete, setRecipeToDelete] = useState<string | null>(null);
+  const [skillToDelete, setSkillToDelete] = useState<string | null>(null);
 
-  // Host selection modal for running recipes with targets
+  // Host selection modal for running skills with targets
   const [isHostSelectOpen, setIsHostSelectOpen] = useState(false);
-  const [recipeToRun, setRecipeToRun] = useState<{ path: string; recipe: Recipe } | null>(null);
+  const [skillToRun, setSkillToRun] = useState<{ path: string; skill: Skill } | null>(null);
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const { data: hosts = [] } = useHosts();
   const vastQuery = useVastInstances();
@@ -202,10 +209,10 @@ export function SkillsPage() {
     [folders]
   );
 
-  function persistFolders(updater: (prev: RecipeFolder[]) => RecipeFolder[]) {
+  function persistFolders(updater: (prev: SkillFolder[]) => SkillFolder[]) {
     setFolders((prev) => {
       const next = updater(prev);
-      saveRecipeFolders(next);
+      saveSkillFolders(next);
       return next;
     });
   }
@@ -213,7 +220,7 @@ export function SkillsPage() {
   function persistAssignments(updater: (prev: Record<string, string>) => Record<string, string>) {
     setFolderAssignments((prev) => {
       const next = updater(prev);
-      saveRecipeFolderAssignments(next);
+      saveSkillFolderAssignments(next);
       return next;
     });
   }
@@ -224,19 +231,19 @@ export function SkillsPage() {
   const folderScopeLabel =
     folderScopeKey === "all"
       ? "All"
-      : folderScopeKey === "recipes"
-        ? "Recipes"
+      : folderScopeKey === "skills"
+        ? "Skills"
         : folderScopeFolder
           ? folderScopeFolder.status === "archived"
             ? `${folderScopeFolder.name} (archived)`
             : folderScopeFolder.name
           : "Folder";
 
-  function openCreateRecipeModalWithContext() {
-    setNewRecipeName("");
+  function openCreateSkillModalWithContext() {
+    setNewSkillName("");
     setFolderError(null);
-    setNewRecipeFolderKey(folderScopeKey.startsWith("folder:") ? folderScopeKey : "__root__");
-    setCreateRecipeModalOpen(true);
+    setNewSkillFolderKey(folderScopeKey.startsWith("folder:") ? folderScopeKey : "__root__");
+    setCreateSkillModalOpen(true);
   }
 
   function openCreateFolderModal() {
@@ -246,40 +253,40 @@ export function SkillsPage() {
   }
 
   const handleCreate = async () => {
-    if (!newRecipeName.trim()) return;
+    if (!newSkillName.trim()) return;
 
     try {
-      const path = await createMutation.mutateAsync(newRecipeName);
-      const folderId = newRecipeFolderKey.startsWith("folder:")
-        ? newRecipeFolderKey.slice("folder:".length)
+      const path = await createMutation.mutateAsync(newSkillName);
+      const folderId = newSkillFolderKey.startsWith("folder:")
+        ? newSkillFolderKey.slice("folder:".length)
         : null;
       if (folderId) {
         persistAssignments((prev) => setAssignedFolderId(prev, path, folderId));
       }
-      setCreateRecipeModalOpen(false);
-      setNewRecipeName("");
+      setCreateSkillModalOpen(false);
+      setNewSkillName("");
       navigate({ to: "/skills/$path", params: { path: encodeURIComponent(path) } });
     } catch (e) {
-      console.error("Failed to create recipe:", e);
+      console.error("Failed to create skill:", e);
     }
   };
 
   const handleRunClick = async (path: string) => {
     try {
-      // Load the recipe to check if it has a target
-      const recipe = await recipeApi.get(path);
+      // Load the skill to check if it has a target
+      const skill = await skillApi.get(path);
 
-      if (recipe.target) {
+      if (skill.target) {
         // Show host selection modal
-        setRecipeToRun({ path, recipe });
+        setSkillToRun({ path, skill });
         setSelectedHostId(null);
         setIsHostSelectOpen(true);
       } else {
         // No target, run directly with local execution
-        await executeRecipe(path, "__local__");
+        await executeSkill(path, "__local__");
       }
     } catch (e) {
-      console.error("Failed to run recipe:", e);
+      console.error("Failed to run skill:", e);
       const msg =
         typeof e === "object" && e !== null && "message" in e
           ? String((e as { message: unknown }).message)
@@ -291,7 +298,7 @@ export function SkillsPage() {
     }
   };
 
-  const executeRecipe = async (recipePath: string, hostId: string) => {
+  const executeSkill = async (skillPath: string, hostId: string) => {
     setIsRunning(true);
     try {
       const variables: Record<string, string> = {};
@@ -299,37 +306,35 @@ export function SkillsPage() {
         variables.target = hostId;
       }
 
-      // Use interactive execution to run in terminal
-      const execution = await interactiveRecipeApi.run({
-        path: recipePath,
+      // For Vast targets, proactively attach the configured SSH key via API.
+      if (hostId && hostId !== "__local__") {
+        const vastInstanceId = hostId.startsWith("vast:")
+          ? Number(hostId.slice("vast:".length))
+          : (hosts.find((h) => h.id === hostId)?.vast_instance_id ?? null);
+        if (typeof vastInstanceId === "number" && Number.isFinite(vastInstanceId) && vastInstanceId > 0) {
+          await vastAttachSshKey(vastInstanceId);
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+      }
+
+      // Prepare interactive execution (pending, manual start)
+      const execution = await interactiveSkillApi.prepare({
+        path: skillPath,
         hostId,
         variables,
       });
 
       // Immediately seed the query cache with execution data
-      // This allows the sidebar to show recipe info instantly
+      // This allows the sidebar to show skill info instantly
       queryClient.setQueryData(
         ["interactive-executions", execution.id],
         execution
       );
 
-      // Add terminal session to context and navigate
-      if (terminalContext) {
-        if (!execution.terminal_id) {
-          throw new Error("Execution did not return a terminal session");
-        }
-        terminalContext.addSkillTerminal({
-          id: execution.terminal_id,
-          title: `Skill: ${execution.recipe_name}`,
-          skillExecutionId: execution.id,
-          hostId: execution.host_id,
-        });
-      }
-
-      // Navigate to terminal page
-      navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
+      // Navigate to run page
+      navigate({ to: "/skills/runs/$id", params: { id: execution.id } });
     } catch (e) {
-      console.error("Failed to run recipe:", e);
+      console.error("Failed to run skill:", e);
       const msg =
         typeof e === "object" && e !== null && "message" in e
           ? String((e as { message: unknown }).message)
@@ -344,46 +349,25 @@ export function SkillsPage() {
   };
 
   const handleConfirmRun = async () => {
-    if (!recipeToRun) return;
-    if (!selectedHostId && recipeToRun.recipe.target) return; // Must select a host or local
+    if (!skillToRun) return;
+    if (!selectedHostId && skillToRun.skill.target) return; // Must select a host or local
 
     setIsHostSelectOpen(false);
-    await executeRecipe(recipeToRun.path, selectedHostId || "__local__");
-    setRecipeToRun(null);
+    await executeSkill(skillToRun.path, selectedHostId || "__local__");
+    setSkillToRun(null);
   };
 
   const handleExecutionClick = async (execution: InteractiveExecution) => {
     try {
       if (execution.terminal_id) {
-        if (terminalContext) {
-          const existing = terminalContext.getSession(execution.terminal_id);
-          if (!existing) {
-            terminalContext.addSkillTerminal({
-              id: execution.terminal_id,
-              title: `Skill: ${execution.recipe_name}`,
-              skillExecutionId: execution.id,
-              hostId: execution.host_id,
-            });
-          } else {
-            terminalContext.setActiveId(execution.terminal_id);
-          }
-        }
-        navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
+        navigate({ to: "/skills/runs/$id", params: { id: execution.id } });
         return;
       }
 
-      const resumed = await interactiveRecipeApi.resume(execution.id);
+      const resumed = await interactiveSkillApi.resume(execution.id);
       queryClient.setQueryData(["interactive-executions", resumed.id], resumed);
       queryClient.invalidateQueries({ queryKey: ["interactive-executions"] });
-      if (terminalContext && resumed.terminal_id) {
-        terminalContext.addSkillTerminal({
-          id: resumed.terminal_id,
-          title: `Skill: ${resumed.recipe_name}`,
-          skillExecutionId: resumed.id,
-          hostId: resumed.host_id,
-        });
-      }
-      navigate({ to: "/terminal", search: { connectHostId: undefined, connectVastInstanceId: undefined, connectLabel: undefined } });
+      navigate({ to: "/skills/runs/$id", params: { id: resumed.id } });
     } catch (e) {
       console.error("Failed to open execution:", e);
       const msg =
@@ -397,9 +381,77 @@ export function SkillsPage() {
     }
   };
 
+  const setExecutionAction = (
+    executionId: string,
+    action: null | "pause" | "resume" | "interrupt" | "cancel"
+  ) => {
+    setExecutionActions((prev) => ({ ...prev, [executionId]: action }));
+  };
+
+  const handleInterruptExecution = async (execution: InteractiveExecution) => {
+    try {
+      setExecutionAction(execution.id, "interrupt");
+      await interactiveSkillApi.interrupt(execution.id);
+      queryClient.invalidateQueries({ queryKey: ["interactive-executions"] });
+    } catch (e) {
+      console.error("Failed to interrupt execution:", e);
+      const msg =
+        typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setRunError(msg);
+      setIsRunErrorOpen(true);
+    } finally {
+      setExecutionAction(execution.id, null);
+    }
+  };
+
+  const handlePauseExecution = async (execution: InteractiveExecution) => {
+    try {
+      setExecutionAction(execution.id, "pause");
+      await interactiveSkillApi.pause(execution.id);
+      queryClient.invalidateQueries({ queryKey: ["interactive-executions"] });
+    } catch (e) {
+      console.error("Failed to pause execution:", e);
+      const msg =
+        typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setRunError(msg);
+      setIsRunErrorOpen(true);
+    } finally {
+      setExecutionAction(execution.id, null);
+    }
+  };
+
+  const handleResumeExecution = async (execution: InteractiveExecution) => {
+    try {
+      setExecutionAction(execution.id, "resume");
+      await interactiveSkillApi.resume(execution.id);
+      queryClient.invalidateQueries({ queryKey: ["interactive-executions"] });
+    } catch (e) {
+      console.error("Failed to resume execution:", e);
+      const msg =
+        typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setRunError(msg);
+      setIsRunErrorOpen(true);
+    } finally {
+      setExecutionAction(execution.id, null);
+    }
+  };
+
   const handleCancelExecution = async (execution: InteractiveExecution) => {
     try {
-      await interactiveRecipeApi.cancel(execution.id);
+      setExecutionAction(execution.id, "cancel");
+      await interactiveSkillApi.cancel(execution.id);
       queryClient.invalidateQueries({ queryKey: ["interactive-executions"] });
     } catch (e) {
       console.error("Failed to cancel execution:", e);
@@ -411,6 +463,8 @@ export function SkillsPage() {
             : String(e);
       setRunError(msg);
       setIsRunErrorOpen(true);
+    } finally {
+      setExecutionAction(execution.id, null);
     }
   };
 
@@ -421,8 +475,8 @@ export function SkillsPage() {
   ];
 
   const compatibleHosts = allHosts.filter((host: Host) => {
-    if (!recipeToRun?.recipe.target) return true;
-    const target = recipeToRun.recipe.target;
+    if (!skillToRun?.skill.target) return true;
+    const target = skillToRun.skill.target;
 
     // "any" type allows all hosts
     if (target.type === "any") {
@@ -454,7 +508,7 @@ export function SkillsPage() {
   });
 
   // Check if Local option should be shown (for "any" or "local" target types)
-  const showLocalOption = recipeToRun?.recipe.target?.type === "any" || recipeToRun?.recipe.target?.type === "local";
+  const showLocalOption = skillToRun?.skill.target?.type === "any" || skillToRun?.skill.target?.type === "local";
 
   const handleEdit = (path: string) => {
     navigate({ to: "/skills/$path", params: { path: encodeURIComponent(path) } });
@@ -468,31 +522,31 @@ export function SkillsPage() {
         return folderId ? setAssignedFolderId(prev, newPath, folderId) : prev;
       });
     } catch (e) {
-      console.error("Failed to duplicate recipe:", e);
+      console.error("Failed to duplicate skill:", e);
     }
   };
 
   const handleDeleteClick = (path: string) => {
-    setRecipeToDelete(path);
+    setSkillToDelete(path);
     setIsDeleteOpen(true);
   };
 
   const handleDeleteConfirm = async () => {
-    if (!recipeToDelete) return;
+    if (!skillToDelete) return;
     try {
-      await deleteMutation.mutateAsync(recipeToDelete);
-      persistAssignments((prev) => setAssignedFolderId(prev, recipeToDelete, null));
-      setSelectedRecipePath((prev) => (prev === recipeToDelete ? null : prev));
+      await deleteMutation.mutateAsync(skillToDelete);
+      persistAssignments((prev) => setAssignedFolderId(prev, skillToDelete, null));
+      setSelectedSkillPath((prev) => (prev === skillToDelete ? null : prev));
       setIsDeleteOpen(false);
-      setRecipeToDelete(null);
+      setSkillToDelete(null);
     } catch (e) {
-      console.error("Failed to delete recipe:", e);
+      console.error("Failed to delete skill:", e);
     }
   };
 
   const handleImport = async () => {
     // TODO: Open file picker and import
-    console.log("Import recipe");
+    console.log("Import skill");
   };
 
   function folderKeyFromId(folderId: string | null): string {
@@ -515,7 +569,7 @@ export function SkillsPage() {
       return;
     }
 
-    const newFolder: RecipeFolder = {
+    const newFolder: SkillFolder = {
       id: safeUuid(),
       name,
       status: "active",
@@ -537,7 +591,7 @@ export function SkillsPage() {
     );
   };
 
-  const handleRequestDeleteFolder = (folder: RecipeFolder) => {
+  const handleRequestDeleteFolder = (folder: SkillFolder) => {
     setFolderError(null);
     setFolderToDelete(folder);
     setDeleteFolderModalOpen(true);
@@ -545,18 +599,18 @@ export function SkillsPage() {
 
   const handleConfirmDeleteFolder = async () => {
     if (!folderToDelete) return;
-    if (!recipesQuery.data) return;
+    if (!skillsQuery.data) return;
 
     setFolderError(null);
     setDeletingFolder(true);
     try {
       const targetFolderId = folderToDelete.id;
-      const pathsToDelete = recipes
+      const pathsToDelete = skills
         .filter((r) => folderAssignments[r.path] === targetFolderId)
         .map((r) => r.path);
 
-      await Promise.all(pathsToDelete.map((p) => recipeApi.delete(p)));
-      await queryClient.invalidateQueries({ queryKey: ["recipes"] });
+      await Promise.all(pathsToDelete.map((p) => skillApi.delete(p)));
+      await queryClient.invalidateQueries({ queryKey: ["skills"] });
 
       persistAssignments((prev) => {
         const next = { ...prev };
@@ -566,7 +620,7 @@ export function SkillsPage() {
 
       persistFolders((prev) => prev.filter((f) => f.id !== targetFolderId));
 
-      setSelectedRecipePath((prev) => (pathsToDelete.includes(prev ?? "") ? null : prev));
+      setSelectedSkillPath((prev) => (pathsToDelete.includes(prev ?? "") ? null : prev));
       setFolderScopeKey((prev) => (prev === `folder:${targetFolderId}` ? "all" : prev));
       setDeleteFolderModalOpen(false);
       setFolderToDelete(null);
@@ -578,21 +632,21 @@ export function SkillsPage() {
     }
   };
 
-  const handleOpenMoveRecipe = (recipePath: string) => {
+  const handleOpenMoveSkill = (skillPath: string) => {
     setFolderError(null);
-    setMoveRecipePath(recipePath);
-    setMoveTargetFolderKey(folderKeyFromId(getAssignedFolderId(folderAssignments, recipePath)));
-    setMoveRecipeModalOpen(true);
+    setMoveSkillPath(skillPath);
+    setMoveTargetFolderKey(folderKeyFromId(getAssignedFolderId(folderAssignments, skillPath)));
+    setMoveSkillModalOpen(true);
   };
 
-  const handleConfirmMoveRecipe = async () => {
-    if (!moveRecipePath) return;
+  const handleConfirmMoveSkill = async () => {
+    if (!moveSkillPath) return;
     const folderId = folderIdFromKey(moveTargetFolderKey);
-    persistAssignments((prev) => setAssignedFolderId(prev, moveRecipePath, folderId));
-    setMoveRecipeModalOpen(false);
+    persistAssignments((prev) => setAssignedFolderId(prev, moveSkillPath, folderId));
+    setMoveSkillModalOpen(false);
   };
 
-  const recipes = recipesQuery.data ?? [];
+  const skills = skillsQuery.data ?? [];
   const executions = executionsQuery.data ?? [];
   const activeStatuses: InteractiveStatus[] = [
     "running",
@@ -603,21 +657,21 @@ export function SkillsPage() {
   const activeExecutions = executions.filter((e) => activeStatuses.includes(e.status));
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedRecipePath, setSelectedRecipePath] = useState<string | null>(null);
+  const [selectedSkillPath, setSelectedSkillPath] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "running" | "idle">("all");
   const [sortBy, setSortBy] = useState<"name" | "steps">("name");
 
-  const activeByRecipePath = useMemo(() => {
+  const activeBySkillPath = useMemo(() => {
     const map = new Map<string, number>();
     for (const exec of activeExecutions) {
-      map.set(exec.recipe_path, (map.get(exec.recipe_path) || 0) + 1);
+      map.set(exec.skill_path, (map.get(exec.skill_path) || 0) + 1);
     }
     return map;
   }, [activeExecutions]);
 
-  const filteredRecipes = useMemo(() => {
+  const filteredSkills = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    let list = recipes;
+    let list = skills;
     if (q) {
       list = list.filter((r) => {
         const haystack = `${r.name} ${r.description ?? ""} ${r.path}`.toLowerCase();
@@ -625,10 +679,10 @@ export function SkillsPage() {
       });
     }
     if (filterStatus === "running") {
-      list = list.filter((r) => (activeByRecipePath.get(r.path) || 0) > 0);
+      list = list.filter((r) => (activeBySkillPath.get(r.path) || 0) > 0);
     }
     if (filterStatus === "idle") {
-      list = list.filter((r) => (activeByRecipePath.get(r.path) || 0) === 0);
+      list = list.filter((r) => (activeBySkillPath.get(r.path) || 0) === 0);
     }
     const sorted = [...list];
     sorted.sort((a, b) => {
@@ -636,17 +690,17 @@ export function SkillsPage() {
       return a.name.localeCompare(b.name);
     });
     return sorted;
-  }, [activeByRecipePath, filterStatus, recipes, searchQuery, sortBy]);
+  }, [activeBySkillPath, filterStatus, skills, searchQuery, sortBy]);
 
   useEffect(() => {
-    if (!recipesQuery.data) return;
-    const recipePaths = new Set(recipes.map((r) => r.path));
+    if (!skillsQuery.data) return;
+    const skillPaths = new Set(skills.map((r) => r.path));
     const folderIds = new Set(folders.map((f) => f.id));
     setFolderAssignments((prev) => {
       let changed = false;
       const next: Record<string, string> = {};
-      for (const [recipePath, folderId] of Object.entries(prev)) {
-        if (!recipePaths.has(recipePath)) {
+      for (const [skillPath, folderId] of Object.entries(prev)) {
+        if (!skillPaths.has(skillPath)) {
           changed = true;
           continue;
         }
@@ -654,46 +708,46 @@ export function SkillsPage() {
           changed = true;
           continue;
         }
-        next[recipePath] = folderId;
+        next[skillPath] = folderId;
       }
       if (!changed) return prev;
-      saveRecipeFolderAssignments(next);
+      saveSkillFolderAssignments(next);
       return next;
     });
-  }, [folders, recipes, recipesQuery.data]);
+  }, [folders, skills, skillsQuery.data]);
 
-  const recipeSections = useMemo(() => {
-    const rootRecipes: typeof filteredRecipes = [];
-    const byFolder = new Map<string, typeof filteredRecipes>();
+  const skillSections = useMemo(() => {
+    const rootSkills: typeof filteredSkills = [];
+    const byFolder = new Map<string, typeof filteredSkills>();
 
     if (folderScopeKey.startsWith("folder:")) {
       const folderId = folderScopeKey.slice("folder:".length);
       const folder = foldersById.get(folderId) ?? null;
-      const list = filteredRecipes.filter((r) => folderAssignments[r.path] === folderId);
+      const list = filteredSkills.filter((r) => folderAssignments[r.path] === folderId);
       return {
-        rootRecipes: [],
-        folderSections: folder ? [{ folder, recipes: list }] : [],
+        rootSkills: [],
+        folderSections: folder ? [{ folder, skills: list }] : [],
       };
     }
 
-    for (const recipe of filteredRecipes) {
-      const assignedFolderId = folderAssignments[recipe.path] ?? null;
+    for (const skill of filteredSkills) {
+      const assignedFolderId = folderAssignments[skill.path] ?? null;
       if (!assignedFolderId) {
-        if (folderScopeKey !== "recipes") {
-          rootRecipes.push(recipe);
+        if (folderScopeKey !== "skills") {
+          rootSkills.push(skill);
         } else {
-          rootRecipes.push(recipe);
+          rootSkills.push(skill);
         }
         continue;
       }
 
-      if (folderScopeKey === "recipes") {
+      if (folderScopeKey === "skills") {
         continue;
       }
 
       const folder = foldersById.get(assignedFolderId) ?? null;
       if (!folder) {
-        rootRecipes.push(recipe);
+        rootSkills.push(skill);
         continue;
       }
 
@@ -702,33 +756,33 @@ export function SkillsPage() {
       }
 
       const arr = byFolder.get(folder.id) ?? [];
-      arr.push(recipe);
+      arr.push(skill);
       byFolder.set(folder.id, arr);
     }
 
     const folderSections = activeFolders
-      .map((folder) => ({ folder, recipes: byFolder.get(folder.id) ?? [] }))
-      .filter((s) => s.recipes.length > 0);
+      .map((folder) => ({ folder, skills: byFolder.get(folder.id) ?? [] }))
+      .filter((s) => s.skills.length > 0);
 
-    return { rootRecipes, folderSections };
-  }, [activeFolders, filteredRecipes, folderAssignments, folderScopeKey, foldersById]);
+    return { rootSkills, folderSections };
+  }, [activeFolders, filteredSkills, folderAssignments, folderScopeKey, foldersById]);
 
-  const visibleRecipePathSet = useMemo(() => {
+  const visibleSkillPathSet = useMemo(() => {
     const s = new Set<string>();
-    for (const r of recipeSections.rootRecipes) s.add(r.path);
-    for (const section of recipeSections.folderSections) {
-      for (const r of section.recipes) s.add(r.path);
+    for (const r of skillSections.rootSkills) s.add(r.path);
+    for (const section of skillSections.folderSections) {
+      for (const r of section.skills) s.add(r.path);
     }
     return s;
-  }, [recipeSections]);
+  }, [skillSections]);
 
   useEffect(() => {
-    if (!selectedRecipePath) return;
-    const exists = visibleRecipePathSet.has(selectedRecipePath);
-    if (!exists) setSelectedRecipePath(null);
-  }, [selectedRecipePath, visibleRecipePathSet]);
+    if (!selectedSkillPath) return;
+    const exists = visibleSkillPathSet.has(selectedSkillPath);
+    if (!exists) setSelectedSkillPath(null);
+  }, [selectedSkillPath, visibleSkillPathSet]);
 
-  const canRunSelected = Boolean(selectedRecipePath);
+  const canRunSelected = Boolean(selectedSkillPath);
 
   const hostNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -737,7 +791,7 @@ export function SkillsPage() {
     return map;
   }, [allHosts]);
 
-  const isLoading = recipesQuery.isLoading || executionsQuery.isLoading;
+  const isLoading = skillsQuery.isLoading || executionsQuery.isLoading;
 
   return (
     <div className="doppio-page">
@@ -750,7 +804,7 @@ export function SkillsPage() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <Input
-                  placeholder="Search recipes..."
+                  placeholder="Search skills..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 pr-24 h-12 text-base bg-muted/50"
@@ -759,8 +813,8 @@ export function SkillsPage() {
                   size="sm"
                   className="absolute right-2 top-1/2 -translate-y-1/2 h-8 px-4"
                   onClick={() => {
-                    if (!selectedRecipePath) return;
-                    void handleRunClick(selectedRecipePath);
+                    if (!selectedSkillPath) return;
+                    void handleRunClick(selectedSkillPath);
                   }}
                   disabled={!canRunSelected}
                 >
@@ -773,9 +827,9 @@ export function SkillsPage() {
           {/* Row 2: Quick Actions + Filters */}
           <div className="termius-toolbar-row justify-between">
             <div className="termius-quick-actions">
-              <Button variant="outline" size="sm" className="gap-1.5" type="button" onClick={openCreateRecipeModalWithContext}>
+              <Button variant="outline" size="sm" className="gap-1.5" type="button" onClick={openCreateSkillModalWithContext}>
                 <Plus className="w-4 h-4" />
-                <span>New Recipe</span>
+                <span>New Skill</span>
               </Button>
               <Button variant="outline" size="sm" className="gap-1.5" type="button" onClick={openCreateFolderModal}>
                 <Folder className="w-4 h-4" />
@@ -805,7 +859,7 @@ export function SkillsPage() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuItem onClick={() => setFolderScopeKey("all")}>All</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setFolderScopeKey("recipes")}>Recipes</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFolderScopeKey("skills")}>Skills</DropdownMenuItem>
                   {activeFolders.map((f) => (
                     <DropdownMenuItem key={f.id} onClick={() => setFolderScopeKey(`folder:${f.id}`)}>
                       {f.name}
@@ -865,13 +919,19 @@ export function SkillsPage() {
                     { label: getStatusLabel(exec.status), color: getExecutionTagColor(exec.status) },
                     { label: getExecutionProgressLabel(exec), color: "default" },
                   ];
+                  const action = executionActions[exec.id] ?? null;
+                  const isBusy = action !== null;
+                  const canPause = exec.status === "running" || exec.status === "connecting" || exec.status === "pending";
+                  const canResume = exec.status === "paused";
+                  const canInterrupt = !!exec.terminal_id && (exec.status === "running" || exec.status === "waiting_for_input" || exec.status === "paused");
 
                   return (
                     <HostRow
                       key={exec.id}
-                      icon={<span className="text-lg">⚡</span>}
-                      title={exec.recipe_name}
+                      icon={<FlaskConical className="w-4 h-4 text-primary" />}
+                      title={exec.skill_name}
                       subtitle={`${hostName} · ${new Date(exec.created_at).toLocaleString()}`}
+                      titleClampLines={2}
                       rightTags={rightTags}
                       isOnline={true}
                       onClick={() => void handleExecutionClick(exec)}
@@ -881,15 +941,87 @@ export function SkillsPage() {
                           onMouseDown={(e) => e.stopPropagation()}
                           onClick={(e) => e.stopPropagation()}
                         >
+                          {canInterrupt ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="w-7 h-7 opacity-60 hover:opacity-100 text-warning"
+                                  disabled={isBusy}
+                                  onClick={() => void handleInterruptExecution(exec)}
+                                >
+                                  {action === "interrupt" ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Square className="w-4 h-4" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Ctrl+C</TooltipContent>
+                            </Tooltip>
+                          ) : null}
+
+                          {canPause ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="w-7 h-7 opacity-60 hover:opacity-100 text-warning"
+                                  disabled={isBusy}
+                                  onClick={() => void handlePauseExecution(exec)}
+                                >
+                                  {action === "pause" ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Pause className="w-4 h-4" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Pause</TooltipContent>
+                            </Tooltip>
+                          ) : null}
+
+                          {canResume ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="w-7 h-7 opacity-60 hover:opacity-100 text-success"
+                                  disabled={isBusy}
+                                  onClick={() => void handleResumeExecution(exec)}
+                                >
+                                  {action === "resume" ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Play className="w-4 h-4" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Resume</TooltipContent>
+                            </Tooltip>
+                          ) : null}
+
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
+                                type="button"
                                 size="icon"
                                 variant="ghost"
                                 className="w-7 h-7 opacity-60 hover:opacity-100 text-destructive"
+                                disabled={isBusy}
                                 onClick={() => void handleCancelExecution(exec)}
                               >
-                                <X className="w-4 h-4" />
+                                {action === "cancel" ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <X className="w-4 h-4" />
+                                )}
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>Cancel</TooltipContent>
@@ -902,12 +1034,12 @@ export function SkillsPage() {
               </HostSection>
             )}
 
-            {(recipeSections.rootRecipes.length > 0 || recipeSections.folderSections.length > 0) ? (
+            {(skillSections.rootSkills.length > 0 || skillSections.folderSections.length > 0) ? (
               <>
-                {recipeSections.rootRecipes.length > 0 && (
-                  <HostSection title="RECIPES" count={recipeSections.rootRecipes.length}>
-                    {recipeSections.rootRecipes.map((recipe) => {
-                      const activeCount = activeByRecipePath.get(recipe.path) || 0;
+                {skillSections.rootSkills.length > 0 && (
+                  <HostSection title="SKILLS" count={skillSections.rootSkills.length}>
+                    {skillSections.rootSkills.map((skill) => {
+                      const activeCount = activeBySkillPath.get(skill.path) || 0;
                       const rightTags: { label: string; color?: "default" | "destructive" | "secondary" }[] = [];
                       if (activeCount > 0) {
                         rightTags.push({ label: `${activeCount} running`, color: "secondary" });
@@ -915,15 +1047,15 @@ export function SkillsPage() {
 
                       return (
                         <HostRow
-                          key={recipe.path}
-                          icon={<span className="text-lg">📜</span>}
-                          title={recipe.name}
-                          subtitle={recipe.description || undefined}
+                          key={skill.path}
+                          icon={<FlaskConical className="w-4 h-4 text-primary" />}
+                          title={skill.name}
+                          subtitle={skill.description || undefined}
                           rightTags={rightTags}
                           isOnline={activeCount > 0}
-                          isSelected={selectedRecipePath === recipe.path}
-                          onClick={() => setSelectedRecipePath(recipe.path)}
-                          onDoubleClick={() => handleEdit(recipe.path)}
+                          isSelected={selectedSkillPath === skill.path}
+                          onClick={() => setSelectedSkillPath(skill.path)}
+                          onDoubleClick={() => handleEdit(skill.path)}
                           hoverActions={
                             <div
                               className="flex items-center gap-1"
@@ -936,7 +1068,7 @@ export function SkillsPage() {
                                     size="icon"
                                     variant="ghost"
                                     className="w-7 h-7 opacity-60 hover:opacity-100"
-                                    onClick={() => void handleRunClick(recipe.path)}
+                                    onClick={() => void handleRunClick(skill.path)}
                                   >
                                     <Play className="w-4 h-4" />
                                   </Button>
@@ -950,7 +1082,7 @@ export function SkillsPage() {
                                     size="icon"
                                     variant="ghost"
                                     className="w-7 h-7 opacity-60 hover:opacity-100"
-                                    onClick={() => handleEdit(recipe.path)}
+                                    onClick={() => handleEdit(skill.path)}
                                   >
                                     <Edit className="w-4 h-4" />
                                   </Button>
@@ -969,15 +1101,15 @@ export function SkillsPage() {
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => handleOpenMoveRecipe(recipe.path)}>
+                                  <DropdownMenuItem onClick={() => handleOpenMoveSkill(skill.path)}>
                                     Move to folder…
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => void handleDuplicate(recipe.path, recipe.name)}>
+                                  <DropdownMenuItem onClick={() => void handleDuplicate(skill.path, skill.name)}>
                                     Duplicate
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     className="text-destructive"
-                                    onClick={() => handleDeleteClick(recipe.path)}
+                                    onClick={() => handleDeleteClick(skill.path)}
                                   >
                                     <Trash2 className="w-4 h-4 mr-2" />
                                     Delete
@@ -992,11 +1124,11 @@ export function SkillsPage() {
                   </HostSection>
                 )}
 
-                {recipeSections.folderSections.map(({ folder, recipes }) => (
+                {skillSections.folderSections.map(({ folder, skills }) => (
                   <HostSection
                     key={folder.id}
                     title={folder.name}
-                    count={recipes.length}
+                    count={skills.length}
                     actions={
                       <div className="flex items-center gap-1">
                         <Tooltip>
@@ -1028,9 +1160,9 @@ export function SkillsPage() {
                       </div>
                     }
                   >
-                    {recipes.length > 0 ? (
-                      recipes.map((recipe) => {
-                        const activeCount = activeByRecipePath.get(recipe.path) || 0;
+                    {skills.length > 0 ? (
+                      skills.map((skill) => {
+                        const activeCount = activeBySkillPath.get(skill.path) || 0;
                         const rightTags: { label: string; color?: "default" | "destructive" | "secondary" }[] = [];
                         if (activeCount > 0) {
                           rightTags.push({ label: `${activeCount} running`, color: "secondary" });
@@ -1038,15 +1170,16 @@ export function SkillsPage() {
 
                         return (
                           <HostRow
-                            key={recipe.path}
+                            key={skill.path}
                             icon={<span className="text-lg">📜</span>}
-                            title={recipe.name}
-                            subtitle={recipe.description || undefined}
+                            title={skill.name}
+                            subtitle={skill.description || undefined}
+                            titleClampLines={1}
                             rightTags={rightTags}
                             isOnline={activeCount > 0}
-                            isSelected={selectedRecipePath === recipe.path}
-                            onClick={() => setSelectedRecipePath(recipe.path)}
-                            onDoubleClick={() => handleEdit(recipe.path)}
+                            isSelected={selectedSkillPath === skill.path}
+                            onClick={() => setSelectedSkillPath(skill.path)}
+                            onDoubleClick={() => handleEdit(skill.path)}
                             hoverActions={
                               <div
                                 className="flex items-center gap-1"
@@ -1059,7 +1192,7 @@ export function SkillsPage() {
                                       size="icon"
                                       variant="ghost"
                                       className="w-7 h-7 opacity-60 hover:opacity-100"
-                                      onClick={() => void handleRunClick(recipe.path)}
+                                      onClick={() => void handleRunClick(skill.path)}
                                     >
                                       <Play className="w-4 h-4" />
                                     </Button>
@@ -1073,7 +1206,7 @@ export function SkillsPage() {
                                       size="icon"
                                       variant="ghost"
                                       className="w-7 h-7 opacity-60 hover:opacity-100"
-                                      onClick={() => handleEdit(recipe.path)}
+                                      onClick={() => handleEdit(skill.path)}
                                     >
                                       <Edit className="w-4 h-4" />
                                     </Button>
@@ -1092,15 +1225,15 @@ export function SkillsPage() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleOpenMoveRecipe(recipe.path)}>
+                                    <DropdownMenuItem onClick={() => handleOpenMoveSkill(skill.path)}>
                                       Move to folder…
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => void handleDuplicate(recipe.path, recipe.name)}>
+                                    <DropdownMenuItem onClick={() => void handleDuplicate(skill.path, skill.name)}>
                                       Duplicate
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       className="text-destructive"
-                                      onClick={() => handleDeleteClick(recipe.path)}
+                                      onClick={() => handleDeleteClick(skill.path)}
                                     >
                                       <Trash2 className="w-4 h-4 mr-2" />
                                       Delete
@@ -1116,11 +1249,11 @@ export function SkillsPage() {
                       <div className="w-full">
                         <EmptyHostState
                           icon={<Folder className="w-5 h-5" />}
-                          title="No recipes in this folder"
-                          description="Create a recipe and assign it to this folder."
+                          title="No skills in this folder"
+                          description="Create a skill and assign it to this folder."
                           action={
-                            <Button size="sm" onClick={openCreateRecipeModalWithContext}>
-                              New Recipe
+                            <Button size="sm" onClick={openCreateSkillModalWithContext}>
+                              New Skill
                             </Button>
                           }
                         />
@@ -1132,12 +1265,12 @@ export function SkillsPage() {
             ) : (
               <EmptyHostState
                 icon={<span className="text-lg">📜</span>}
-                title={searchQuery ? "No recipes match your search" : "No recipes yet"}
-                description={searchQuery ? undefined : "Create a recipe to automate training workflows."}
+                title={searchQuery ? "No skills match your search" : "No skills yet"}
+                description={searchQuery ? undefined : "Create a skill to automate training workflows."}
                 action={
                   !searchQuery ? (
-                    <Button size="sm" onClick={openCreateRecipeModalWithContext}>
-                      New Recipe
+                    <Button size="sm" onClick={openCreateSkillModalWithContext}>
+                      New Skill
                     </Button>
                   ) : undefined
                 }
@@ -1146,32 +1279,32 @@ export function SkillsPage() {
           </>
         )}
 
-        {/* Create Recipe Dialog */}
-        <Dialog open={createRecipeModalOpen} onOpenChange={setCreateRecipeModalOpen}>
+        {/* Create Skill Dialog */}
+        <Dialog open={createSkillModalOpen} onOpenChange={setCreateSkillModalOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Create New Recipe</DialogTitle>
+              <DialogTitle>Create New Skill</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="recipe-name">Recipe Name</Label>
+                <Label htmlFor="skill-name">Skill Name</Label>
                 <Input
-                  id="recipe-name"
-                  placeholder="my-training-recipe"
-                  value={newRecipeName}
-                  onChange={(e) => setNewRecipeName(e.target.value)}
+                  id="skill-name"
+                  placeholder="my-training-skill"
+                  value={newSkillName}
+                  onChange={(e) => setNewSkillName(e.target.value)}
                   autoFocus
                 />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="folder-select">Folder</Label>
-                <Select value={newRecipeFolderKey} onValueChange={setNewRecipeFolderKey}>
+                <Select value={newSkillFolderKey} onValueChange={setNewSkillFolderKey}>
                   <SelectTrigger id="folder-select">
-                    <SelectValue placeholder="Recipes" />
+                    <SelectValue placeholder="Skills" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__root__">Recipes</SelectItem>
+                    <SelectItem value="__root__">Skills</SelectItem>
                     {activeFolders.map((f) => (
                       <SelectItem key={f.id} value={`folder:${f.id}`}>
                         {f.name}
@@ -1187,12 +1320,12 @@ export function SkillsPage() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setCreateRecipeModalOpen(false)}>
+              <Button variant="outline" onClick={() => setCreateSkillModalOpen(false)}>
                 Cancel
               </Button>
               <Button
                 onClick={handleCreate}
-                disabled={!newRecipeName.trim() || createMutation.isPending}
+                disabled={!newSkillName.trim() || createMutation.isPending}
               >
                 {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Create
@@ -1245,12 +1378,12 @@ export function SkillsPage() {
             <div className="space-y-4 py-4">
               <p className="text-sm text-muted-foreground">
                 {folderToDelete
-                  ? `Delete "${folderToDelete.name}"? This will also delete all recipes in this folder.`
+                  ? `Delete "${folderToDelete.name}"? This will also delete all skills in this folder.`
                   : "Delete this folder?"}
               </p>
               {folderToDelete && (
                 <p className="text-xs text-muted-foreground">
-                  {recipes.filter((r) => folderAssignments[r.path] === folderToDelete.id).length} recipes will be deleted.
+                  {skills.filter((r) => folderAssignments[r.path] === folderToDelete.id).length} skills will be deleted.
                 </p>
               )}
               {folderError && (
@@ -1273,21 +1406,21 @@ export function SkillsPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Move Recipe Dialog */}
-        <Dialog open={moveRecipeModalOpen} onOpenChange={setMoveRecipeModalOpen}>
+        {/* Move Skill Dialog */}
+        <Dialog open={moveSkillModalOpen} onOpenChange={setMoveSkillModalOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Move Recipe</DialogTitle>
+              <DialogTitle>Move Skill</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label htmlFor="target-folder">Target Folder</Label>
                 <Select value={moveTargetFolderKey} onValueChange={setMoveTargetFolderKey}>
                   <SelectTrigger id="target-folder">
-                    <SelectValue placeholder="Recipes" />
+                    <SelectValue placeholder="Skills" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__root__">Recipes</SelectItem>
+                    <SelectItem value="__root__">Skills</SelectItem>
                     {activeFolders.map((f) => (
                       <SelectItem key={f.id} value={`folder:${f.id}`}>
                         {f.name}
@@ -1307,12 +1440,12 @@ export function SkillsPage() {
               )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setMoveRecipeModalOpen(false)}>
+              <Button variant="outline" onClick={() => setMoveSkillModalOpen(false)}>
                 Cancel
               </Button>
               <Button
-                onClick={() => void handleConfirmMoveRecipe()}
-                disabled={!moveRecipePath}
+                onClick={() => void handleConfirmMoveSkill()}
+                disabled={!moveSkillPath}
               >
                 Move
               </Button>
@@ -1324,10 +1457,10 @@ export function SkillsPage() {
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Recipe</DialogTitle>
+            <DialogTitle>Delete Skill</DialogTitle>
           </DialogHeader>
           <div className="py-4">
-            <p>Are you sure you want to delete this recipe? This action cannot be undone.</p>
+            <p>Are you sure you want to delete this skill? This action cannot be undone.</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
@@ -1345,23 +1478,23 @@ export function SkillsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Host Selection Dialog for Running Recipes */}
+      {/* Host Selection Dialog for Running Skills */}
       <Dialog open={isHostSelectOpen} onOpenChange={setIsHostSelectOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Select Target Host</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {recipeToRun?.recipe.target && (
+            {skillToRun?.skill.target && (
               <div className="mb-4 p-3 bg-primary/10 border border-primary/20 rounded-lg">
-                <p className="text-sm text-muted-foreground mb-2">Recipe requires:</p>
+                <p className="text-sm text-muted-foreground mb-2">Skill requires:</p>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary">{recipeToRun.recipe.target.type}</Badge>
-                  {recipeToRun.recipe.target.gpu_type && (
-                    <Badge variant="secondary">GPU: {recipeToRun.recipe.target.gpu_type}</Badge>
+                  <Badge variant="secondary">{skillToRun.skill.target.type}</Badge>
+                  {skillToRun.skill.target.gpu_type && (
+                    <Badge variant="secondary">GPU: {skillToRun.skill.target.gpu_type}</Badge>
                   )}
-                  {recipeToRun.recipe.target.min_gpus && (
-                    <Badge variant="secondary">Min GPUs: {recipeToRun.recipe.target.min_gpus}</Badge>
+                  {skillToRun.skill.target.min_gpus && (
+                    <Badge variant="secondary">Min GPUs: {skillToRun.skill.target.min_gpus}</Badge>
                   )}
                 </div>
               </div>
@@ -1372,7 +1505,7 @@ export function SkillsPage() {
             {compatibleHosts.length === 0 && !showLocalOption ? (
               <div className="text-center py-8 text-muted-foreground">
                 <p>No compatible hosts found.</p>
-                <p className="text-sm mt-1">Add a {recipeToRun?.recipe.target?.type} host first.</p>
+                <p className="text-sm mt-1">Add a {skillToRun?.skill.target?.type} host first.</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -1431,7 +1564,7 @@ export function SkillsPage() {
               disabled={!selectedHostId || isRunning}
             >
               {isRunning && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              {selectedHostId === "__local__" ? "Run Locally" : "Run Recipe"}
+              {selectedHostId === "__local__" ? "Run Locally" : "Run Skill"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1440,7 +1573,7 @@ export function SkillsPage() {
       <Dialog open={isRunErrorOpen} onOpenChange={setIsRunErrorOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Failed to run recipe</DialogTitle>
+            <DialogTitle>Failed to run skill</DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-destructive whitespace-pre-wrap">{runError ?? "Unknown error"}</p>

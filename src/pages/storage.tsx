@@ -153,6 +153,163 @@ function formatStorageSize(gb: number, decimals = 2): string {
 }
 
 // ============================================================
+// R2 Purge & Delete Bucket Modal
+// ============================================================
+
+function R2PurgeDeleteDialog({
+  open,
+  onOpenChange,
+  storage,
+  onConfirm,
+  isPending,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  storage: Storage | null;
+  onConfirm: (args: { cloudflareApiToken?: string; deleteLocalStorage: boolean }) => Promise<void>;
+  isPending: boolean;
+}) {
+  const [cloudflareApiToken, setCloudflareApiToken] = useState("");
+  const [useSavedToken, setUseSavedToken] = useState(true);
+  const [confirmBucket, setConfirmBucket] = useState("");
+  const [deleteLocalStorage, setDeleteLocalStorage] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setCloudflareApiToken("");
+      setUseSavedToken(true);
+      setConfirmBucket("");
+      setDeleteLocalStorage(true);
+      setError(null);
+    }
+  }, [open]);
+
+  const bucket =
+    storage?.backend.type === "cloudflare_r2" ? storage.backend.bucket : "";
+  const accountId =
+    storage?.backend.type === "cloudflare_r2" ? storage.backend.account_id : "";
+
+  const canSubmit =
+    !!storage &&
+    storage.backend.type === "cloudflare_r2" &&
+    (useSavedToken || cloudflareApiToken.trim().length > 0) &&
+    confirmBucket.trim() === bucket;
+
+  async function handleConfirm() {
+    if (!storage || storage.backend.type !== "cloudflare_r2") return;
+    setError(null);
+    if (!useSavedToken && cloudflareApiToken.trim().length === 0) {
+      setError("Cloudflare API token is required.");
+      return;
+    }
+    if (confirmBucket.trim() !== bucket) {
+      setError(`Please type the bucket name exactly: ${bucket}`);
+      return;
+    }
+    try {
+      await onConfirm({ cloudflareApiToken: useSavedToken ? undefined : cloudflareApiToken, deleteLocalStorage });
+      onOpenChange(false);
+    } catch (e) {
+      const msg =
+        typeof e === "object" && e !== null && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "unknown";
+      if (code === "permission_denied" || code === "invalid_input") {
+        setUseSavedToken(false);
+      }
+      setError(msg);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-destructive">Purge & Delete R2 Bucket</DialogTitle>
+          <DialogDescription>
+            Deletes all objects in the bucket, then deletes the bucket via Cloudflare API.
+          </DialogDescription>
+        </DialogHeader>
+
+        {storage && storage.backend.type === "cloudflare_r2" && (
+          <div className="space-y-4">
+            <div className="rounded-md border p-3 text-sm space-y-1">
+              <div>
+                <span className="text-muted-foreground">Storage:</span> {storage.name}
+              </div>
+              <div>
+                <span className="text-muted-foreground">Account ID:</span> {accountId}
+              </div>
+              <div>
+                <span className="text-muted-foreground">Bucket:</span> {bucket}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <div className="space-y-0.5">
+                  <div className="text-sm font-medium">Use saved Cloudflare API token</div>
+                  <div className="text-xs text-muted-foreground">Uses secret `cloudflare/api_token` when available.</div>
+                </div>
+                <Switch checked={useSavedToken} onCheckedChange={setUseSavedToken} />
+              </div>
+
+              {!useSavedToken ? (
+                <div className="space-y-2">
+                  <Label htmlFor="cf-api-token">Cloudflare API Token</Label>
+                  <Input
+                    id="cf-api-token"
+                    type="password"
+                    value={cloudflareApiToken}
+                    onChange={(e) => setCloudflareApiToken(e.target.value)}
+                    placeholder="Bearer token (Account: R2 Edit permission)"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Token will be saved as secret `cloudflare/api_token` after a successful deletion.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirm-bucket">Type the bucket name to confirm</Label>
+              <Input
+                id="confirm-bucket"
+                value={confirmBucket}
+                onChange={(e) => setConfirmBucket(e.target.value)}
+                placeholder={bucket}
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="space-y-0.5">
+                <div className="text-sm font-medium">Delete local storage config</div>
+                <div className="text-xs text-muted-foreground">
+                  Removes this storage entry from Doppio after the bucket is deleted.
+                </div>
+              </div>
+              <Switch checked={deleteLocalStorage} onCheckedChange={setDeleteLocalStorage} />
+            </div>
+
+            {error && <div className="text-sm text-destructive">{error}</div>}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={!canSubmit || isPending} onClick={() => void handleConfirm()}>
+            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isPending ? "Deleting..." : "Purge & Delete"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Add Storage Modal
 // ============================================================
 
@@ -1010,6 +1167,9 @@ export function StoragePage() {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingStorage, setEditingStorage] = useState<Storage | null>(null);
+  const [r2DeleteOpen, setR2DeleteOpen] = useState(false);
+  const [r2DeleteTarget, setR2DeleteTarget] = useState<Storage | null>(null);
+  const [storageActionsMenuOpenId, setStorageActionsMenuOpenId] = useState<string | null>(null);
 
   // Google Drive wizard state
   const [showGDriveWizard, setShowGDriveWizard] = useState(false);
@@ -1037,6 +1197,30 @@ export function StoragePage() {
     mutationFn: storageApi.delete,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["storages"] });
+    },
+  });
+
+	  const r2PurgeDeleteMutation = useMutation({
+	    mutationFn: async (args: {
+	      storageId: string;
+	      cloudflareApiToken?: string;
+	      deleteLocalStorage: boolean;
+	    }) => {
+	      return await storageApi.r2PurgeAndDeleteBucket(
+	        args.storageId,
+	        args.cloudflareApiToken,
+        args.deleteLocalStorage
+      );
+    },
+    onSuccess: (_result, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["storages"] });
+      setStorageUsages((prev) => {
+        const next = new Map(prev);
+        next.delete(vars.storageId);
+        return next;
+      });
+      setR2DeleteOpen(false);
+      setR2DeleteTarget(null);
     },
   });
 
@@ -1093,6 +1277,11 @@ export function StoragePage() {
   function handleEdit(storage: Storage) {
     setEditingStorage(storage);
     setEditModalOpen(true);
+  }
+
+  function handleOpenR2Delete(storage: Storage) {
+    setR2DeleteTarget(storage);
+    setR2DeleteOpen(true);
   }
 
   async function handleRefresh() {
@@ -1233,7 +1422,7 @@ export function StoragePage() {
 
   function renderStorageRow(storage: Storage) {
     const rightTags = buildRightTags(storage);
-    return (
+      return (
       <HostRow
         key={storage.id}
         icon={getBackendIconNode(storage.backend, storage.icon)}
@@ -1243,10 +1432,12 @@ export function StoragePage() {
         isSelected={selectedStorageId === storage.id}
         onClick={() => setSelectedStorageId(storage.id)}
         onDoubleClick={() => openBrowse(storage)}
+        hoverActionsVisible={storageActionsMenuOpenId === storage.id}
         hoverActions={
           <TooltipProvider>
             <div
               className="flex items-center gap-1"
+              onPointerDown={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
@@ -1276,17 +1467,34 @@ export function StoragePage() {
                 </TooltipTrigger>
                 <TooltipContent>Edit</TooltipContent>
               </Tooltip>
-              <DropdownMenu>
+              <DropdownMenu
+                open={storageActionsMenuOpenId === storage.id}
+                onOpenChange={(open) => setStorageActionsMenuOpenId(open ? storage.id : null)}
+              >
                 <DropdownMenuTrigger asChild>
                   <Button
                     size="icon"
                     variant="ghost"
                     className="w-7 h-7 opacity-60 hover:opacity-100"
+                    onPointerDown={(e) => e.stopPropagation()}
                   >
                     <MoreVertical className="w-4 h-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent
+                  align="end"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                >
+	                  {storage.backend.type === "cloudflare_r2" && (
+	                    <DropdownMenuItem
+	                      className="text-destructive focus:text-destructive"
+	                      onClick={() => handleOpenR2Delete(storage)}
+	                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Purge & Delete Bucket
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
                     onClick={() => {
@@ -1318,6 +1526,23 @@ export function StoragePage() {
   return (
     <div className="doppio-page">
       <div className="doppio-page-content">
+	        <R2PurgeDeleteDialog
+	          open={r2DeleteOpen}
+	          onOpenChange={(open) => {
+	            setR2DeleteOpen(open);
+	            if (!open) setR2DeleteTarget(null);
+	          }}
+	          storage={r2DeleteTarget}
+	          isPending={r2PurgeDeleteMutation.isPending}
+	          onConfirm={async ({ cloudflareApiToken, deleteLocalStorage }) => {
+	            if (!r2DeleteTarget) return;
+	            await r2PurgeDeleteMutation.mutateAsync({
+	              storageId: r2DeleteTarget.id,
+	              cloudflareApiToken,
+	              deleteLocalStorage,
+	            });
+	          }}
+	        />
         {/* Termius-style Toolbar */}
         <div className="termius-toolbar">
           {/* Row 1: Search + Browse */}

@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use aws_config::{BehaviorVersion, Region};
+use aws_credential_types::Credentials;
+use aws_sdk_s3 as s3;
+use s3::error::ProvideErrorMetadata;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio::sync::RwLock;
@@ -167,6 +171,301 @@ pub struct StorageTestResult {
     pub success: bool,
     pub message: String,
     pub latency_ms: Option<u64>,
+}
+
+// ============================================================
+// Cloudflare R2 (API helpers)
+// ============================================================
+
+#[derive(Debug, Clone, Serialize)]
+pub struct R2PurgeDeleteResult {
+    pub deleted_objects: u64,
+    pub bucket_deleted: bool,
+    pub local_storage_deleted: bool,
+}
+
+fn validate_cloudflare_account_id(account_id: &str) -> Result<(), AppError> {
+    // Cloudflare account_id is typically a 32-char hex string.
+    let ok = account_id.len() == 32 && account_id.chars().all(|c| c.is_ascii_hexdigit());
+    if !ok {
+        return Err(AppError::invalid_input(
+            "Invalid Cloudflare account_id (expected 32 hex chars)",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_r2_bucket_name(bucket: &str) -> Result<(), AppError> {
+    // Minimal S3-style bucket validation to avoid accidental malformed requests.
+    if bucket.len() < 3 || bucket.len() > 63 {
+        return Err(AppError::invalid_input(
+            "Invalid bucket name length (expected 3..=63)",
+        ));
+    }
+    if !bucket
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(AppError::invalid_input(
+            "Invalid bucket name (allowed: a-z, 0-9, '-')",
+        ));
+    }
+    if !bucket
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        || !bucket
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    {
+        return Err(AppError::invalid_input(
+            "Invalid bucket name (must start/end with [a-z0-9])",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_non_empty(label: &str, value: &str) -> Result<(), AppError> {
+    if value.trim().is_empty() {
+        return Err(AppError::invalid_input(format!("{} is required", label)));
+    }
+    Ok(())
+}
+
+async fn build_r2_s3_client(
+    account_id: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+    endpoint: Option<&str>,
+) -> Result<s3::Client, AppError> {
+    validate_cloudflare_account_id(account_id)?;
+    validate_non_empty("access_key_id", access_key_id)?;
+    validate_non_empty("secret_access_key", secret_access_key)?;
+
+    let endpoint = endpoint
+        .filter(|e| !e.trim().is_empty())
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| format!("https://{}.r2.cloudflarestorage.com", account_id));
+
+    let shared_config = aws_config::defaults(BehaviorVersion::latest())
+        .region(Region::new("auto"))
+        .credentials_provider(Credentials::new(
+            access_key_id,
+            secret_access_key,
+            None,
+            None,
+            "cloudflare_r2",
+        ))
+        .load()
+        .await;
+
+    let s3_config = s3::config::Builder::from(&shared_config)
+        .endpoint_url(endpoint)
+        // R2 endpoints typically work best with path-style addressing.
+        .force_path_style(true)
+        .build();
+
+    Ok(s3::Client::from_conf(s3_config))
+}
+
+async fn r2_delete_all_objects(client: &s3::Client, bucket: &str) -> Result<u64, AppError> {
+    validate_r2_bucket_name(bucket)?;
+
+    let mut deleted_objects: u64 = 0;
+    let mut continuation_token: Option<String> = None;
+
+    loop {
+        let mut req = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .max_keys(1000);
+
+        if let Some(token) = continuation_token.take() {
+            req = req.continuation_token(token);
+        }
+
+        let resp = match req.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                // If the bucket is already gone (e.g. deleted in the Cloudflare UI), treat purge as a no-op.
+                let no_such_bucket = matches!(
+                    e,
+                    s3::error::SdkError::ServiceError(ref se)
+                        if matches!(se.err().code(), Some("NoSuchBucket" | "NoSuchBucketException"))
+                );
+                if no_such_bucket {
+                    return Ok(deleted_objects);
+                }
+                return Err(AppError::network(format!("R2 list objects failed: {}", e)));
+            }
+        };
+
+        let mut keys: Vec<String> = Vec::new();
+        if let Some(contents) = resp.contents {
+            for obj in contents {
+                if let Some(key) = obj.key {
+                    keys.push(key);
+                }
+            }
+        }
+
+        if !keys.is_empty() {
+            for chunk in keys.chunks(1000) {
+                let objects = chunk
+                    .iter()
+                    .map(|k| {
+                        s3::types::ObjectIdentifier::builder()
+                            .key(k)
+                            .build()
+                            .map_err(|e| AppError::internal(format!("Failed to build object id: {}", e)))
+                    })
+                    .collect::<Result<Vec<_>, AppError>>()?;
+
+                let delete = s3::types::Delete::builder()
+                    .set_objects(Some(objects))
+                    .quiet(true)
+                    .build()
+                    .map_err(|e| AppError::internal(format!("Failed to build delete request: {}", e)))?;
+
+                let del_resp = client
+                    .delete_objects()
+                    .bucket(bucket)
+                    .delete(delete)
+                    .send()
+                    .await
+                    .map_err(|e| AppError::network(format!("R2 delete objects failed: {}", e)))?;
+
+                if let Some(errors) = del_resp.errors {
+                    if !errors.is_empty() {
+                        let first = &errors[0];
+                        let key = first.key.as_deref().unwrap_or("<unknown>");
+                        let code = first.code.as_deref().unwrap_or("<unknown>");
+                        let message = first.message.as_deref().unwrap_or("<unknown>");
+                        return Err(AppError::network(format!(
+                            "R2 delete objects returned errors: key={}, code={}, message={}",
+                            key, code, message
+                        )));
+                    }
+                }
+
+                deleted_objects = deleted_objects.saturating_add(chunk.len() as u64);
+            }
+        }
+
+        if !resp.is_truncated.unwrap_or(false) {
+            break;
+        }
+        continuation_token = resp.next_continuation_token;
+    }
+
+    Ok(deleted_objects)
+}
+
+async fn cloudflare_r2_delete_bucket(
+    account_id: &str,
+    bucket: &str,
+    api_token: &str,
+) -> Result<(), AppError> {
+    validate_cloudflare_account_id(account_id)?;
+    validate_r2_bucket_name(bucket)?;
+    validate_non_empty("Cloudflare API token", api_token)?;
+
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{}/r2/buckets/{}",
+        account_id, bucket
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(url)
+        .bearer_auth(api_token)
+        .send()
+        .await
+        .map_err(|e| AppError::http(format!("Cloudflare API request failed: {}", e)))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        // Deleting an already-deleted bucket should be idempotent.
+        if status.as_u16() == 404 {
+            return Ok(());
+        }
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            return Err(AppError::permission_denied(format!(
+                "Cloudflare API token is unauthorized or lacks permission: status={}, body={}",
+                status, text
+            )));
+        }
+        return Err(AppError::http(format!(
+            "Cloudflare API delete bucket failed: status={}, body={}",
+            status, text
+        )));
+    }
+
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+    if v
+        .get("success")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    let errors = v
+        .get("errors")
+        .and_then(|e| e.as_array())
+        .cloned()
+        .unwrap_or_default();
+    Err(AppError::http(format!(
+        "Cloudflare API delete bucket returned success=false: errors={}",
+        serde_json::Value::Array(errors)
+    )))
+}
+
+async fn cloudflare_r2_bucket_exists(
+    account_id: &str,
+    bucket: &str,
+    api_token: &str,
+) -> Result<bool, AppError> {
+    validate_cloudflare_account_id(account_id)?;
+    validate_r2_bucket_name(bucket)?;
+    validate_non_empty("Cloudflare API token", api_token)?;
+
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{}/r2/buckets/{}",
+        account_id, bucket
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .bearer_auth(api_token)
+        .send()
+        .await
+        .map_err(|e| AppError::http(format!("Cloudflare API request failed: {}", e)))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+
+    if status.as_u16() == 404 {
+        return Ok(false);
+    }
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        return Err(AppError::permission_denied(format!(
+            "Cloudflare API token is unauthorized or lacks permission: status={}, body={}",
+            status, text
+        )));
+    }
+    if !status.is_success() {
+        return Err(AppError::http(format!(
+            "Cloudflare API get bucket failed: status={}, body={}",
+            status, text
+        )));
+    }
+
+    Ok(true)
 }
 
 // ============================================================
@@ -851,7 +1150,7 @@ pub async fn test_storage(storage: &Storage) -> StorageTestResult {
 // ============================================================
 
 /// Get a storage by ID directly from the data file.
-/// This is useful for recipe execution where AppHandle is not available.
+/// This is useful for skill execution where AppHandle is not available.
 pub async fn get_storage(storage_id: &str) -> Result<Storage, AppError> {
     let data_path = crate::config::doppio_data_dir().join("storages.json");
     let content = tokio::fs::read_to_string(&data_path)
@@ -907,6 +1206,131 @@ pub async fn storage_update(
 pub async fn storage_delete(app: AppHandle, id: String) -> Result<(), AppError> {
     let store = app.state::<Arc<StorageStore>>();
     store.delete(&id).await
+}
+
+/// Purge all objects in a Cloudflare R2 bucket, then delete the bucket via Cloudflare API.
+/// Optionally deletes the local storage configuration after successful bucket deletion.
+#[tauri::command]
+pub async fn storage_r2_purge_and_delete_bucket(
+    app: AppHandle,
+    storage_id: String,
+    cloudflare_api_token: Option<String>,
+    delete_local_storage: bool,
+) -> Result<R2PurgeDeleteResult, AppError> {
+    validate_non_empty("storage_id", &storage_id)?;
+
+    let store = app.state::<Arc<StorageStore>>();
+    let storage = store
+        .get(&storage_id)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Storage not found: {}", storage_id)))?;
+
+    if storage.readonly {
+        return Err(AppError::permission_denied(
+            "Storage is read-only; refusing to delete bucket",
+        ));
+    }
+
+    let (account_id, access_key_id, secret_access_key, bucket, endpoint) = match &storage.backend {
+        StorageBackend::CloudflareR2 {
+            account_id,
+            access_key_id,
+            secret_access_key,
+            bucket,
+            endpoint,
+        } => (
+            account_id.clone(),
+            access_key_id.clone(),
+            secret_access_key.clone(),
+            bucket.clone(),
+            endpoint.clone(),
+        ),
+        _ => {
+            return Err(AppError::invalid_input(
+                "storage_id is not a Cloudflare R2 storage",
+            ))
+        }
+    };
+
+    validate_cloudflare_account_id(&account_id)?;
+    validate_r2_bucket_name(&bucket)?;
+
+    eprintln!(
+        "R2 purge+delete started: storage_id={}, bucket={}",
+        storage_id, bucket
+    );
+
+    let provided_token = cloudflare_api_token
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let token_to_use = if let Some(tok) = provided_token.clone() {
+        tok
+    } else {
+        crate::secrets::get_secret("cloudflare/api_token").map_err(|_| {
+            AppError::invalid_input(
+                "Cloudflare API token not set. Provide one now, or save a secret named cloudflare/api_token.",
+            )
+        })?
+    };
+
+    // Validate token and bucket existence before doing any destructive purge.
+    let bucket_exists = cloudflare_r2_bucket_exists(&account_id, &bucket, &token_to_use).await?;
+    if !bucket_exists {
+        let mut local_storage_deleted = false;
+        if delete_local_storage {
+            store.delete(&storage_id).await?;
+            local_storage_deleted = true;
+        }
+        return Ok(R2PurgeDeleteResult {
+            deleted_objects: 0,
+            bucket_deleted: true,
+            local_storage_deleted,
+        });
+    }
+
+    let s3_client = build_r2_s3_client(
+        &account_id,
+        &access_key_id,
+        &secret_access_key,
+        endpoint.as_deref(),
+    )
+    .await?;
+
+    let deleted_objects = r2_delete_all_objects(&s3_client, &bucket).await?;
+    eprintln!(
+        "R2 purge finished: storage_id={}, bucket={}, deleted_objects={}",
+        storage_id, bucket, deleted_objects
+    );
+
+    cloudflare_r2_delete_bucket(&account_id, &bucket, &token_to_use).await?;
+    eprintln!(
+        "R2 bucket deleted via Cloudflare API: storage_id={}, bucket={}",
+        storage_id, bucket
+    );
+
+    if let Some(tok) = provided_token {
+        let input = crate::secrets::SecretInput {
+            name: "cloudflare/api_token".to_string(),
+            value: tok,
+            description: Some("Cloudflare API token (R2)".to_string()),
+        };
+        let _ = tokio::task::spawn_blocking(move || crate::secrets::upsert_secret(&input)).await;
+    }
+
+    let mut local_storage_deleted = false;
+    if delete_local_storage {
+        store.delete(&storage_id).await?;
+        local_storage_deleted = true;
+    }
+
+    Ok(R2PurgeDeleteResult {
+        deleted_objects,
+        bucket_deleted: true,
+        local_storage_deleted,
+    })
 }
 
 #[tauri::command]

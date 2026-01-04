@@ -595,7 +595,7 @@ export function SettingsPage() {
             {selectedSection === "secrets" && (
               <div className="space-y-6">
                 <h2 className="text-lg font-semibold">Secrets</h2>
-                <p className="text-sm text-foreground/60">SSH keys and tokens stored securely. Use {"{secret:name}"} syntax in recipes.</p>
+                <p className="text-sm text-foreground/60">SSH keys and tokens stored securely. Use {"{secret:name}"} syntax in skills.</p>
                 <SecretsSection />
               </div>
             )}
@@ -1338,7 +1338,7 @@ function SecretsSection() {
           <div className="space-y-3">
             <p>Are you sure you want to delete <strong className="font-mono">{deleteTarget}</strong>?</p>
             <p className="text-sm text-foreground/60">
-              This will remove it from your OS keychain. Recipes that reference this secret will fail.
+              This will remove it from your OS keychain. Skills that reference this secret will fail.
             </p>
           </div>
           <DialogFooter>

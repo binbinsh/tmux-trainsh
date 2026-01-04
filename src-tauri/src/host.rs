@@ -330,9 +330,10 @@ echo "$ip"
         .lines()
         .find(|line| !line.trim().is_empty())
         .ok_or_else(|| AppError::command("Public IP lookup returned no output".to_string()))?;
-    let ip = ip_raw.trim().parse::<IpAddr>().map_err(|_| {
-        AppError::command(format!("Invalid public IP returned: {}", ip_raw.trim()))
-    })?;
+    let ip = ip_raw
+        .trim()
+        .parse::<IpAddr>()
+        .map_err(|_| AppError::command(format!("Invalid public IP returned: {}", ip_raw.trim())))?;
     Ok(ip)
 }
 
@@ -346,9 +347,7 @@ async fn resolve_public_ip_for_vast_instance(vast_instance_id: i64) -> Result<Ip
     let raw = inst.public_ipaddr.unwrap_or_default();
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(AppError::vast_api(
-            "Vast instance has no public IP address",
-        ));
+        return Err(AppError::vast_api("Vast instance has no public IP address"));
     }
     let ip = trimmed.parse::<IpAddr>().map_err(|_| {
         AppError::vast_api(format!(
@@ -443,9 +442,9 @@ pub async fn fetch_scamalytics_info_for_ip(ip: &str) -> Result<ScamalyticsInfo, 
     if trimmed.is_empty() {
         return Err(AppError::invalid_input("IP address is required"));
     }
-    let ip_addr = trimmed.parse::<IpAddr>().map_err(|_| {
-        AppError::invalid_input(format!("Invalid IP address: {}", trimmed))
-    })?;
+    let ip_addr = trimmed
+        .parse::<IpAddr>()
+        .map_err(|_| AppError::invalid_input(format!("Invalid IP address: {}", trimmed)))?;
     fetch_scamalytics_info_for_ip_addr(ip_addr).await
 }
 
@@ -666,7 +665,8 @@ async fn resolve_vast_ssh_spec(vast_instance_id: i64) -> Result<SshSpec, AppErro
 
     if ordered.is_empty() {
         return Err(AppError::command(
-            "Vast SSH route is not available yet (wait for instance SSH info to appear)".to_string(),
+            "Vast SSH route is not available yet (wait for instance SSH info to appear)"
+                .to_string(),
         ));
     }
 

@@ -1,18 +1,22 @@
-//! Recipe execution helpers
+//! Skill execution helpers
 //!
-//! Shared helpers for interactive recipe execution (DAG ordering and step execution).
+//! Shared helpers for interactive skill execution (DAG ordering and step execution).
 
 use std::collections::HashMap;
+use std::path::Path;
+use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::operations;
 use super::parser::interpolate;
 use super::types::*;
 use crate::error::AppError;
 use crate::host;
+use tokio::io::AsyncWriteExt;
 
 /// Execute a single step operation
-/// Public so it can be used by interactive recipe execution
+/// Public so it can be used by interactive skill execution
 pub async fn execute_step(
     operation: &Operation,
     variables: &HashMap<String, String>,
@@ -36,7 +40,7 @@ pub async fn execute_step(
             let is_local = operations::ssh::is_local_target(&target);
 
             match op.tmux_mode {
-                crate::recipe::types::TmuxMode::None => {
+                crate::skill::types::TmuxMode::None => {
                     if is_local {
                         // Execute commands locally (no SSH)
                         operations::ssh::execute_local_command(
@@ -56,7 +60,7 @@ pub async fn execute_step(
                         .await
                     }
                 }
-                crate::recipe::types::TmuxMode::New => {
+                crate::skill::types::TmuxMode::New => {
                     if is_local {
                         return Err(AppError::command(
                             "Tmux mode 'new' is not supported for local execution",
@@ -67,7 +71,7 @@ pub async fn execute_step(
                         .session_name
                         .as_ref()
                         .map(|s| interpolate(s, variables))
-                        .unwrap_or_else(|| "recipe".to_string());
+                        .unwrap_or_else(|| "skill".to_string());
                     operations::tmux::new_session(
                         &target,
                         &session_name,
@@ -77,7 +81,7 @@ pub async fn execute_step(
                     .await?;
                     Ok(None)
                 }
-                crate::recipe::types::TmuxMode::Existing => {
+                crate::skill::types::TmuxMode::Existing => {
                     if is_local {
                         return Err(AppError::command(
                             "Tmux mode 'existing' is not supported for local execution",
@@ -119,8 +123,9 @@ pub async fn execute_step(
             let is_local = operations::ssh::is_local_target(&target);
 
             let repo_url = interpolate(&op.repo_url, variables);
-            let destination = interpolate(&op.destination, variables);
+            let destination = normalize_destination_path(&interpolate(&op.destination, variables))?;
             let branch = op.branch.as_ref().map(|b| interpolate(b, variables));
+            let depth = op.depth;
             // Interpolate auth_token and filter out empty strings
             let auth_token = op
                 .auth_token
@@ -128,48 +133,191 @@ pub async fn execute_step(
                 .map(|t| interpolate(t, variables))
                 .filter(|t| !t.is_empty());
 
-            eprintln!(
-                "[git_clone] repo_url={}, auth_token={:?}, local={}",
-                repo_url,
-                auth_token.as_ref().map(|_| "[REDACTED]"),
-                is_local
-            );
+            let mut repo_url_for_clone = repo_url.clone();
+            if auth_token.is_some()
+                && !repo_url_for_clone.trim().starts_with("https://")
+                && looks_like_ssh_git_url(&repo_url_for_clone)
+            {
+                if let Some(https_url) = ssh_git_url_to_https_url(&repo_url_for_clone) {
+                    if let Some(cb) = progress.as_ref() {
+                        cb("Auth token detected; rewriting SSH repo URL to HTTPS.");
+                    }
+                    repo_url_for_clone = https_url;
+                }
+            }
+            let use_ssh = looks_like_ssh_git_url(&repo_url_for_clone);
 
             // First, add GitHub/GitLab/Bitbucket host keys to known_hosts to avoid "Host key verification failed"
-            let add_host_keys = r#"mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keyscan -t ed25519,rsa github.com gitlab.com bitbucket.org >> ~/.ssh/known_hosts 2>/dev/null"#;
             let empty_env = HashMap::new();
-            if is_local {
-                operations::ssh::execute_local_command(add_host_keys, None, &empty_env).await?;
+
+            // If destination exists and is not an empty directory, back it up before cloning.
+            let should_backup = if is_local {
+                match tokio::fs::metadata(&destination).await {
+                    Ok(meta) => {
+                        if meta.is_dir() {
+                            let mut rd = tokio::fs::read_dir(&destination).await?;
+                            rd.next_entry().await?.is_some()
+                        } else {
+                            true
+                        }
+                    }
+                    Err(_) => false,
+                }
             } else {
-                operations::ssh::execute_command(&target, add_host_keys, None, &empty_env).await?;
+                let dest = shell_escape_arg(&destination);
+                let check_cmd = format!(
+                    "if [ -e {dest} ] && ( [ ! -d {dest} ] || [ -n \"$(find {dest} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)\" ] ); then exit 0; else exit 1; fi"
+                );
+                operations::ssh::command_succeeds(&target, &check_cmd).await?
+            };
+
+            if should_backup {
+                let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+                let suffix = uuid::Uuid::new_v4()
+                    .to_string()
+                    .split('-')
+                    .next()
+                    .unwrap_or("bak")
+                    .to_string();
+                let backup_path = format!("{destination}.bak.{ts}-{suffix}");
+                if let Some(cb) = progress.as_ref() {
+                    cb(&format!(
+                        "Destination exists; moving it to backup: {backup_path}"
+                    ));
+                }
+
+                if is_local {
+                    tokio::fs::rename(&destination, &backup_path).await?;
+                } else {
+                    let mv_cmd = format!(
+                        "mv {} {}",
+                        shell_escape_arg(&destination),
+                        shell_escape_arg(&backup_path)
+                    );
+                    let _ = operations::ssh::execute_command(&target, &mv_cmd, None, &empty_env).await?;
+                }
+            }
+
+            // Ensure destination parent directory exists.
+            if let Some(parent) = std::path::Path::new(&destination).parent() {
+                if !parent.as_os_str().is_empty() {
+                    let parent_str = parent.to_string_lossy().to_string();
+                    if is_local {
+                        tokio::fs::create_dir_all(parent).await?;
+                    } else {
+                        let mkdir_cmd =
+                            format!("mkdir -p {}", shell_escape_arg(parent_str.as_str()));
+                        let _ =
+                            operations::ssh::execute_command(&target, &mkdir_cmd, None, &empty_env)
+                                .await?;
+                    }
+                }
+            }
+
+            if use_ssh {
+                if let Some(cb) = progress.as_ref() {
+                    cb("Updating ~/.ssh/known_hosts for git providers…");
+                }
+                let add_host_keys = r#"mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keyscan -t ed25519,rsa github.com gitlab.com bitbucket.org >> ~/.ssh/known_hosts 2>/dev/null"#;
+                if is_local {
+                    operations::ssh::execute_local_command(add_host_keys, None, &empty_env).await?;
+                } else {
+                    operations::ssh::execute_command(&target, add_host_keys, None, &empty_env).await?;
+                }
+            }
+
+            // Use auth token for HTTPS (preferred for private repos).
+            // Otherwise, for SSH URLs, provision the configured private key on the target host and use it via GIT_SSH_COMMAND.
+            let mut clone_env: HashMap<String, String> = HashMap::new();
+            clone_env.insert("GIT_TERMINAL_PROMPT".to_string(), "0".to_string());
+            if !is_local {
+                clone_env.insert("LC_ALL".to_string(), "C.UTF-8".to_string());
+            }
+            let mut cleanup_remote_key: Option<String> = None;
+
+            if use_ssh {
+                if is_local {
+                    let cfg = crate::config::load_config().await?;
+                    if let Some(key_input) = cfg
+                        .vast
+                        .ssh_key_path
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                    {
+                        let key_path =
+                            crate::ssh_keys::materialize_private_key_path(&key_input).await?;
+                        let key_path = key_path.to_string_lossy().to_string();
+                        clone_env.insert(
+                            "GIT_SSH_COMMAND".to_string(),
+                            format!(
+                                "ssh -i {} -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+                                shell_escape_arg(&key_path),
+                            ),
+                        );
+                    }
+                } else {
+                    let ssh =
+                        crate::host::resolve_ssh_spec_with_retry(&target, Duration::from_secs(180))
+                            .await?;
+                    let local_key_path = ssh
+                        .key_path
+                        .clone()
+                        .filter(|p| !p.trim().is_empty())
+                        .ok_or_else(|| {
+                            AppError::invalid_input("Missing SSH key path for git clone")
+                        })?;
+
+                    let remote_key_path = format!("/tmp/doppio_git_key_{}", uuid::Uuid::new_v4());
+
+                    if let Some(cb) = progress.as_ref() {
+                        cb("Uploading identity file to target host…");
+                    }
+                    upload_file_via_ssh(&ssh, Path::new(&local_key_path), &remote_key_path).await?;
+
+                    clone_env.insert(
+                        "GIT_SSH_COMMAND".to_string(),
+                        format!(
+                            "ssh -i {} -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+                            shell_escape_arg(&remote_key_path),
+                        ),
+                    );
+                    cleanup_remote_key = Some(remote_key_path);
+                }
             }
 
             // Now clone
             let clone_cmd = if let Some(token) = auth_token {
-                // Insert token into URL for auth
-                // Example: https://github.com/owner/repo.git -> https://token@github.com/owner/repo.git
-                let auth_url = if repo_url.starts_with("https://") {
-                    repo_url.replacen("https://", &format!("https://{}@", token), 1)
+                // Insert token into URL for HTTP auth
+                // Example: https://github.com/owner/repo.git -> https://x-access-token:TOKEN@github.com/owner/repo.git
+                let auth_url = if repo_url_for_clone.trim().starts_with("https://") {
+                    insert_auth_token_into_https_url(&repo_url_for_clone, &token)
                 } else {
-                    repo_url.clone()
+                    repo_url_for_clone.clone()
                 };
-                format!("git clone {} {}", auth_url, destination)
+                build_git_clone_command(&auth_url, &destination, branch.as_deref(), depth)
             } else {
-                format!("git clone {} {}", repo_url, destination)
+                build_git_clone_command(&repo_url_for_clone, &destination, branch.as_deref(), depth)
             };
 
-            let clone_cmd = if let Some(branch) = branch {
-                format!("{} -b {}", clone_cmd, branch)
-            } else {
-                clone_cmd
-            };
-
-            if is_local {
-                operations::ssh::execute_local_command(&clone_cmd, None, &empty_env).await?;
-            } else {
-                operations::ssh::execute_command(&target, &clone_cmd, None, &empty_env).await?;
+            if let Some(cb) = progress.as_ref() {
+                cb("Running git clone…");
             }
-            Ok(None)
+            if is_local {
+                return operations::ssh::execute_local_command(&clone_cmd, None, &clone_env).await;
+            }
+
+            let result =
+                operations::ssh::execute_command(&target, &clone_cmd, None, &clone_env).await;
+            if let Some(remote_key_path) = cleanup_remote_key {
+                let _ = operations::ssh::execute_command(
+                    &target,
+                    &format!("rm -f {}", remote_key_path),
+                    None,
+                    &empty_env,
+                )
+                .await;
+            }
+            result
         }
 
         // Vast.ai operations
@@ -199,58 +347,6 @@ pub async fn execute_step(
             let instance_id = resolve_vast_instance_id_for_host(&target).await?;
             operations::vast::destroy_instance(instance_id).await?;
             Ok(None)
-        }
-        Operation::VastCopy(op) => {
-            let src = interpolate(&op.src, variables);
-            let dst = interpolate(&op.dst, variables);
-            let target_host = variables.get("target").cloned();
-            let needs_target = uses_vast_target_alias(&src)
-                || uses_vast_target_alias(&dst)
-                || target_host
-                    .as_ref()
-                    .is_some_and(|host| uses_target_host_prefix(&src, host))
-                || target_host
-                    .as_ref()
-                    .is_some_and(|host| uses_target_host_prefix(&dst, host));
-            let target_instance_id = if needs_target {
-                let target = target_host.clone().ok_or_else(|| {
-                    AppError::invalid_input(
-                        "vast_copy target alias requires a recipe target host",
-                    )
-                })?;
-                Some(resolve_vast_instance_id_for_host(&target).await?)
-            } else {
-                None
-            };
-            let (src, dst) = if let Some(id) = target_instance_id {
-                let src = target_host
-                    .as_ref()
-                    .map(|host| normalize_target_host_prefix(&src, host, id))
-                    .unwrap_or(src);
-                let dst = target_host
-                    .as_ref()
-                    .map(|host| normalize_target_host_prefix(&dst, host, id))
-                    .unwrap_or(dst);
-                (
-                    expand_vast_target_alias(&src, id),
-                    expand_vast_target_alias(&dst, id),
-                )
-            } else {
-                (src, dst)
-            };
-            let identity_file = op
-                .identity_file
-                .as_ref()
-                .map(|p| interpolate(p, variables))
-                .filter(|p| !p.trim().is_empty());
-            let msg = operations::vast::copy(
-                &src,
-                &dst,
-                identity_file.as_deref(),
-                progress.clone(),
-            )
-            .await?;
-            Ok(Some(msg))
         }
 
         // HF download operation
@@ -310,7 +406,8 @@ pub async fn execute_step(
             let host_id = interpolate(&op.host_id, variables);
             let command = interpolate(&op.command, variables);
             let workdir = op.workdir.as_ref().map(|w| interpolate(w, variables));
-            operations::ssh::execute_command(&host_id, &command, workdir.as_deref(), &op.env).await?;
+            operations::ssh::execute_command(&host_id, &command, workdir.as_deref(), &op.env)
+                .await?;
             Ok(None)
         }
 
@@ -476,7 +573,7 @@ pub async fn execute_step(
         }
 
         Operation::Group(_op) => {
-            // Groups are expanded during recipe validation/loading
+            // Groups are expanded during skill validation/loading
             // They shouldn't appear here during execution
             Ok(None)
         }
@@ -518,62 +615,179 @@ async fn resolve_vast_instance_id_for_host(host_id: &str) -> Result<i64, AppErro
     })
 }
 
-fn uses_vast_target_alias(location: &str) -> bool {
-    let trimmed = location.trim();
-    let Some((left, _)) = trimmed.split_once(':') else {
+fn looks_like_ssh_git_url(url: &str) -> bool {
+    let u = url.trim();
+    if u.is_empty() {
         return false;
-    };
-    let left = left.trim().to_ascii_lowercase();
-    left == "target" || left == "c.target" || left == "c."
+    }
+    u.starts_with("git@")
+        || u.starts_with("ssh://")
+        || u.starts_with("git+ssh://")
+        || u.starts_with("ssh+git://")
 }
 
-fn expand_vast_target_alias(location: &str, target_instance_id: i64) -> String {
-    let trimmed = location.trim();
-    let Some((left, right)) = trimmed.split_once(':') else {
-        return trimmed.to_string();
-    };
-    let left_trimmed = left.trim();
-    let left_lower = left_trimmed.to_ascii_lowercase();
-    let id = target_instance_id.to_string();
-    let replacement = if left_lower == "target" {
-        id
-    } else if left_lower == "c.target" || left_lower == "c." {
-        format!("C.{id}")
-    } else {
-        left_trimmed.to_string()
-    };
-    format!("{replacement}:{right}")
+fn ssh_git_url_to_https_url(url: &str) -> Option<String> {
+    let u = url.trim();
+    if u.is_empty() {
+        return None;
+    }
+
+    // SCP-like URL: git@github.com:owner/repo.git
+    if let Some(rest) = u.strip_prefix("git@") {
+        let (host, path) = rest.split_once(':')?;
+        let host = host.trim();
+        let path = path.trim().trim_start_matches('/');
+        if host.is_empty() || path.is_empty() {
+            return None;
+        }
+        return Some(format!("https://{host}/{path}"));
+    }
+
+    // URL-like SSH schemes: ssh://git@github.com/owner/repo.git
+    let mut rest = None;
+    for scheme in ["ssh://", "git+ssh://", "ssh+git://"] {
+        if let Some(r) = u.strip_prefix(scheme) {
+            rest = Some(r);
+            break;
+        }
+    }
+    let rest = rest?;
+
+    let (authority, path) = rest.split_once('/')?;
+    let authority = authority.trim();
+    let path = path.trim().trim_start_matches('/');
+    if authority.is_empty() || path.is_empty() {
+        return None;
+    }
+
+    let host_part = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
+    let host_part = host_part
+        .split_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(host_part)
+        .trim();
+    if host_part.is_empty() {
+        return None;
+    }
+
+    Some(format!("https://{host_part}/{path}"))
 }
 
-fn uses_target_host_prefix(location: &str, target_host_id: &str) -> bool {
-    let trimmed = location.trim();
-    let direct = format!("{target_host_id}:");
-    let container = format!("C.{target_host_id}:");
-    let container_lower = format!("c.{target_host_id}:");
-    trimmed.starts_with(&direct)
-        || trimmed.starts_with(&container)
-        || trimmed.starts_with(&container_lower)
+fn git_http_username_for_url(url: &str) -> &'static str {
+    let rest = url.trim().strip_prefix("https://").unwrap_or("");
+    let authority = rest.split('/').next().unwrap_or("");
+    let authority = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host = authority.split(':').next().unwrap_or(authority).trim().to_ascii_lowercase();
+    match host.as_str() {
+        "github.com" => "x-access-token",
+        "gitlab.com" => "oauth2",
+        "bitbucket.org" => "x-token-auth",
+        _ => "token",
+    }
 }
 
-fn normalize_target_host_prefix(
-    location: &str,
-    target_host_id: &str,
-    target_instance_id: i64,
+fn insert_auth_token_into_https_url(repo_url: &str, token: &str) -> String {
+    let user = git_http_username_for_url(repo_url);
+    let token = urlencoding::encode(token);
+    repo_url.replacen("https://", &format!("https://{user}:{token}@"), 1)
+}
+
+fn build_git_clone_command(
+    repo_url: &str,
+    destination: &str,
+    branch: Option<&str>,
+    depth: Option<u32>,
 ) -> String {
-    let trimmed = location.trim();
-    let direct = format!("{target_host_id}:");
-    if let Some(rest) = trimmed.strip_prefix(&direct) {
-        return format!("{target_instance_id}:{rest}");
+    let mut args: Vec<String> = vec!["git".to_string(), "clone".to_string(), "--progress".to_string()];
+    if let Some(depth) = depth {
+        if depth > 0 {
+            args.push("--depth".to_string());
+            args.push(depth.to_string());
+        }
     }
-    let container = format!("C.{target_host_id}:");
-    if let Some(rest) = trimmed.strip_prefix(&container) {
-        return format!("C.{target_instance_id}:{rest}");
+    if let Some(branch) = branch.map(str::trim).filter(|b| !b.is_empty()) {
+        args.push("-b".to_string());
+        args.push(branch.to_string());
     }
-    let container_lower = format!("c.{target_host_id}:");
-    if let Some(rest) = trimmed.strip_prefix(&container_lower) {
-        return format!("C.{target_instance_id}:{rest}");
+    args.push(repo_url.to_string());
+    args.push(destination.to_string());
+
+    args.into_iter()
+        .map(|s| shell_escape_arg(&s))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalize_destination_path(destination: &str) -> Result<String, AppError> {
+    let mut dest = destination.trim().to_string();
+    if dest.is_empty() {
+        return Err(AppError::invalid_input("Destination path is required"));
     }
-    trimmed.to_string()
+    while dest.ends_with('/') && dest.len() > 1 {
+        dest.pop();
+    }
+    if dest == "/" || dest == "." || dest == ".." {
+        return Err(AppError::invalid_input("Invalid destination path"));
+    }
+    Ok(dest)
+}
+
+fn shell_escape_arg(s: &str) -> String {
+    shell_escape::unix::escape(s.into()).to_string()
+}
+
+async fn upload_file_via_ssh(
+    ssh: &crate::ssh::SshSpec,
+    local_path: &Path,
+    remote_path: &str,
+) -> Result<(), AppError> {
+    crate::ssh::ensure_bin("ssh").await?;
+    ssh.validate()?;
+    if !local_path.exists() {
+        return Err(AppError::invalid_input(format!(
+            "Local SSH key not found: {}",
+            local_path.display()
+        )));
+    }
+
+    let bytes = tokio::fs::read(local_path).await?;
+
+    let remote = shell_escape_arg(remote_path);
+    let cmd_str = format!("umask 077; cat > {remote} && chmod 600 {remote}");
+
+    let mut c = tokio::process::Command::new("ssh");
+    c.args(ssh.common_ssh_options());
+    c.arg(ssh.target());
+    c.arg(cmd_str);
+    c.stdin(Stdio::piped());
+
+    let mut child = c
+        .spawn()
+        .map_err(|e| AppError::command(format!("Failed to execute SSH: {e}")))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::command("Failed to open stdin for SSH upload"))?;
+    stdin.write_all(&bytes).await?;
+    stdin.shutdown().await?;
+
+    let out = child
+        .wait_with_output()
+        .await
+        .map_err(|e| AppError::command(format!("Failed to wait for SSH upload: {e}")))?;
+
+    if !out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        return Err(AppError::command(format!(
+            "SSH upload failed (code={:?}): {stdout}{stderr}",
+            out.status.code()
+        )));
+    }
+    Ok(())
 }
 
 /// Compute topological order of steps
@@ -619,7 +833,7 @@ pub fn compute_execution_order(steps: &[Step]) -> Result<Vec<String>, AppError> 
     }
 
     if order.len() != steps.len() {
-        return Err(AppError::command("Circular dependency detected in recipe"));
+        return Err(AppError::command("Circular dependency detected in skill"));
     }
 
     Ok(order)

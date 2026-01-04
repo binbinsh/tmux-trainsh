@@ -28,12 +28,14 @@ type HostRowProps = {
   title: string;
   subtitle?: string;
   rightTags?: { label: string; variant?: "default" | "primary" | "warning" }[];
+  titleClampLines?: 1 | 2;
   isOnline?: boolean;
   isSelected?: boolean;
   onClick?: () => void;
   onDoubleClick?: () => void;
   onEdit?: () => void;
   hoverActions?: ReactNode;
+  hoverActionsVisible?: boolean;
   className?: string;
 };
 
@@ -42,15 +44,21 @@ export function HostRow({
   title,
   subtitle,
   rightTags,
+  titleClampLines = 1,
   isOnline = false,
   isSelected = false,
   onClick,
   onDoubleClick,
   onEdit,
   hoverActions,
+  hoverActionsVisible = false,
   className = "",
 }: HostRowProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const titleClassName =
+    titleClampLines === 2
+      ? "text-sm font-normal text-foreground/70 leading-tight line-clamp-2"
+      : "text-sm font-normal text-foreground/70 truncate leading-tight";
 
   return (
     <div
@@ -81,15 +89,15 @@ export function HostRow({
 
       {/* Info - left side */}
       <div className="flex-1 min-w-0 ml-3">
-        <h3 className="text-sm font-normal text-foreground/70 truncate leading-tight">{title}</h3>
+        <h3 className={titleClassName}>{title}</h3>
         {subtitle && (
           <p className="text-[11px] text-foreground/50 truncate leading-tight">{subtitle}</p>
         )}
       </div>
 
-      {/* Right side - tags or hover actions (fixed size container) */}
-      <div className="flex items-center justify-end ml-2 flex-shrink-0 min-w-[80px]">
-        {isHovered && (hoverActions || onEdit) ? (
+      {/* Right side - tags or hover actions */}
+      <div className="flex items-center justify-end ml-2 flex-shrink-0 min-w-[12px] pr-1">
+        {(isHovered || hoverActionsVisible) && (hoverActions || onEdit) ? (
           <div className="flex items-center">
             {hoverActions ? (
               hoverActions
@@ -112,13 +120,13 @@ export function HostRow({
               </Tooltip>
             ) : null}
           </div>
-        ) : (
+        ) : rightTags && rightTags.length > 0 ? (
           <div className="flex flex-col items-end gap-0.5 max-h-[36px] overflow-hidden">
-            {rightTags && rightTags.length > 0 && rightTags.slice(0, 2).map((tag, i) => (
+            {rightTags.slice(0, 2).map((tag, i) => (
               <Tag key={i} variant={tag.variant}>{tag.label}</Tag>
             ))}
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
