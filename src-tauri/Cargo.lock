@@ -1469,6 +1469,7 @@ dependencies = [
  "home",
  "image",
  "keyring",
+ "lazy_static",
  "librclone",
  "pdfium-render",
  "portable-pty",

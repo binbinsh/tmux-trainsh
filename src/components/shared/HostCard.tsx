@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Edit2 } from "lucide-react";
+import { Edit2, Play, Check, X, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -7,6 +7,9 @@ import { AppIcon } from "@/components/AppIcon";
 import type { Host, VastInstance } from "@/lib/types";
 import { getGpuModelShortName } from "@/lib/gpu";
 import { cn } from "@/lib/utils";
+
+/** Status indicator type for skill execution status */
+export type SkillStatusIndicator = "running" | "completed" | "failed" | null;
 
 // Small tag component
 function Tag({ children, variant = "default" }: { children: ReactNode; variant?: "default" | "primary" | "warning" }) {
@@ -30,6 +33,8 @@ type HostRowProps = {
   rightTags?: { label: string; variant?: "default" | "primary" | "warning" }[];
   titleClampLines?: 1 | 2;
   isOnline?: boolean;
+  /** Skill execution status indicator - shows icon on bottom-right of the icon */
+  skillStatus?: SkillStatusIndicator;
   isSelected?: boolean;
   onClick?: () => void;
   onDoubleClick?: () => void;
@@ -46,6 +51,7 @@ export function HostRow({
   rightTags,
   titleClampLines = 1,
   isOnline = false,
+  skillStatus,
   isSelected = false,
   onClick,
   onDoubleClick,
@@ -55,35 +61,69 @@ export function HostRow({
   className = "",
 }: HostRowProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const titleClassName =
     titleClampLines === 2
       ? "text-sm font-normal text-foreground/70 leading-tight line-clamp-2"
       : "text-sm font-normal text-foreground/70 truncate leading-tight";
+
+  // Keep hover actions visible when menu is open
+  const showHoverActions = isHovered || hoverActionsVisible || isMenuOpen;
 
   return (
     <div
       className={cn(
         "termius-host-row",
         isSelected && "termius-host-row-selected",
-        isHovered && "termius-host-row-hover",
+        (isHovered || isMenuOpen) && "termius-host-row-hover",
         className
       )}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      data-menu-open={isMenuOpen}
+      onFocusCapture={() => setIsMenuOpen(true)}
+      onBlurCapture={(e) => {
+        // Only close if focus is leaving the row entirely
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setIsMenuOpen(false);
+        }
+      }}
     >
       {/* Icon with status dot */}
       <div className="relative flex-shrink-0">
         <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
           {icon}
         </div>
-        {/* Status dot - only show when online */}
-        {isOnline && (
+        {/* Skill status indicator - shows running/completed/failed icon */}
+        {skillStatus === "running" ? (
+          <span
+            className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-muted bg-primary flex items-center justify-center"
+            title="Running"
+          >
+            <Loader2 className="w-2 h-2 text-primary-foreground animate-spin" />
+          </span>
+        ) : skillStatus === "completed" ? (
+          <span
+            className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-muted bg-success flex items-center justify-center"
+            title="Completed"
+          >
+            <Check className="w-2 h-2 text-success-foreground" />
+          </span>
+        ) : skillStatus === "failed" ? (
+          <span
+            className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-muted bg-destructive flex items-center justify-center"
+            title="Failed"
+          >
+            <X className="w-2 h-2 text-destructive-foreground" />
+          </span>
+        ) : isOnline ? (
+          /* Status dot - only show when online and no skill status */
           <span
             className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-muted bg-success"
           />
-        )}
+        ) : null}
       </div>
 
       {/* Info - left side */}
@@ -96,7 +136,7 @@ export function HostRow({
 
       {/* Right side - tags or hover actions */}
       <div className="flex items-center justify-end ml-2 flex-shrink-0 min-w-[12px] pr-1">
-        {(isHovered || hoverActionsVisible) && (hoverActions || onEdit) ? (
+        {showHoverActions && (hoverActions || onEdit) ? (
           <div className="flex items-center">
             {hoverActions ? (
               hoverActions

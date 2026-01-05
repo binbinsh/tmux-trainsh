@@ -52,7 +52,7 @@ import type {
   Skill,
 } from "../lib/types";
 import { vastInstanceToHostCandidate } from "../lib/vast-host";
-import { EmptyHostState, HostRow, HostSection } from "../components/shared/HostCard";
+import { EmptyHostState, HostRow, HostSection, type SkillStatusIndicator } from "../components/shared/HostCard";
 import type { SkillFolder } from "../lib/skill-folders";
 import {
   getAssignedFolderId,
@@ -915,8 +915,17 @@ export function SkillsPage() {
               <HostSection title="RUNNING" count={activeExecutions.length}>
                 {activeExecutions.map((exec) => {
                   const hostName = hostNameById.get(exec.host_id) || exec.host_id;
+                  // Map execution status to skill status indicator (shown on icon)
+                  const skillStatus: SkillStatusIndicator =
+                    exec.status === "running" || exec.status === "connecting" || exec.status === "waiting_for_input" || exec.status === "paused" || exec.status === "pending"
+                      ? "running"
+                      : exec.status === "completed"
+                        ? "completed"
+                        : exec.status === "failed" || exec.status === "cancelled"
+                          ? "failed"
+                          : null;
+                  // Only show progress in rightTags (status is shown on icon)
                   const rightTags: { label: string; color?: "default" | "destructive" | "secondary" }[] = [
-                    { label: getStatusLabel(exec.status), color: getExecutionTagColor(exec.status) },
                     { label: getExecutionProgressLabel(exec), color: "default" },
                   ];
                   const action = executionActions[exec.id] ?? null;
@@ -928,12 +937,13 @@ export function SkillsPage() {
                   return (
                     <HostRow
                       key={exec.id}
-                      icon={<FlaskConical className="w-4 h-4 text-primary" />}
+                      icon={<FlaskConical className="w-5 h-5 text-primary" />}
                       title={exec.skill_name}
                       subtitle={`${hostName} · ${new Date(exec.created_at).toLocaleString()}`}
                       titleClampLines={2}
                       rightTags={rightTags}
                       isOnline={true}
+                      skillStatus={skillStatus}
                       onClick={() => void handleExecutionClick(exec)}
                       hoverActions={
                         <div
@@ -1048,7 +1058,7 @@ export function SkillsPage() {
                       return (
                         <HostRow
                           key={skill.path}
-                          icon={<FlaskConical className="w-4 h-4 text-primary" />}
+                          icon={<FlaskConical className="w-5 h-5 text-primary" />}
                           title={skill.name}
                           subtitle={skill.description || undefined}
                           rightTags={rightTags}
@@ -1171,7 +1181,7 @@ export function SkillsPage() {
                         return (
                           <HostRow
                             key={skill.path}
-                            icon={<span className="text-lg">📜</span>}
+                            icon={<FlaskConical className="w-5 h-5 text-primary" />}
                             title={skill.name}
                             subtitle={skill.description || undefined}
                             titleClampLines={1}
@@ -1264,7 +1274,7 @@ export function SkillsPage() {
               </>
             ) : (
               <EmptyHostState
-                icon={<span className="text-lg">📜</span>}
+                icon={<span className="text-xl">📜</span>}
                 title={searchQuery ? "No skills match your search" : "No skills yet"}
                 description={searchQuery ? undefined : "Create a skill to automate training workflows."}
                 action={

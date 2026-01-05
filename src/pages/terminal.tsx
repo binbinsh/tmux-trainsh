@@ -24,8 +24,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { TmuxSessionSelectModal } from "@/components/host/TmuxSessionSelectModal";
 import { copyText } from "@/lib/clipboard";
 import { AppIcon, type AppIconName } from "@/components/AppIcon";
-import { EmptyHostState, HostRow, HostSection } from "@/components/shared/HostCard";
-import { SkillRunSidebar } from "@/components/skill/SkillRunSidebar";
+import { EmptyHostState, HostRow, HostSection, type SkillStatusIndicator } from "@/components/shared/HostCard";
 import { formatGpuCountLabel } from "@/lib/gpu";
 import {
   loadRecentConnections,
@@ -494,24 +493,12 @@ export function TerminalPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState({ current: 0, total: 0 });
   const [searchDirection, setSearchDirection] = useState<"next" | "prev" | null>(null);
-  const [skillSidebarOpen, setSkillSidebarOpen] = useState(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const showSearchRef = useRef(showSearch);
-
-  // Get the skillExecutionId for the active session
-  const activeSession = sessions.find((s) => s.id === activeId);
-  const activeSkillExecutionId = activeSession?.skillExecutionId ?? null;
 
   useEffect(() => {
     showSearchRef.current = showSearch;
   }, [showSearch]);
-
-  // Listen for skill sidebar toggle event from TitleBar
-  useEffect(() => {
-    const onToggle = () => setSkillSidebarOpen((prev) => !prev);
-    window.addEventListener("skillrun:toggle_right_sidebar", onToggle as EventListener);
-    return () => window.removeEventListener("skillrun:toggle_right_sidebar", onToggle as EventListener);
-  }, []);
 
   useEffect(() => {
     void refreshSessions();
@@ -814,13 +801,6 @@ export function TerminalPage() {
           }
           return !prev;
         });
-        return;
-      }
-
-      if (e.metaKey && e.key === "]") {
-        e.preventDefault();
-        e.stopPropagation();
-        setSkillSidebarOpen((prev) => !prev);
         return;
       }
 
@@ -1262,9 +1242,19 @@ export function TerminalPage() {
                       {skillHistory.map((exec) => {
                         const hostName = hostNameById.get(exec.host_id) || exec.host_id;
                         const isSelected = selectedSkillPath === exec.skill_path;
-                        const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = [
-                          { label: getExecutionStatusLabel(exec.status), color: exec.status === "running" || exec.status === "waiting_for_input" ? "primary" : "default" },
-                        ];
+                        // Map execution status to skill status indicator
+                        const skillStatus: SkillStatusIndicator =
+                          exec.status === "running" || exec.status === "connecting" || exec.status === "waiting_for_input" || exec.status === "paused" || exec.status === "pending"
+                            ? "running"
+                            : exec.status === "completed"
+                              ? "completed"
+                              : exec.status === "failed" || exec.status === "cancelled"
+                                ? "failed"
+                                : null;
+                        // Only show status badge in rightTags when skillStatus is not shown on icon
+                        const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = skillStatus
+                          ? []
+                          : [{ label: getExecutionStatusLabel(exec.status), color: exec.status === "running" || exec.status === "waiting_for_input" ? "primary" : "default" }];
 
                         return (
                           <HostRow
@@ -1274,6 +1264,7 @@ export function TerminalPage() {
                             subtitle={`${hostName} · ${new Date(exec.created_at).toLocaleString()}`}
                             rightTags={rightTags}
                             isOnline={exec.status === "running" || exec.status === "waiting_for_input"}
+                            skillStatus={skillStatus}
                             isSelected={isSelected}
                             onClick={() => {
                               setSelectedSkillPath(exec.skill_path);
@@ -1374,20 +1365,6 @@ export function TerminalPage() {
                 </div>
               ))}
             </div>
-
-            <AnimatePresence initial={false}>
-              {activeSkillExecutionId && skillSidebarOpen ? (
-                <motion.div
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: 480, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: 0.2, ease: "easeInOut" }}
-                  className="min-h-0 overflow-hidden"
-                >
-                  <SkillRunSidebar executionId={activeSkillExecutionId} />
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
           </div>
         )}
       </div>

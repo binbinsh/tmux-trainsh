@@ -1249,8 +1249,15 @@ async fn run_interactive_skill(
             }
 
             let commands = extract_commands_from_step(&step, &variables);
+            eprintln!(
+                "[interactive_skill] Step {} operation {:?} => commands: {:?}",
+                step.id,
+                std::mem::discriminant(&step.operation),
+                commands.as_ref().map(|s| s.len())
+            );
 
             if let Some(cmds) = commands {
+                eprintln!("[interactive_skill] Using TERMINAL execution for step {}", step.id);
                 interactive::get_runner()
                     .await
                     .lock_intervention(&exec_id)
@@ -1473,7 +1480,8 @@ async fn run_interactive_skill(
                     .await?;
             } else {
                 eprintln!(
-                    "[interactive_skill] Executing operation via backend: {:?}",
+                    "[interactive_skill] Using STREAMING execution for step {} operation: {:?}",
+                    step.id,
                     step.operation
                 );
 
@@ -2058,7 +2066,7 @@ async fn execute_streaming_command(
     control_state: &mut ControlState,
     timeout: Option<std::time::Duration>,
 ) -> Result<i32, AppError> {
-    use stream_exec::{StreamEvent, StreamType};
+    use stream_exec::StreamEvent;
 
     let env = HashMap::new();
 
@@ -2087,35 +2095,46 @@ async fn execute_streaming_command(
             // Handle stream events
             event = execution.events_rx.recv() => {
                 match event {
-                    Some(StreamEvent::Output { stream, data }) => {
-                        let log_stream = match stream {
-                            StreamType::Stdout => run_logs::SkillLogStream::Stdout,
-                            StreamType::Stderr => run_logs::SkillLogStream::Stderr,
-                        };
+                    Some(StreamEvent::Output { data }) => {
+                        // PTY output is combined stdout/stderr, log as stdout
                         append_skill_log(
                             app,
                             log_lock,
                             exec_id,
                             Some(step_id),
-                            log_stream,
+                            run_logs::SkillLogStream::Stdout,
                             data,
                         )
                         .await;
                     }
                     Some(StreamEvent::InputNeeded { prompt }) => {
+                        // Detect if this is a password prompt
+                        let is_password = prompt.to_lowercase().contains("password")
+                            || prompt.to_lowercase().contains("passphrase");
+
+                        eprintln!(
+                            "[execute_streaming_command] InputNeeded detected: prompt={:?}, is_password={}",
+                            prompt, is_password
+                        );
+
                         // Update execution status to waiting_for_input
                         let runner = interactive::get_runner().await;
                         if let Err(e) = runner.set_pending_input(exec_id, step_id, &prompt).await {
                             eprintln!("[execute_streaming_command] Failed to set pending input: {e}");
                         }
-                        // Emit event so frontend knows to refetch execution state
-                        let _ = app.emit(
-                            "skill:execution_updated",
-                            serde_json::json!({
-                                "execution_id": exec_id,
-                                "status": "waiting_for_input",
-                            }),
-                        );
+
+                        // Emit event with pending_input for optimistic frontend update
+                        let payload = serde_json::json!({
+                            "execution_id": exec_id,
+                            "status": "waiting_for_input",
+                            "pending_input": {
+                                "step_id": step_id,
+                                "prompt": prompt,
+                                "is_password": is_password,
+                            },
+                        });
+                        eprintln!("[execute_streaming_command] Emitting skill:execution_updated: {}", payload);
+                        let _ = app.emit("skill:execution_updated", payload);
                         append_skill_log(
                             app,
                             log_lock,

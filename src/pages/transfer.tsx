@@ -876,7 +876,8 @@ function FilePane({
           value={endpoint}
           onChange={(ep) => {
             onEndpointChange(ep);
-            onPathChange("/");
+            // Use ~ for local, / for others
+            onPathChange(ep.type === "local" ? "~" : "/");
             onSelectionChange(new Set());
           }}
         />
@@ -1414,12 +1415,12 @@ export function TransferPage() {
 
   // Left pane state
   const [leftEndpoint, setLeftEndpoint] = useState<Endpoint | null>(null);
-  const [leftPath, setLeftPath] = useState("/");
+  const [leftPath, setLeftPath] = useState("~");
   const [leftSelected, setLeftSelected] = useState<Set<string>>(new Set());
 
   // Right pane state
   const [rightEndpoint, setRightEndpoint] = useState<Endpoint | null>(null);
-  const [rightPath, setRightPath] = useState("/");
+  const [rightPath, setRightPath] = useState("~");
   const [rightSelected, setRightSelected] = useState<Set<string>>(new Set());
 
   // Drag state
@@ -1433,22 +1434,15 @@ export function TransferPage() {
     destPath: string;
   } | null>(null);
 
-  // Initialize endpoints
+  // Initialize endpoints - both default to local
   useEffect(() => {
     if (!leftEndpoint) {
       setLeftEndpoint({ type: "local" });
     }
     if (!rightEndpoint) {
-      if (storages.length > 0) {
-        setRightEndpoint({ type: "storage", storageId: storages[0].id });
-      } else {
-        const onlineHost = hosts.find((h) => h.status === "online");
-        if (onlineHost) {
-          setRightEndpoint({ type: "host", hostId: onlineHost.id });
-        }
-      }
+      setRightEndpoint({ type: "local" });
     }
-  }, [storages, hosts, leftEndpoint, rightEndpoint]);
+  }, [leftEndpoint, rightEndpoint]);
 
   // Get files for drag source
   const leftFilesQuery = useEndpointFiles(leftEndpoint, leftPath, vastInstances);
@@ -1701,11 +1695,7 @@ export function TransferPage() {
               hosts={hosts}
               vastInstances={vastInstances}
               endpoint={leftEndpoint}
-              onEndpointChange={(ep) => {
-                setLeftEndpoint(ep);
-                setLeftPath("/");
-                setLeftSelected(new Set());
-              }}
+              onEndpointChange={setLeftEndpoint}
               currentPath={leftPath}
               onPathChange={setLeftPath}
               selectedFiles={leftSelected}
@@ -1744,11 +1734,7 @@ export function TransferPage() {
             hosts={hosts}
             vastInstances={vastInstances}
             endpoint={rightEndpoint}
-            onEndpointChange={(ep) => {
-              setRightEndpoint(ep);
-              setRightPath("/");
-              setRightSelected(new Set());
-            }}
+            onEndpointChange={setRightEndpoint}
             currentPath={rightPath}
             onPathChange={setRightPath}
             selectedFiles={rightSelected}

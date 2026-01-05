@@ -357,7 +357,7 @@
   .termius-host-row {
     @apply flex items-center px-3 rounded-lg cursor-default;
     @apply bg-card border border-border;
-    width: 300px;
+    width: 315px;
     height: 56px;
     flex-shrink: 0;
     box-shadow: var(--doppio-shadow-sm);

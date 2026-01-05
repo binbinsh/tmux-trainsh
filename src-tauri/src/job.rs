@@ -190,6 +190,48 @@ async fn scp_upload(ssh: &SshSpec, local_path: &Path, remote_path: &str) -> Resu
     Ok(())
 }
 
+/// Rsync configuration with path and appropriate progress flag
+struct RsyncConfig {
+    /// Path to rsync binary
+    path: String,
+    /// Progress flag: "--info=progress2" for modern rsync (3.1+), "--progress" for legacy
+    progress_flag: String,
+}
+
+/// Detect the best rsync available and its capabilities.
+/// Prefers Homebrew rsync (supports --info=progress2) over macOS system rsync.
+fn get_rsync_config() -> RsyncConfig {
+    use std::process::Command as StdCommand;
+
+    // Check Homebrew paths first (they have modern rsync with --info=progress2 support)
+    let homebrew_paths = [
+        "/opt/homebrew/bin/rsync", // Apple Silicon
+        "/usr/local/bin/rsync",     // Intel Mac
+    ];
+
+    for path in homebrew_paths {
+        if std::path::Path::new(path).exists() {
+            // Verify it's a modern rsync by checking version
+            if let Ok(output) = StdCommand::new(path).arg("--version").output() {
+                let version_str = String::from_utf8_lossy(&output.stdout);
+                // rsync version 3.1+ supports --info=progress2
+                if version_str.contains("rsync  version 3.") || version_str.contains("rsync  version 4.") {
+                    return RsyncConfig {
+                        path: path.to_string(),
+                        progress_flag: "--info=progress2".to_string(),
+                    };
+                }
+            }
+        }
+    }
+
+    // Fall back to system rsync with legacy --progress flag
+    RsyncConfig {
+        path: "rsync".to_string(),
+        progress_flag: "--progress".to_string(),
+    }
+}
+
 async fn scp_download_dir(
     ssh: &SshSpec,
     remote_dir: &str,
@@ -220,9 +262,11 @@ async fn rsync_download_dir(
     remote_dir: &str,
     local_dir: &Path,
 ) -> Result<(), AppError> {
-    ensure_bin("rsync").await?;
     ensure_bin("ssh").await?;
     ssh.validate()?;
+
+    // Get the best rsync available with appropriate flags
+    let rsync_config = get_rsync_config();
 
     if let Some(parent) = local_dir.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -237,10 +281,10 @@ async fn rsync_download_dir(
     // rsync expects a single string after -e.
     let rsh = rsh_parts.join(" ");
 
-    let mut c = Command::new("rsync");
+    let mut c = Command::new(&rsync_config.path);
     c.arg("-az");
     c.arg("--partial");
-    c.arg("--info=progress2");
+    c.arg(&rsync_config.progress_flag);
     c.arg("-e");
     c.arg(rsh);
     c.arg(remote_spec);

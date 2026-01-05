@@ -113,15 +113,15 @@ function getBackendFallbackEmoji(backend: StorageBackend): string {
 function getBackendIconNode(backend: StorageBackend, customIcon?: string | null): ReactNode {
   switch (backend.type) {
     case "ssh_remote":
-      return <AppIcon name="ssh" className="w-6 h-6" alt="SSH" />;
+      return <AppIcon name="ssh" className="w-5 h-5" alt="SSH" />;
     case "google_drive":
-      return <AppIcon name="googledrive" className="w-6 h-6" alt="Google Drive" />;
+      return <AppIcon name="googledrive" className="w-5 h-5" alt="Google Drive" />;
     case "cloudflare_r2":
-      return <AppIcon name="cloudflare" className="w-6 h-6" alt="Cloudflare R2" />;
+      return <AppIcon name="cloudflare" className="w-5 h-5" alt="Cloudflare R2" />;
     case "smb":
-      return <AppIcon name="smb" className="w-6 h-6" alt="SMB" />;
+      return <AppIcon name="smb" className="w-5 h-5" alt="SMB" />;
     default:
-      return <span className="text-2xl">{customIcon || getBackendFallbackEmoji(backend)}</span>;
+      return <span className="text-xl">{customIcon || getBackendFallbackEmoji(backend)}</span>;
   }
 }
 

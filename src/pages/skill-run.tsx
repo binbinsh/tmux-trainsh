@@ -1,10 +1,7 @@
-import "@xterm/xterm/css/xterm.css";
-
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { Cable, ChevronDown, Loader2, MoreHorizontal, Pause, Play, RotateCcw, SkipForward, Square, X } from "lucide-react";
-import { TerminalInstance } from "@/lib/terminal-instance";
+import { Cable, ChevronDown, Loader2, MoreHorizontal, Pause, Play, RotateCcw, Send, SkipForward, Square, X } from "lucide-react";
 import {
   interactiveSkillApi,
   listenSkillLogAppended,
@@ -24,6 +21,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Input,
   Skeleton,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -99,41 +97,6 @@ function StepStatusDot({ status }: { status: string }) {
   return <span className={cn("size-2 rounded-full", className)} />;
 }
 
-function SkillRunTerminal({
-  terminalId,
-  interventionLocked,
-}: {
-  terminalId: string;
-  interventionLocked?: boolean;
-}) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const instanceRef = useRef<TerminalInstance | null>(null);
-
-  useEffect(() => {
-    const container = hostRef.current;
-    if (!container) return;
-
-    const instance = new TerminalInstance({
-      id: terminalId,
-      container,
-      interventionLocked,
-    });
-    instanceRef.current = instance;
-    void instance.initialize();
-
-    return () => {
-      instance.dispose();
-      instanceRef.current = null;
-    };
-  }, [terminalId]);
-
-  useEffect(() => {
-    instanceRef.current?.setInterventionLocked(interventionLocked ?? false);
-  }, [interventionLocked]);
-
-  return <div ref={hostRef} className="relative h-full w-full overflow-hidden bg-card rounded-none" />;
-}
-
 function formatLogTimestamp(ts: string) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
@@ -157,20 +120,17 @@ function streamBadgeClass(stream: SkillRunLogEntry["stream"]) {
   }
 }
 
-function normalizeLogMessage(message: string) {
-  return (
-    message
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "")
-      .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-      .replace(/\u001b[\(\)][0-9A-Za-z]/g, "")
-      .replace(/\u0008+/g, "")
-      .replace(/\u0007+/g, "")
-  );
-}
-
 function isMetaLogStream(stream: SkillRunLogEntry["stream"]) {
   return stream === "system" || stream === "progress";
+}
+
+/** Check if timestamp should be shown (first entry or > 1 minute gap from previous) */
+function shouldShowTimestamp(entries: SkillRunLogEntry[], idx: number): boolean {
+  if (idx === 0) return true;
+  const prev = new Date(entries[idx - 1].timestamp).getTime();
+  const curr = new Date(entries[idx].timestamp).getTime();
+  if (Number.isNaN(prev) || Number.isNaN(curr)) return true;
+  return curr - prev > 60_000; // 1 minute
 }
 
 function interpolateTemplate(template: string, variables: Record<string, string>) {
@@ -587,7 +547,20 @@ export function SkillRunPage() {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     [RUN_SECTION_KEY]: true,
   });
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+  // Right panel is always visible (no longer a collapsible sidebar)
+
+  // Input state for interactive commands (password, y/n, etc.)
+  const [inputValue, setInputValue] = useState("");
+  const [inputSending, setInputSending] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus input when pending_input appears
+  useEffect(() => {
+    if (execution?.pending_input) {
+      console.log("[SkillRunPage] pending_input detected, focusing input");
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [execution?.pending_input]);
 
   useEffect(() => {
     logCursorRef.current = logCursor;
@@ -611,6 +584,9 @@ export function SkillRunPage() {
       setLogEntries((prev) => (reset ? chunk.entries : [...prev, ...chunk.entries]));
       setLogCursor(chunk.next_cursor);
       logCursorRef.current = chunk.next_cursor;
+    } catch (e) {
+      // Ignore errors when loading logs (e.g., execution not found)
+      console.warn("[SkillRunPage] Failed to load logs:", e);
     } finally {
       logLoadingRef.current = false;
       setLogLoading(false);
@@ -664,25 +640,8 @@ export function SkillRunPage() {
       if (!el) continue;
       el.scrollTop = el.scrollHeight;
     }
-  }, [expandedSections, logEntries.length, rightSidebarOpen]);
+  }, [expandedSections, logEntries.length]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey && e.key === "]") {
-        e.preventDefault();
-        e.stopPropagation();
-        setRightSidebarOpen((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
-
-  useEffect(() => {
-    const onToggle = () => setRightSidebarOpen((prev) => !prev);
-    window.addEventListener("skillrun:toggle_right_sidebar", onToggle as EventListener);
-    return () => window.removeEventListener("skillrun:toggle_right_sidebar", onToggle as EventListener);
-  }, []);
 
   const logsByStep = useMemo(() => {
     const logs = new Map<string, SkillRunLogEntry[]>();
@@ -765,6 +724,17 @@ export function SkillRunPage() {
       await interactiveSkillApi.cancel(execution.id);
     } finally {
       setAction(null);
+    }
+  };
+
+  const doSendInput = async () => {
+    if (!execution || !execution.pending_input || inputSending) return;
+    setInputSending(true);
+    try {
+      await interactiveSkillApi.sendInput(execution.id, inputValue);
+      setInputValue("");
+    } finally {
+      setInputSending(false);
     }
   };
 
@@ -895,34 +865,140 @@ export function SkillRunPage() {
   };
 
   return (
-    <div className="h-full min-h-0 flex gap-3 p-3">
-        <Card className="flex-1 min-h-0 overflow-hidden flex flex-col rounded-none">
+    <div className="doppio-page">
+      <div className="doppio-page-content">
+        <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
           <CardContent className="p-0 min-h-0 flex-1">
-            {execution.terminal_id ? (
-              <SkillRunTerminal
-                terminalId={execution.terminal_id}
-                interventionLocked={execution.intervention_locked}
-              />
-            ) : (
-              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                No terminal attached.
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            <div className="h-full flex flex-col min-h-0">
+              {/* Control toolbar at top */}
+              <div className="shrink-0 border-b border-border bg-background/60 backdrop-blur">
+                <div className="flex items-center gap-2 px-3 py-2">
+                        {/* Primary action: Start or Pause/Resume */}
+                        {isPending ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="default"
+                            onClick={() => void doStart()}
+                            disabled={action !== null}
+                            className="h-7 px-2 text-xs gap-1.5"
+                          >
+                            {action === "start" ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Play className="size-3.5" />
+                            )}
+                            Start
+                          </Button>
+                        ) : canPause ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void doPause()}
+                            disabled={action !== null}
+                            className="h-7 px-2 text-xs gap-1.5"
+                          >
+                            {action === "pause" ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Pause className="size-3.5" />
+                            )}
+                            Pause
+                          </Button>
+                        ) : canResume ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void doResume()}
+                            disabled={action !== null}
+                            className="h-7 px-2 text-xs gap-1.5"
+                          >
+                            {action === "resume" ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Play className="size-3.5" />
+                            )}
+                            Resume
+                          </Button>
+                        ) : null}
 
-        <AnimatePresence initial={false}>
-          {rightSidebarOpen ? (
-            <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 480, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeInOut" }}
-              className="min-h-0 overflow-hidden"
-            >
-              <Card className="h-full min-h-0 overflow-hidden flex flex-col rounded-none">
-                <CardContent className="p-0 min-h-0 flex-1">
-                  <div className="h-full flex flex-col min-h-0">
+                        {/* Interrupt (Ctrl+C) */}
+                        {!isPending && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void doInterrupt()}
+                            disabled={!canCancel || action !== null}
+                            className="h-7 px-2 text-xs gap-1.5"
+                          >
+                            {action === "interrupt" ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Square className="size-3.5" />
+                            )}
+                            Ctrl+C
+                          </Button>
+                        )}
+
+                        {/* Restart */}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void doRestart(null)}
+                          disabled={action !== null}
+                          className="h-7 px-2 text-xs gap-1.5"
+                        >
+                          {action === "restart" ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="size-3.5" />
+                          )}
+                          Restart
+                        </Button>
+
+                        {/* Reconnect */}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void doReconnectTerminal()}
+                          disabled={!canReconnect || action !== null}
+                          className="h-7 px-2 text-xs gap-1.5"
+                          title={canReconnect ? "Reconnect terminal" : "Reconnect is available before starting the skill"}
+                        >
+                          {action === "reconnect" ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Cable className="size-3.5" />
+                          )}
+                          Reconnect
+                        </Button>
+
+                        <div className="flex-1" />
+
+                        {/* Cancel - less prominent */}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void doCancel()}
+                          disabled={!canCancel || action !== null}
+                          className="h-7 px-2 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
+                        >
+                          {action === "cancel" ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <X className="size-3.5" />
+                          )}
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+
                     <div className="flex-1 min-h-0 overflow-auto select-text">
 	                    {(() => {
 	                      const runLogs = logsByStep.get(RUN_SECTION_KEY) ?? [];
@@ -990,35 +1066,36 @@ export function SkillRunPage() {
 	                                      No logs yet.
 	                                    </div>
 	                                  ) : (
-                                    runLogs.map((entry, idx) => (
+                                    runLogs.map((entry, idx) => {
+                                      const showTimestamp = shouldShowTimestamp(runLogs, idx);
+                                      return (
                                       <div
                                         key={`${entry.timestamp}-${entry.stream}-${idx}`}
                                         className={cn(
-                                          "px-3 py-2 even:bg-muted/5 select-text cursor-text",
-                                          idx > 0 &&
-                                            !(
-                                              isMetaLogStream(runLogs[idx - 1].stream) &&
-                                              isMetaLogStream(entry.stream)
-                                            ) &&
-                                            "border-t border-border/60"
+                                          "px-3 py-1 select-text cursor-text",
+                                          showTimestamp && idx > 0 && "pt-2 border-t border-border/40"
                                         )}
                                       >
-                                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono tabular-nums select-text cursor-text">
+                                        {showTimestamp && (
+                                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono tabular-nums mb-1">
+                                            <span>{formatLogTimestamp(entry.timestamp)}</span>
+                                          </div>
+                                        )}
+                                        <div className="flex items-start gap-2">
                                           <span
                                             className={cn(
-                                              "inline-flex items-center rounded border px-1.5 py-0.5 leading-none",
+                                              "inline-flex items-center rounded border px-1.5 py-0.5 leading-none text-[10px] shrink-0",
                                               streamBadgeClass(entry.stream)
                                             )}
                                           >
                                             {entry.stream}
                                           </span>
-                                          <span>{formatLogTimestamp(entry.timestamp)}</span>
+                                          <pre className="whitespace-pre-wrap break-words font-mono text-xs text-foreground/90 select-text cursor-text flex-1 min-w-0">
+                                            {entry.message}
+                                          </pre>
                                         </div>
-                                        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-foreground/90 select-text cursor-text">
-                                          {normalizeLogMessage(entry.message)}
-                                        </pre>
                                       </div>
-                                    ))
+                                    )})
                                   )}
                                 </div>
                               </motion.div>
@@ -1147,6 +1224,23 @@ export function SkillRunPage() {
                                         <DropdownMenuItem onClick={() => void copyText(title)}>
                                           Copy step title
                                         </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => {
+                                          // Format logs with sparse timestamps (only when > 1 min gap)
+                                          const lines: string[] = [];
+                                          for (let i = 0; i < stepLogs.length; i++) {
+                                            const entry = stepLogs[i];
+                                            const showTs = shouldShowTimestamp(stepLogs, i);
+                                            const msg = entry.message.trim();
+                                            if (!msg) continue; // skip empty messages
+                                            if (showTs) {
+                                              lines.push(`--- ${formatLogTimestamp(entry.timestamp)} ---`);
+                                            }
+                                            lines.push(`[${entry.stream}] ${msg}`);
+                                          }
+                                          void copyText(lines.join("\n") || "No logs");
+                                        }}>
+                                          Copy step logs
+                                        </DropdownMenuItem>
                                       </DropdownMenuContent>
                                     </DropdownMenu>
                                   </div>
@@ -1206,35 +1300,36 @@ export function SkillRunPage() {
 	                                      No logs yet.
 	                                    </div>
 	                                  ) : (
-                                    stepLogs.map((entry, idx) => (
+                                    stepLogs.map((entry, idx) => {
+                                      const showTimestamp = shouldShowTimestamp(stepLogs, idx);
+                                      return (
                                       <div
                                         key={`${entry.timestamp}-${entry.stream}-${idx}`}
                                         className={cn(
-                                          "px-3 py-2 even:bg-muted/5 select-text cursor-text",
-                                          idx > 0 &&
-                                            !(
-                                              isMetaLogStream(stepLogs[idx - 1].stream) &&
-                                              isMetaLogStream(entry.stream)
-                                            ) &&
-                                            "border-t border-border/60"
+                                          "px-3 py-1 select-text cursor-text",
+                                          showTimestamp && idx > 0 && "pt-2 border-t border-border/40"
                                         )}
                                       >
-                                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono tabular-nums select-text cursor-text">
+                                        {showTimestamp && (
+                                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono tabular-nums mb-1">
+                                            <span>{formatLogTimestamp(entry.timestamp)}</span>
+                                          </div>
+                                        )}
+                                        <div className="flex items-start gap-2">
                                           <span
                                             className={cn(
-                                              "inline-flex items-center rounded border px-1.5 py-0.5 leading-none",
+                                              "inline-flex items-center rounded border px-1.5 py-0.5 leading-none text-[10px] shrink-0",
                                               streamBadgeClass(entry.stream)
                                             )}
                                           >
                                             {entry.stream}
                                           </span>
-                                          <span>{formatLogTimestamp(entry.timestamp)}</span>
+                                          <pre className="whitespace-pre-wrap break-words font-mono text-xs text-foreground/90 select-text cursor-text flex-1 min-w-0">
+                                            {entry.message}
+                                          </pre>
                                         </div>
-                                        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-foreground/90 select-text cursor-text">
-                                          {normalizeLogMessage(entry.message)}
-                                        </pre>
                                       </div>
-                                    ))
+                                    )})
                                   )}
                                 </div>
                               </motion.div>
@@ -1245,133 +1340,63 @@ export function SkillRunPage() {
                     })}
                     </div>
 
-	                    <div className="shrink-0 border-t border-border bg-background/60 backdrop-blur">
-	                      <div className="flex items-center gap-2 px-2 py-2">
-	                        <Button
-	                          type="button"
-	                          size="sm"
-	                          variant="outline"
-	                          onClick={() => void doRestart(null)}
-	                          disabled={action !== null}
-	                          className="h-7 px-2 text-xs gap-1.5"
-	                        >
-	                          {action === "restart" ? (
-	                            <Loader2 className="size-3.5 animate-spin" />
-	                          ) : (
-	                            <RotateCcw className="size-3.5" />
-	                          )}
-	                          Restart
-	                        </Button>
-	                        <Button
-	                          type="button"
-	                          size="sm"
-	                          variant="outline"
-	                          onClick={() => void doReconnectTerminal()}
-	                          disabled={!canReconnect || action !== null}
-	                          className="h-7 px-2 text-xs gap-1.5"
-	                          title={canReconnect ? "Reconnect terminal" : "Reconnect is available before starting the skill"}
-	                        >
-	                          {action === "reconnect" ? (
-	                            <Loader2 className="size-3.5 animate-spin" />
-	                          ) : (
-	                            <Cable className="size-3.5" />
-	                          )}
-	                          Reconnect
-	                        </Button>
-	
-	                        <div className="flex-1" />
-
-                        {isPending ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="default"
-                            onClick={() => void doStart()}
-                            disabled={action !== null}
-                            className="h-7 px-2 text-xs gap-1.5"
-                          >
-                            {action === "start" ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : null}
-                            Start
-                          </Button>
-                        ) : (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void doInterrupt()}
-                            disabled={!canCancel || action !== null}
-                            className="h-7 px-2 text-xs gap-1.5"
-                          >
-                            {action === "interrupt" ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <Square className="size-3.5" />
-                            )}
-                            Ctrl+C
-                          </Button>
-                        )}
-
-                        {!isPending && canPause ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void doPause()}
-                            disabled={action !== null}
-                            className="h-7 px-2 text-xs gap-1.5"
-                          >
-                            {action === "pause" ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <Pause className="size-3.5" />
-                            )}
-                            Pause
-                          </Button>
-                        ) : null}
-
-                        {!isPending && canResume ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void doResume()}
-                            disabled={action !== null}
-                            className="h-7 px-2 text-xs gap-1.5"
-                          >
-                            {action === "resume" ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <Play className="size-3.5" />
-                            )}
-                            Resume
-                          </Button>
-                        ) : null}
-
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => void doCancel()}
-                          disabled={!canCancel || action !== null}
-                          className="h-7 px-2 text-xs gap-1.5"
+                    {/* Input prompt for interactive commands (password, y/n, etc.) */}
+                    <AnimatePresence>
+                      {execution.pending_input && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.15, ease: "easeOut" }}
+                          className="shrink-0 border-t border-warning/30 bg-warning/10 overflow-hidden"
                         >
-                          {action === "cancel" ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            <X className="size-3.5" />
-                          )}
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
+                          <div className="px-3 py-2">
+                            <div className="text-xs font-medium text-warning mb-1.5">
+                              Input required
+                            </div>
+                            <div className="text-xs text-muted-foreground font-mono mb-2 truncate" title={execution.pending_input.prompt}>
+                              {execution.pending_input.prompt}
+                            </div>
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                void doSendInput();
+                              }}
+                              className="flex items-center gap-2"
+                            >
+                              <Input
+                                ref={inputRef}
+                                type={execution.pending_input.is_password ? "password" : "text"}
+                                value={inputValue}
+                                onChange={(e) => setInputValue(e.target.value)}
+                                placeholder="Enter response..."
+                                className="h-7 text-xs flex-1"
+                                disabled={inputSending}
+                                autoFocus
+                              />
+                              <Button
+                                type="submit"
+                                size="sm"
+                                variant="default"
+                                disabled={inputSending}
+                                className="h-7 px-2 text-xs gap-1.5"
+                              >
+                                {inputSending ? (
+                                  <Loader2 className="size-3.5 animate-spin" />
+                                ) : (
+                                  <Send className="size-3.5" />
+                                )}
+                                Send
+                              </Button>
+                            </form>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </CardContent>
               </Card>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-    </div>
+            </div>
+          </div>
   );
 }

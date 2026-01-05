@@ -1600,17 +1600,39 @@ export function useInteractiveExecution(id: string | null) {
 	          step_id?: string;
 	          status?: string;
 	          progress?: string | null;
+	          pending_input?: {
+	            step_id: string;
+	            prompt: string;
+	            is_password: boolean;
+	          } | null;
 	        }>(eventName, (event) => {
 	          if (event.payload.execution_id === id) {
+	            // Debug log for skill events
+	            console.log("[useInteractiveExecution] event received:", eventName, event.payload);
 	            queryClient.setQueryData<InteractiveExecution | undefined>(
 	              ["interactive-executions", id],
 	              (prev) => {
-                if (!prev) return prev;
-                const next: InteractiveExecution = { ...prev };
+                if (!prev) {
+                  console.log("[useInteractiveExecution] setQueryData: no prev data");
+                  return prev;
+                }
+                // Deep clone to ensure React detects the change
+                const next: InteractiveExecution = JSON.parse(JSON.stringify(prev));
                 const stepId = event.payload.step_id;
 
                 if (eventName === "skill:execution_updated" && event.payload.status) {
                   next.status = event.payload.status as InteractiveExecution["status"];
+                  // Also update pending_input if provided in the event
+                  if (event.payload.pending_input !== undefined) {
+                    console.log("[useInteractiveExecution] setting pending_input:", event.payload.pending_input);
+                    next.pending_input = event.payload.pending_input;
+                  } else if (event.payload.status === "waiting_for_input") {
+                    // Status is waiting_for_input but no pending_input in event - keep existing
+                    next.pending_input = prev.pending_input;
+                  } else if (event.payload.status !== "waiting_for_input") {
+                    // Clear pending_input when status changes away from waiting_for_input
+                    next.pending_input = null;
+                  }
                 }
                 if (eventName === "skill:execution_completed") next.status = "completed";
                 if (eventName === "skill:execution_failed") next.status = "failed";
@@ -1640,11 +1662,40 @@ export function useInteractiveExecution(id: string | null) {
 	                  next.steps = steps;
 	                }
 
+                console.log("[useInteractiveExecution] setQueryData returning next:", { status: next.status, pending_input: next.pending_input });
                 return next;
               }
             );
-            // Invalidate query to trigger immediate refetch
-            queryClient.invalidateQueries({ queryKey: ["interactive-executions", id] });
+
+            // For waiting_for_input status, force a refetch to ensure all subscribers are notified
+            // This is needed because setQueryData may not trigger re-renders in all cases
+            if (eventName === "skill:execution_updated" && event.payload.status === "waiting_for_input") {
+              console.log("[useInteractiveExecution] forcing refetch for waiting_for_input");
+              // Use refetchQueries instead of invalidateQueries to ensure immediate update
+              // The backend has already persisted pending_input, so refetch will get the correct data
+              queryClient.refetchQueries({
+                queryKey: ["interactive-executions", id],
+                exact: true,
+              }).then(() => {
+                console.log("[useInteractiveExecution] refetch complete for waiting_for_input");
+              }).catch((e) => {
+                console.error("[useInteractiveExecution] refetch failed:", e);
+              });
+            } else {
+              // Skip invalidation for events we handle optimistically to avoid race conditions
+              // (e.g., pending_input being cleared by stale refetch response).
+              // The query has refetchInterval as a fallback for full state sync.
+              const skipInvalidateEvents = [
+                "skill:execution_updated",
+                "skill:step_progress",
+                "skill:step_started",
+                "skill:step_completed",
+                "skill:step_failed",
+              ];
+              if (!skipInvalidateEvents.includes(eventName)) {
+                queryClient.invalidateQueries({ queryKey: ["interactive-executions", id] });
+              }
+            }
           }
         });
         unlisteners.push(u);
@@ -1662,10 +1713,15 @@ export function useInteractiveExecution(id: string | null) {
   
   return useQuery({
     queryKey: ["interactive-executions", id],
-    queryFn: () => interactiveSkillApi.get(id!),
+    queryFn: async () => {
+      console.log("[useInteractiveExecution] queryFn called for", id);
+      const result = await interactiveSkillApi.get(id!);
+      console.log("[useInteractiveExecution] queryFn result:", { status: result.status, pending_input: result.pending_input });
+      return result;
+    },
     enabled: !!id,
-    refetchInterval: 2_000, // Fallback polling, events trigger immediate refresh
-    staleTime: 500, // Consider data stale after 500ms
+    refetchInterval: 5_000, // Fallback polling (events handle most updates)
+    staleTime: 3_000, // Keep optimistic updates visible longer
   });
 }
 
