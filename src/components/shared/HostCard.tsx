@@ -8,8 +8,8 @@ import type { Host, VastInstance } from "@/lib/types";
 import { getGpuModelShortName } from "@/lib/gpu";
 import { cn } from "@/lib/utils";
 
-/** Status indicator type for skill execution status */
-export type SkillStatusIndicator = "running" | "completed" | "failed" | null;
+/** Status indicator type for recipe execution status */
+export type RecipeStatusIndicator = "running" | "completed" | "failed" | null;
 
 // Small tag component
 function Tag({ children, variant = "default" }: { children: ReactNode; variant?: "default" | "primary" | "warning" }) {
@@ -33,8 +33,8 @@ type HostRowProps = {
   rightTags?: { label: string; variant?: "default" | "primary" | "warning" }[];
   titleClampLines?: 1 | 2;
   isOnline?: boolean;
-  /** Skill execution status indicator - shows icon on bottom-right of the icon */
-  skillStatus?: SkillStatusIndicator;
+  /** Recipe execution status indicator - shows icon on bottom-right of the icon */
+  recipeStatus?: RecipeStatusIndicator;
   isSelected?: boolean;
   onClick?: () => void;
   onDoubleClick?: () => void;
@@ -51,7 +51,7 @@ export function HostRow({
   rightTags,
   titleClampLines = 1,
   isOnline = false,
-  skillStatus,
+  recipeStatus,
   isSelected = false,
   onClick,
   onDoubleClick,
@@ -96,22 +96,22 @@ export function HostRow({
         <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
           {icon}
         </div>
-        {/* Skill status indicator - shows running/completed/failed icon */}
-        {skillStatus === "running" ? (
+        {/* Recipe status indicator - shows running/completed/failed icon */}
+        {recipeStatus === "running" ? (
           <span
             className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-muted bg-primary flex items-center justify-center"
             title="Running"
           >
             <Loader2 className="w-2 h-2 text-primary-foreground animate-spin" />
           </span>
-        ) : skillStatus === "completed" ? (
+        ) : recipeStatus === "completed" ? (
           <span
             className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-muted bg-success flex items-center justify-center"
             title="Completed"
           >
             <Check className="w-2 h-2 text-success-foreground" />
           </span>
-        ) : skillStatus === "failed" ? (
+        ) : recipeStatus === "failed" ? (
           <span
             className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-muted bg-destructive flex items-center justify-center"
             title="Failed"
@@ -119,7 +119,7 @@ export function HostRow({
             <X className="w-2 h-2 text-destructive-foreground" />
           </span>
         ) : isOnline ? (
-          /* Status dot - only show when online and no skill status */
+          /* Status dot - only show when online and no recipe status */
           <span
             className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-muted bg-success"
           />

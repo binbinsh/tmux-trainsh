@@ -1,6 +1,6 @@
 [package]
 name = "doppio"
-version = "0.13.0"
+version = "0.14.0"
 description = "trainsh-Doppio desktop app (Tauri)"
 authors = ["binbinsh"]
 edition = "2021"

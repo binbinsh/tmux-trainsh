@@ -24,7 +24,7 @@ pub async fn upload(
     };
 
     // Use empty session ID for non-session syncs
-    sync_module::sync_to_remote("skill", &ssh, &config, None).await
+    sync_module::sync_to_remote("recipe", &ssh, &config, None).await
 }
 
 /// Download remote directory to local
@@ -37,5 +37,5 @@ pub async fn download(
     let ssh = host::resolve_ssh_spec_with_retry(host_id, Duration::from_secs(180)).await?;
 
     // Use sync_from_remote
-    sync_module::sync_from_remote("skill", &ssh, remote_path, local_path, None).await
+    sync_module::sync_from_remote("recipe", &ssh, remote_path, local_path, None).await
 }

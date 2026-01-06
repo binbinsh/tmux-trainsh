@@ -9,8 +9,8 @@ use super::ssh;
 use super::tmux;
 use crate::error::AppError;
 use crate::host;
-use crate::skill::parser::interpolate;
-use crate::skill::types::*;
+use crate::recipe::parser::interpolate;
+use crate::recipe::types::*;
 
 /// Evaluate a condition
 pub async fn evaluate(

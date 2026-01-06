@@ -1,4 +1,4 @@
-//! Transfer operation for skills
+//! Transfer operation for recipes
 //!
 //! Handles file transfers between any combination of:
 //! - Local filesystem
@@ -17,7 +17,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use super::ssh as ssh_ops;
 use crate::error::AppError;
 use crate::host;
-use crate::skill::types::{TransferEndpoint, TransferOp};
+use crate::recipe::types::{TransferEndpoint, TransferOp};
 use crate::storage::{get_storage, Storage, StorageBackend};
 
 /// Progress callback type alias

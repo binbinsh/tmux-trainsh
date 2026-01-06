@@ -22,11 +22,11 @@ function TerminalTab({
   onClose: () => void;
   isDragging?: boolean;
 }) {
-  const isSkill = !!session.skillExecutionId;
+  const isRecipe = !!session.recipeExecutionId;
   const isPlaceholder = session.isPlaceholder;
 
   // Determine icon based on session type
-  const TabIcon = isSkill ? FlaskConical : isPlaceholder ? Plus : SquareTerminal;
+  const TabIcon = isRecipe ? FlaskConical : isPlaceholder ? Plus : SquareTerminal;
 
   return (
     <motion.div
@@ -87,16 +87,16 @@ function TerminalTab({
 export function TitleBar() {
   const location = useLocation();
   const isTerminalPage = location.pathname.startsWith("/terminal");
-  const isSkillRunPage = location.pathname.startsWith("/skills/runs/");
+  const isRecipeRunPage = location.pathname.startsWith("/recipes/runs/");
   const terminal = useTerminalOptional();
   const sidebar = useSidebar();
   const titleBarClassName = "h-9 flex items-center bg-[rgb(var(--doppio-titlebar-bg))] text-[rgb(var(--doppio-titlebar-text))] pr-3 border-b border-[rgb(var(--doppio-titlebar-tab-border))]/50";
   const sidebarCollapsed = sidebar.state === "collapsed";
 
-  // Check if current terminal session has an associated skill
+  // Check if current terminal session has an associated recipe
   const activeSession = terminal?.sessions.find((s) => s.id === terminal.activeId);
-  const hasActiveSkillInTerminal = isTerminalPage && !!activeSession?.skillExecutionId;
-  const showSkillSidebarToggle = isSkillRunPage || hasActiveSkillInTerminal;
+  const hasActiveRecipeInTerminal = isTerminalPage && !!activeSession?.recipeExecutionId;
+  const showRecipeSidebarToggle = isRecipeRunPage || hasActiveRecipeInTerminal;
 
   const handleMouseDown = async (e: React.MouseEvent) => {
     if (e.buttons === 1) {
@@ -172,7 +172,7 @@ export function TitleBar() {
         <div className="flex-1 h-full" />
       )}
 
-      {showSkillSidebarToggle ? (
+      {showRecipeSidebarToggle ? (
         <div onMouseDown={(e) => e.stopPropagation()}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -181,19 +181,19 @@ export function TitleBar() {
                 variant="ghost"
                 size="icon"
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent("skillrun:toggle_right_sidebar"));
+                  window.dispatchEvent(new CustomEvent("reciperun:toggle_right_sidebar"));
                 }}
                 className={cn(
                   "min-w-7 w-7 h-7",
                   "text-[rgb(var(--doppio-titlebar-text))]/50 hover:text-[rgb(var(--doppio-titlebar-text))] hover:bg-black/5 transition-colors"
                 )}
-                aria-label="Toggle skill run sidebar (⌘])"
+                aria-label="Toggle recipe run sidebar (⌘])"
               >
                 <PanelRight className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent className="flex items-center gap-2">
-              <span>Toggle Skill Sidebar</span>
+              <span>Toggle Recipe Sidebar</span>
               <kbd className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">⌘]</kbd>
             </TooltipContent>
           </Tooltip>

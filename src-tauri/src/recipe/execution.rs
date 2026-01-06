@@ -1,6 +1,6 @@
-//! Skill execution helpers
+//! Recipe execution helpers
 //!
-//! Shared helpers for interactive skill execution (DAG ordering and step execution).
+//! Shared helpers for interactive recipe execution (DAG ordering and step execution).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,7 +16,7 @@ use crate::host;
 use tokio::io::AsyncWriteExt;
 
 /// Execute a single step operation
-/// Public so it can be used by interactive skill execution
+/// Public so it can be used by interactive recipe execution
 pub async fn execute_step(
     operation: &Operation,
     variables: &HashMap<String, String>,
@@ -40,7 +40,7 @@ pub async fn execute_step(
             let is_local = operations::ssh::is_local_target(&target);
 
             match op.tmux_mode {
-                crate::skill::types::TmuxMode::None => {
+                crate::recipe::types::TmuxMode::None => {
                     if is_local {
                         // Execute commands locally (no SSH)
                         operations::ssh::execute_local_command(
@@ -60,7 +60,7 @@ pub async fn execute_step(
                         .await
                     }
                 }
-                crate::skill::types::TmuxMode::New => {
+                crate::recipe::types::TmuxMode::New => {
                     if is_local {
                         return Err(AppError::command(
                             "Tmux mode 'new' is not supported for local execution",
@@ -71,7 +71,7 @@ pub async fn execute_step(
                         .session_name
                         .as_ref()
                         .map(|s| interpolate(s, variables))
-                        .unwrap_or_else(|| "skill".to_string());
+                        .unwrap_or_else(|| "recipe".to_string());
                     operations::tmux::new_session(
                         &target,
                         &session_name,
@@ -81,7 +81,7 @@ pub async fn execute_step(
                     .await?;
                     Ok(None)
                 }
-                crate::skill::types::TmuxMode::Existing => {
+                crate::recipe::types::TmuxMode::Existing => {
                     if is_local {
                         return Err(AppError::command(
                             "Tmux mode 'existing' is not supported for local execution",
@@ -573,7 +573,7 @@ pub async fn execute_step(
         }
 
         Operation::Group(_op) => {
-            // Groups are expanded during skill validation/loading
+            // Groups are expanded during recipe validation/loading
             // They shouldn't appear here during execution
             Ok(None)
         }
@@ -833,7 +833,7 @@ pub fn compute_execution_order(steps: &[Step]) -> Result<Vec<String>, AppError> 
     }
 
     if order.len() != steps.len() {
-        return Err(AppError::command("Circular dependency detected in skill"));
+        return Err(AppError::command("Circular dependency detected in recipe"));
     }
 
     Ok(order)

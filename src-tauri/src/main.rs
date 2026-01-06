@@ -8,7 +8,7 @@ mod logs;
 mod pricing;
 mod secrets;
 mod session;
-mod skill;
+mod recipe;
 mod ssh;
 mod ssh_keys;
 mod storage;
@@ -30,7 +30,7 @@ use ssh::SshSpec;
 use vast::{VastClient, VastCreateInstanceInput, VastInstance, VastOffer, VastSearchOffersInput};
 
 use pricing::PricingStore;
-use skill::SkillStore;
+use recipe::RecipeStore;
 use std::sync::Arc;
 use storage::StorageStore;
 use tokio::sync::RwLock;
@@ -1264,11 +1264,11 @@ fn main() {
         .manage(Arc::new(StorageStore::new(&data_dir)))
         .manage(Arc::new(TransferStore::new(&data_dir)))
         .manage(Arc::new(PricingStore::new(&data_dir)))
-        .manage(Arc::new(RwLock::new(SkillStore::new(&data_dir))))
+        .manage(Arc::new(RwLock::new(RecipeStore::new(&data_dir))))
         .setup(|_app| {
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = skill::interactive::restore_persisted_executions().await {
-                    eprintln!("[interactive_skill] Failed to restore executions: {}", e);
+                if let Err(e) = recipe::interactive::restore_persisted_executions().await {
+                    eprintln!("[interactive_recipe] Failed to restore executions: {}", e);
                 }
             });
             Ok(())
@@ -1400,35 +1400,35 @@ fn main() {
             pricing::pricing_sync_vast_instance,
             pricing::pricing_get_r2_cache,
             pricing::pricing_save_r2_cache,
-            // Skill
-            skill::skill_list,
-            skill::skill_get,
-            skill::skill_save,
-            skill::skill_delete,
-            skill::skill_validate,
-            skill::skill_create,
-            skill::skill_import,
-            skill::skill_export,
-            skill::skill_duplicate,
-            // Skill Interactive Execution
-            skill::skill_run_interactive,
-            skill::skill_interactive_send,
-            skill::skill_interactive_interrupt,
-            skill::skill_interactive_lock,
-            skill::skill_interactive_get,
-            skill::skill_interactive_list,
-            skill::skill_interactive_log_read,
-            skill::skill_interactive_log_clear,
-            skill::skill_interactive_pause,
-            skill::skill_interactive_resume,
-            skill::skill_interactive_start,
-            skill::skill_interactive_reconnect_terminal,
-            skill::skill_interactive_cancel,
-            skill::skill_interactive_skip_step,
-            skill::skill_interactive_toggle_skip_step,
-            skill::skill_interactive_mark_complete,
-            skill::skill_interactive_exec_command,
-            skill::skill_interactive_send_input,
+            // Recipe
+            recipe::recipe_list,
+            recipe::recipe_get,
+            recipe::recipe_save,
+            recipe::recipe_delete,
+            recipe::recipe_validate,
+            recipe::recipe_create,
+            recipe::recipe_import,
+            recipe::recipe_export,
+            recipe::recipe_duplicate,
+            // Recipe Interactive Execution
+            recipe::recipe_run_interactive,
+            recipe::recipe_interactive_send,
+            recipe::recipe_interactive_interrupt,
+            recipe::recipe_interactive_lock,
+            recipe::recipe_interactive_get,
+            recipe::recipe_interactive_list,
+            recipe::recipe_interactive_log_read,
+            recipe::recipe_interactive_log_clear,
+            recipe::recipe_interactive_pause,
+            recipe::recipe_interactive_resume,
+            recipe::recipe_interactive_start,
+            recipe::recipe_interactive_reconnect_terminal,
+            recipe::recipe_interactive_cancel,
+            recipe::recipe_interactive_skip_step,
+            recipe::recipe_interactive_toggle_skip_step,
+            recipe::recipe_interactive_mark_complete,
+            recipe::recipe_interactive_exec_command,
+            recipe::recipe_interactive_send_input,
             // Google Drive
             google_drive::gdrive_generate_auth_url,
             google_drive::gdrive_exchange_code,

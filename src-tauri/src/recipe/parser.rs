@@ -1,9 +1,9 @@
-//! Skill parsing and serialization
+//! Recipe parsing and serialization
 
 use std::path::Path;
 
 use super::types::{
-    Skill, SkillSummary, Step, TargetRequirements, ValidationError, ValidationResult,
+    Recipe, RecipeSummary, Step, TargetRequirements, ValidationError, ValidationResult,
     ValidationWarning,
 };
 use crate::error::AppError;
@@ -12,31 +12,31 @@ fn strip_utf8_bom(s: &str) -> &str {
     s.strip_prefix('\u{feff}').unwrap_or(s)
 }
 
-/// Parse a skill from TOML.
-pub fn parse_skill(toml_str: &str) -> Result<Skill, AppError> {
-    let file: SkillFileToml = toml::from_str(strip_utf8_bom(toml_str))
-        .map_err(|e| AppError::invalid_input(format!("Invalid skill TOML: {e}")))?;
-    Ok(Skill {
-        name: file.skill.name,
-        version: file.skill.version,
-        description: file.skill.description,
+/// Parse a recipe from TOML.
+pub fn parse_recipe(toml_str: &str) -> Result<Recipe, AppError> {
+    let file: RecipeFileToml = toml::from_str(strip_utf8_bom(toml_str))
+        .map_err(|e| AppError::invalid_input(format!("Invalid recipe TOML: {e}")))?;
+    Ok(Recipe {
+        name: file.recipe.name,
+        version: file.recipe.version,
+        description: file.recipe.description,
         target: file.target,
         variables: file.variables,
         steps: file.steps,
     })
 }
 
-/// Parse a skill from file
-pub async fn load_skill(path: &Path) -> Result<Skill, AppError> {
+/// Parse a recipe from file
+pub async fn load_recipe(path: &Path) -> Result<Recipe, AppError> {
     let content = tokio::fs::read_to_string(path)
         .await
-        .map_err(|e| AppError::io(format!("Failed to read skill file: {e}")))?;
-    parse_skill(&content)
+        .map_err(|e| AppError::io(format!("Failed to read recipe file: {e}")))?;
+    parse_recipe(&content)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct SkillFileToml {
-    skill: SkillMetaToml,
+struct RecipeFileToml {
+    recipe: RecipeMetaToml,
     #[serde(skip_serializing_if = "Option::is_none")]
     target: Option<TargetRequirements>,
     #[serde(default)]
@@ -46,7 +46,7 @@ struct SkillFileToml {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct SkillMetaToml {
+struct RecipeMetaToml {
     name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     version: String,
@@ -54,29 +54,29 @@ struct SkillMetaToml {
     description: Option<String>,
 }
 
-fn serialize_skill_toml(skill: &Skill) -> Result<String, AppError> {
-    let file = SkillFileToml {
-        skill: SkillMetaToml {
-            name: skill.name.clone(),
-            version: skill.version.clone(),
-            description: skill.description.clone(),
+fn serialize_recipe_toml(recipe: &Recipe) -> Result<String, AppError> {
+    let file = RecipeFileToml {
+        recipe: RecipeMetaToml {
+            name: recipe.name.clone(),
+            version: recipe.version.clone(),
+            description: recipe.description.clone(),
         },
-        target: skill.target.clone(),
-        variables: skill.variables.clone(),
-        steps: skill.steps.clone(),
+        target: recipe.target.clone(),
+        variables: recipe.variables.clone(),
+        steps: recipe.steps.clone(),
     };
     toml::to_string_pretty(&file)
-        .map_err(|e| AppError::io(format!("Failed to serialize skill: {e}")))
+        .map_err(|e| AppError::io(format!("Failed to serialize recipe: {e}")))
 }
 
-/// Serialize a skill to TOML.
-pub fn serialize_skill(skill: &Skill) -> Result<String, AppError> {
-    serialize_skill_toml(skill)
+/// Serialize a recipe to TOML.
+pub fn serialize_recipe(recipe: &Recipe) -> Result<String, AppError> {
+    serialize_recipe_toml(recipe)
 }
 
-/// Save a skill to file
-pub async fn save_skill(path: &Path, skill: &Skill) -> Result<(), AppError> {
-    let content = serialize_skill(skill)?;
+/// Save a recipe to file
+pub async fn save_recipe(path: &Path, recipe: &Recipe) -> Result<(), AppError> {
+    let content = serialize_recipe(recipe)?;
 
     // Create parent directories if needed
     if let Some(parent) = path.parent() {
@@ -87,40 +87,40 @@ pub async fn save_skill(path: &Path, skill: &Skill) -> Result<(), AppError> {
 
     tokio::fs::write(path, content)
         .await
-        .map_err(|e| AppError::io(format!("Failed to write skill file: {e}")))?;
+        .map_err(|e| AppError::io(format!("Failed to write recipe file: {e}")))?;
 
     Ok(())
 }
 
-/// Get skill summary without loading full content
-pub async fn get_skill_summary(path: &Path) -> Result<SkillSummary, AppError> {
-    let skill = load_skill(path).await?;
+/// Get recipe summary without loading full content
+pub async fn get_recipe_summary(path: &Path) -> Result<RecipeSummary, AppError> {
+    let recipe = load_recipe(path).await?;
 
-    Ok(SkillSummary {
+    Ok(RecipeSummary {
         path: path.to_string_lossy().to_string(),
-        name: skill.name,
-        version: skill.version,
-        description: skill.description,
-        step_count: skill.steps.len(),
+        name: recipe.name,
+        version: recipe.version,
+        description: recipe.description,
+        step_count: recipe.steps.len(),
     })
 }
 
-/// Validate a skill for correctness
-pub fn validate_skill(skill: &Skill) -> ValidationResult {
+/// Validate a recipe for correctness
+pub fn validate_recipe(recipe: &Recipe) -> ValidationResult {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
     // Check for empty name
-    if skill.name.trim().is_empty() {
+    if recipe.name.trim().is_empty() {
         errors.push(ValidationError {
             step_id: None,
-            message: "Skill name is required".to_string(),
+            message: "Recipe name is required".to_string(),
         });
     }
 
     // Check for duplicate step IDs
     let mut seen_ids = std::collections::HashSet::new();
-    for step in &skill.steps {
+    for step in &recipe.steps {
         if !seen_ids.insert(&step.id) {
             errors.push(ValidationError {
                 step_id: Some(step.id.clone()),
@@ -130,9 +130,9 @@ pub fn validate_skill(skill: &Skill) -> ValidationResult {
     }
 
     // Validate step dependencies
-    let step_ids: std::collections::HashSet<_> = skill.steps.iter().map(|s| &s.id).collect();
+    let step_ids: std::collections::HashSet<_> = recipe.steps.iter().map(|s| &s.id).collect();
 
-    for step in &skill.steps {
+    for step in &recipe.steps {
         for dep in &step.depends_on {
             if !step_ids.contains(dep) {
                 errors.push(ValidationError {
@@ -155,7 +155,7 @@ pub fn validate_skill(skill: &Skill) -> ValidationResult {
     }
 
     // Check for circular dependencies
-    if let Some(cycle) = find_cycle(&skill.steps) {
+    if let Some(cycle) = find_cycle(&recipe.steps) {
         errors.push(ValidationError {
             step_id: None,
             message: format!("Circular dependency detected: {}", cycle.join(" -> ")),
@@ -275,7 +275,7 @@ fn find_cycle(steps: &[Step]) -> Option<Vec<String>> {
 /// Interpolate variables and secrets in a string
 ///
 /// Supports two syntaxes:
-/// - `${var_name}` - Skill variables from the variables section
+/// - `${var_name}` - Recipe variables from the variables section
 /// - `${secret:name}` - Secrets from the OS keychain
 pub fn interpolate(
     template: &str,
@@ -289,7 +289,7 @@ pub fn interpolate(
         result = resolved;
     }
 
-    // Then, interpolate skill variables: ${var_name}
+    // Then, interpolate recipe variables: ${var_name}
     for (key, value) in variables {
         let pattern = format!("${{{}}}", key);
         result = result.replace(&pattern, value);
@@ -306,7 +306,7 @@ pub fn interpolate_checked(
     // First, resolve secrets
     let mut result = crate::secrets::interpolate_secrets(template)?;
 
-    // Then, interpolate skill variables
+    // Then, interpolate recipe variables
     for (key, value) in variables {
         let pattern = format!("${{{}}}", key);
         result = result.replace(&pattern, value);
@@ -334,9 +334,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_simple_skill() {
+    fn test_parse_simple_recipe() {
         let toml_str = r#"
-[skill]
+[recipe]
 name = "test"
 version = "1.0"
 
@@ -348,15 +348,15 @@ id = "step1"
 ssh_command = { host_id = "${host}", command = "echo hello" }
 "#;
 
-        let skill = parse_skill(toml_str).unwrap();
-        assert_eq!(skill.name, "test");
-        assert_eq!(skill.steps.len(), 1);
+        let recipe = parse_recipe(toml_str).unwrap();
+        assert_eq!(recipe.name, "test");
+        assert_eq!(recipe.steps.len(), 1);
     }
 
     #[test]
     fn test_validate_circular_dependency() {
         let toml_str = r#"
-[skill]
+[recipe]
 name = "circular"
 
 [[step]]
@@ -375,8 +375,8 @@ depends_on = ["b"]
 ssh_command = { host_id = "h", command = "c" }
 "#;
 
-        let skill = parse_skill(toml_str).unwrap();
-        let result = validate_skill(&skill);
+        let recipe = parse_recipe(toml_str).unwrap();
+        let result = validate_recipe(&recipe);
         assert!(!result.valid);
         assert!(result.errors.iter().any(|e| e.message.contains("Circular")));
     }

@@ -6,7 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
 import { TerminalProvider } from "@/contexts/TerminalContext";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { getConfig, hostApi, skillApi, useInteractiveExecutions } from "@/lib/tauri-api";
+import { getConfig, hostApi, recipeApi, useInteractiveExecutions } from "@/lib/tauri-api";
 import { applyAppTheme, getStoredAppTheme, DEFAULT_APP_THEME } from "@/lib/terminal-themes";
 
 const pageTransitionVariants = {
@@ -67,9 +67,9 @@ function RootLayoutShell() {
 
   const executionsQuery = useInteractiveExecutions();
 
-  const skillsQuery = useQuery({
-    queryKey: ["skills"],
-    queryFn: skillApi.list,
+  const recipesQuery = useQuery({
+    queryKey: ["recipes"],
+    queryFn: recipeApi.list,
     staleTime: 30_000,
   });
 
@@ -80,10 +80,10 @@ function RootLayoutShell() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
           hosts={hostsQuery.data ?? []}
-          skills={skillsQuery.data ?? []}
+          recipes={recipesQuery.data ?? []}
           executions={executionsQuery.data ?? []}
           isLoadingHosts={hostsQuery.isLoading}
-          isLoadingSkills={skillsQuery.isLoading}
+          isLoadingRecipes={recipesQuery.isLoading}
         />
 
         <SidebarInset className="min-h-0 overflow-hidden">

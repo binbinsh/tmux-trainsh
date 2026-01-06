@@ -5,8 +5,8 @@ import { termClose, termList, termOpenLocal } from "../lib/tauri-api";
 export type TerminalSession = {
   id: string;
   title: string;
-  /** Associated skill execution ID (if this terminal is running a skill) */
-  skillExecutionId?: string | null;
+  /** Associated recipe execution ID (if this terminal is running a recipe) */
+  recipeExecutionId?: string | null;
   /** Host ID for the connection */
   hostId?: string | null;
   /** Whether intervention is currently locked */
@@ -22,15 +22,15 @@ type TerminalContextType = {
   openLocalTerminal: () => Promise<void>;
   closeSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
-  /** Add a skill terminal session */
-  addSkillTerminal: (session: TerminalSession) => void;
+  /** Add a recipe terminal session */
+  addRecipeTerminal: (session: TerminalSession) => void;
   /** Update intervention lock state for a session */
   setInterventionLocked: (sessionId: string, locked: boolean) => void;
   /** Get session by terminal ID */
   getSession: (id: string) => TerminalSession | undefined;
   isLoading: boolean;
-  /** Check if current terminal has an associated skill */
-  hasActiveSkill: boolean;
+  /** Check if current terminal has an associated recipe */
+  hasActiveRecipe: boolean;
   /** Whether the workspace panel is visible (for connecting to hosts) */
   workspaceVisible: boolean;
   setWorkspaceVisible: (visible: boolean) => void;
@@ -62,9 +62,9 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const [workspaceVisible, setWorkspaceVisible] = useState(false);
   const lastSessionCount = useRef(0);
 
-  // Check if current terminal has an associated skill
-  const hasActiveSkill = sessions.some(
-    (s) => s.id === activeId && s.skillExecutionId
+  // Check if current terminal has an associated recipe
+  const hasActiveRecipe = sessions.some(
+    (s) => s.id === activeId && s.recipeExecutionId
   );
 
   // Show workspace panel (hides terminal, shows host connection UI)
@@ -114,7 +114,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const refreshSessions = useCallback(async () => {
     try {
       const existing = await termList();
-      // Merge backend sessions with local state to preserve skillExecutionId, order, and other frontend-only data
+      // Merge backend sessions with local state to preserve recipeExecutionId, order, and other frontend-only data
       setSessions((prev) => {
         // Keep local order: update existing sessions, append truly new ones
         const existingIds = new Set(existing.map((s) => s.id));
@@ -128,7 +128,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
             return backendSession
               ? {
                   ...backendSession,
-                  skillExecutionId: localSession.skillExecutionId,
+                  recipeExecutionId: localSession.recipeExecutionId,
                   hostId: localSession.hostId,
                   interventionLocked: localSession.interventionLocked,
                 }
@@ -202,14 +202,14 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  /** Add a skill terminal session (created externally by skill runner) */
-  const addSkillTerminal = useCallback((session: TerminalSession) => {
-    console.log("[TerminalProvider] Adding skill terminal:", session);
+  /** Add a recipe terminal session (created externally by recipe runner) */
+  const addRecipeTerminal = useCallback((session: TerminalSession) => {
+    console.log("[TerminalProvider] Adding recipe terminal:", session);
     setSessions((prev) => {
       // Check if session already exists
       const existingIndex = prev.findIndex((s) => s.id === session.id);
       if (existingIndex >= 0) {
-        // Update existing session with skill info
+        // Update existing session with recipe info
         const updated = [...prev];
         updated[existingIndex] = { ...updated[existingIndex], ...session };
         return updated;
@@ -231,21 +231,21 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Listen for intervention lock changes from backend
-  // This is critical to block user input while skill is sending commands
+  // This is critical to block user input while recipe is sending commands
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     
     (async () => {
       unlisten = await listen<{ execution_id: string; locked: boolean; terminal_id?: string }>(
-        "skill:intervention_lock_changed",
+        "recipe:intervention_lock_changed",
         (event) => {
           // Find the terminal session with this execution_id and update its lock state
           setSessions((prev) => {
             return prev.map((s) => {
-              // Match by terminal_id if provided, otherwise by skillExecutionId
+              // Match by terminal_id if provided, otherwise by recipeExecutionId
               if (
                 (event.payload.terminal_id && s.id === event.payload.terminal_id) ||
-                s.skillExecutionId === event.payload.execution_id
+                s.recipeExecutionId === event.payload.execution_id
               ) {
                 return { ...s, interventionLocked: event.payload.locked };
               }
@@ -277,11 +277,11 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         openLocalTerminal,
         closeSession,
         refreshSessions,
-        addSkillTerminal,
+        addRecipeTerminal,
         setInterventionLocked,
         getSession,
         isLoading,
-        hasActiveSkill,
+        hasActiveRecipe,
         workspaceVisible,
         setWorkspaceVisible,
         showWorkspace,

@@ -1,4 +1,4 @@
-//! Skill operation implementations
+//! Recipe operation implementations
 
 pub mod conditions;
 pub mod google_drive;

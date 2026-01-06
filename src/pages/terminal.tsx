@@ -6,7 +6,7 @@ import { DEFAULT_TERMINAL_THEME, type TerminalThemeName } from "@/lib/terminal-t
 import { useQuery } from "@tanstack/react-query";
 import {
   getConfig,
-  interactiveSkillApi,
+  interactiveRecipeApi,
   hostApi,
   sshCheck,
   termOpenSshTmux,
@@ -24,7 +24,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { TmuxSessionSelectModal } from "@/components/host/TmuxSessionSelectModal";
 import { copyText } from "@/lib/clipboard";
 import { AppIcon, type AppIconName } from "@/components/AppIcon";
-import { EmptyHostState, HostRow, HostSection, type SkillStatusIndicator } from "@/components/shared/HostCard";
+import { EmptyHostState, HostRow, HostSection, type RecipeStatusIndicator } from "@/components/shared/HostCard";
 import { formatGpuCountLabel } from "@/lib/gpu";
 import {
   loadRecentConnections,
@@ -59,7 +59,7 @@ interface TerminalPaneProps {
   onSearchResult: (current: number, total: number) => void;
   searchDirection: "next" | "prev" | null;
   onSearchComplete: () => void;
-  skillExecutionId?: string | null;
+  recipeExecutionId?: string | null;
   interventionLocked?: boolean;
   themeName?: TerminalThemeName;
   onClose: () => void;
@@ -277,7 +277,7 @@ export function TerminalPage() {
   const hostsQuery = useHosts();
   const vastQuery = useVastInstances();
   const executionsQuery = useInteractiveExecutions();
-  const [isPreparingSkill, setIsPreparingSkill] = useState(false);
+  const [isPreparingRecipe, setIsPreparingRecipe] = useState(false);
 
   // Fetch terminal theme from config
   const configQuery = useQuery({
@@ -296,7 +296,7 @@ export function TerminalPage() {
   const [launcherError, setLauncherError] = useState<string | null>(null);
   const [recentConnections, setRecentConnections] = useState<RecentConnection[]>(() => loadRecentConnections());
   const [selectedRecentId, setSelectedRecentId] = useState<string | null>(null);
-  const [selectedSkillPath, setSelectedSkillPath] = useState<string | null>(null);
+  const [selectedRecipePath, setSelectedRecipePath] = useState<string | null>(null);
 
   const [tmuxSelect, setTmuxSelect] = useState<{
     kind: "host" | "vast";
@@ -335,6 +335,13 @@ export function TerminalPage() {
   }
 
   const connectHandledRef = useRef<string | null>(null);
+  // Reset handled ref when search params are cleared (allows reconnecting to the same host)
+  useEffect(() => {
+    if (!search.connectHostId && !search.connectVastInstanceId) {
+      connectHandledRef.current = null;
+    }
+  }, [search.connectHostId, search.connectVastInstanceId]);
+
   const pendingConnectKey =
     typeof search.connectHostId === "string"
       ? `host:${search.connectHostId}`
@@ -380,13 +387,13 @@ export function TerminalPage() {
     }
   }, [filteredRecentConnections, selectedRecentId]);
 
-  const skillHistory = useMemo(() => {
+  const recipeHistory = useMemo(() => {
     const sorted = [...executions].sort((a, b) => b.created_at.localeCompare(a.created_at));
     const seen = new Set<string>();
     const out: InteractiveExecution[] = [];
     for (const exec of sorted) {
-      if (seen.has(exec.skill_path)) continue;
-      seen.add(exec.skill_path);
+      if (seen.has(exec.recipe_path)) continue;
+      seen.add(exec.recipe_path);
       out.push(exec);
       if (out.length >= 12) break;
     }
@@ -394,17 +401,17 @@ export function TerminalPage() {
     const needle = launcherQuery.trim().toLowerCase();
     if (!needle) return out;
     return out.filter((exec) => {
-      const haystack = `${exec.skill_name} ${exec.skill_path} ${exec.host_id} ${exec.status}`.toLowerCase();
+      const haystack = `${exec.recipe_name} ${exec.recipe_path} ${exec.host_id} ${exec.status}`.toLowerCase();
       return haystack.includes(needle);
     });
   }, [executions, launcherQuery]);
 
   useEffect(() => {
-    if (!selectedSkillPath) return;
-    if (!skillHistory.some((e) => e.skill_path === selectedSkillPath)) {
-      setSelectedSkillPath(null);
+    if (!selectedRecipePath) return;
+    if (!recipeHistory.some((e) => e.recipe_path === selectedRecipePath)) {
+      setSelectedRecipePath(null);
     }
-  }, [skillHistory, selectedSkillPath]);
+  }, [recipeHistory, selectedRecipePath]);
 
   const hostNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -422,9 +429,9 @@ export function TerminalPage() {
   }, [recentConnections, selectedRecentId]);
 
   const selectedExecution = useMemo(() => {
-    if (!selectedSkillPath) return null;
-    return skillHistory.find((e) => e.skill_path === selectedSkillPath) ?? null;
-  }, [skillHistory, selectedSkillPath]);
+    if (!selectedRecipePath) return null;
+    return recipeHistory.find((e) => e.recipe_path === selectedRecipePath) ?? null;
+  }, [recipeHistory, selectedRecipePath]);
 
   function parseVastHostId(hostId: string): number | null {
     if (!hostId.startsWith("vast:")) return null;
@@ -469,25 +476,25 @@ export function TerminalPage() {
         variables.target = exec.host_id;
       }
 
-      setIsPreparingSkill(true);
-      const execution = await interactiveSkillApi.prepare({
-        path: exec.skill_path,
+      setIsPreparingRecipe(true);
+      const execution = await interactiveRecipeApi.prepare({
+        path: exec.recipe_path,
         hostId: exec.host_id,
         variables,
       });
       recordConnectionByHostId(execution.host_id);
-      navigate({ to: "/skills/runs/$id", params: { id: execution.id } });
+      navigate({ to: "/recipes/runs/$id", params: { id: execution.id } });
     } catch (e) {
-      console.error("Failed to run skill from terminal launcher:", e);
+      console.error("Failed to run recipe from terminal launcher:", e);
       setLauncherError(getErrorMessage(e));
     } finally {
-      setIsPreparingSkill(false);
+      setIsPreparingRecipe(false);
     }
   }, [navigate, removeCurrentPlaceholder, setActiveId, setWorkspaceVisible]);
 
-  const launcherPrimaryLabel = selectedSkillPath ? "Run" : "Connect";
-  const canLauncherPrimary = Boolean(selectedSkillPath ? selectedExecution : selectedRecent);
-  const launcherPrimaryLoading = selectedSkillPath ? isPreparingSkill : false;
+  const launcherPrimaryLabel = selectedRecipePath ? "Run" : "Connect";
+  const canLauncherPrimary = Boolean(selectedRecipePath ? selectedExecution : selectedRecent);
+  const launcherPrimaryLoading = selectedRecipePath ? isPreparingRecipe : false;
 
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1007,7 +1014,7 @@ export function TerminalPage() {
                     <div className="relative flex-1 min-w-0">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
                       <Input
-                        placeholder="Search recent connections & skills..."
+                        placeholder="Search recent connections & recipes..."
                         value={launcherQuery}
                         onChange={(e) => setLauncherQuery(e.target.value)}
                         className="h-12 w-full pl-10 pr-28"
@@ -1045,9 +1052,9 @@ export function TerminalPage() {
                       <Server className="w-4 h-4" />
                       <span>Hosts</span>
                     </Button>
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate({ to: "/skills" })}>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate({ to: "/recipes" })}>
                       <Folder className="w-4 h-4" />
-                      <span>Skills</span>
+                      <span>Recipes</span>
                     </Button>
                   </div>
 
@@ -1099,7 +1106,7 @@ export function TerminalPage() {
                               isSelected={isSelected}
                               onClick={() => {
                                 setSelectedRecentId(conn.id);
-                                setSelectedSkillPath(null);
+                                setSelectedRecipePath(null);
                               }}
                               onDoubleClick={() => void launchRecentConnection(conn)}
                               hoverActions={
@@ -1153,7 +1160,7 @@ export function TerminalPage() {
                               isSelected={isSelected}
                               onClick={() => {
                                 setSelectedRecentId(conn.id);
-                                setSelectedSkillPath(null);
+                                setSelectedRecipePath(null);
                               }}
                               onDoubleClick={() => void launchRecentConnection(conn)}
                               hoverActions={
@@ -1204,7 +1211,7 @@ export function TerminalPage() {
                             isSelected={isSelected}
                             onClick={() => {
                               setSelectedRecentId(conn.id);
-                              setSelectedSkillPath(null);
+                              setSelectedRecipePath(null);
                             }}
                             onDoubleClick={() => void launchRecentConnection(conn)}
                             hoverActions={
@@ -1237,13 +1244,13 @@ export function TerminalPage() {
                     </HostSection>
                   )}
 
-                  {skillHistory.length > 0 && (
-                    <HostSection title="RECENT SKILLS" count={skillHistory.length}>
-                      {skillHistory.map((exec) => {
+                  {recipeHistory.length > 0 && (
+                    <HostSection title="RECENT RECIPES" count={recipeHistory.length}>
+                      {recipeHistory.map((exec) => {
                         const hostName = hostNameById.get(exec.host_id) || exec.host_id;
-                        const isSelected = selectedSkillPath === exec.skill_path;
-                        // Map execution status to skill status indicator
-                        const skillStatus: SkillStatusIndicator =
+                        const isSelected = selectedRecipePath === exec.recipe_path;
+                        // Map execution status to recipe status indicator
+                        const recipeStatus: RecipeStatusIndicator =
                           exec.status === "running" || exec.status === "connecting" || exec.status === "waiting_for_input" || exec.status === "paused" || exec.status === "pending"
                             ? "running"
                             : exec.status === "completed"
@@ -1251,23 +1258,23 @@ export function TerminalPage() {
                               : exec.status === "failed" || exec.status === "cancelled"
                                 ? "failed"
                                 : null;
-                        // Only show status badge in rightTags when skillStatus is not shown on icon
-                        const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = skillStatus
+                        // Only show status badge in rightTags when recipeStatus is not shown on icon
+                        const rightTags: { label: string; color?: "default" | "primary" | "warning" }[] = recipeStatus
                           ? []
                           : [{ label: getExecutionStatusLabel(exec.status), color: exec.status === "running" || exec.status === "waiting_for_input" ? "primary" : "default" }];
 
                         return (
                           <HostRow
-                            key={exec.skill_path}
+                            key={exec.recipe_path}
                             icon={<span className="text-lg">📜</span>}
-                            title={exec.skill_name}
+                            title={exec.recipe_name}
                             subtitle={`${hostName} · ${new Date(exec.created_at).toLocaleString()}`}
                             rightTags={rightTags}
                             isOnline={exec.status === "running" || exec.status === "waiting_for_input"}
-                            skillStatus={skillStatus}
+                            recipeStatus={recipeStatus}
                             isSelected={isSelected}
                             onClick={() => {
-                              setSelectedSkillPath(exec.skill_path);
+                              setSelectedRecipePath(exec.recipe_path);
                               setSelectedRecentId(null);
                             }}
                             onDoubleClick={() => void launchExecution(exec)}
@@ -1297,7 +1304,7 @@ export function TerminalPage() {
                                       size="icon"
                                       className="w-7 h-7 opacity-60 hover:opacity-100"
                                       onClick={() => {
-                                        navigate({ to: "/skills/$path", params: { path: encodeURIComponent(exec.skill_path) } });
+                                        navigate({ to: "/recipes/$path", params: { path: encodeURIComponent(exec.recipe_path) } });
                                       }}
                                     >
                                       <Pencil className="w-3.5 h-3.5" />
@@ -1313,11 +1320,11 @@ export function TerminalPage() {
                     </HostSection>
                   )}
 
-                  {filteredRecentConnections.length === 0 && skillHistory.length === 0 && (
+                  {filteredRecentConnections.length === 0 && recipeHistory.length === 0 && (
                     <EmptyHostState
                       icon={<TerminalIcon className="w-5 h-5" />}
                       title={launcherQuery ? "No matches" : "Nothing recent yet"}
-                      description={launcherQuery ? "Try a different search term." : "Connect to a host or run a skill to see it here."}
+                      description={launcherQuery ? "Try a different search term." : "Connect to a host or run a recipe to see it here."}
                       action={
                         !launcherQuery ? (
                           <div className="flex items-center gap-2">
@@ -1325,7 +1332,7 @@ export function TerminalPage() {
                               <Link to="/hosts">Go to Hosts</Link>
                             </Button>
                             <Button variant="outline" asChild>
-                              <Link to="/skills">Go to Skills</Link>
+                              <Link to="/recipes">Go to Recipes</Link>
                             </Button>
                           </div>
                         ) : null
@@ -1357,7 +1364,7 @@ export function TerminalPage() {
                     onSearchResult={handleSearchResult}
                     searchDirection={activeId === s.id ? searchDirection : null}
                     onSearchComplete={handleSearchComplete}
-                    skillExecutionId={s.skillExecutionId}
+                    recipeExecutionId={s.recipeExecutionId}
                     interventionLocked={s.interventionLocked}
                     themeName={terminalTheme}
                     onClose={() => void closeSession(s.id)}

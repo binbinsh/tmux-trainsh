@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo, useCallback, memo } from "react";
 import { Plus, Settings, Database, Terminal, FlaskConical, X, SquareTerminal, Server, ArrowLeftRight } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { Host, InteractiveExecution, SkillSummary } from "@/lib/types";
+import type { Host, InteractiveExecution, RecipeSummary } from "@/lib/types";
 import { useTerminalOptional, type TerminalSession } from "@/contexts/TerminalContext";
 import { getAppVersion } from "@/lib/tauri-api";
 import {
@@ -27,10 +27,10 @@ import appLogo from "@/assets/icons/app-logo.png";
 
 type SidebarProps = {
   hosts: Host[];
-  skills: SkillSummary[];
+  recipes: RecipeSummary[];
   executions: InteractiveExecution[];
   isLoadingHosts?: boolean;
-  isLoadingSkills?: boolean;
+  isLoadingRecipes?: boolean;
 };
 
 // Terminal session item in sidebar
@@ -45,7 +45,7 @@ const TerminalSessionItem = memo(function TerminalSessionItem({
   onClick: () => void;
   onClose: () => void;
 }) {
-  const isSkill = !!session.skillExecutionId;
+  const isRecipe = !!session.recipeExecutionId;
   const isPlaceholder = session.isPlaceholder;
 
   return (
@@ -56,7 +56,7 @@ const TerminalSessionItem = memo(function TerminalSessionItem({
         onClick={onClick}
         tooltip={session.title}
       >
-        {isSkill ? (
+        {isRecipe ? (
           <FlaskConical className="size-3.5" />
         ) : isPlaceholder ? (
           <Plus className="size-3.5" />
@@ -112,8 +112,8 @@ export const Sidebar = memo(function Sidebar({ hosts }: SidebarProps) {
     if (!terminal) return;
     terminal.setActiveId(session.id);
 
-    if (session.skillExecutionId) {
-      navigate({ to: "/skills/runs/$id", params: { id: session.skillExecutionId } });
+    if (session.recipeExecutionId) {
+      navigate({ to: "/recipes/runs/$id", params: { id: session.recipeExecutionId } });
       return;
     }
 
@@ -206,10 +206,10 @@ export const Sidebar = memo(function Sidebar({ hosts }: SidebarProps) {
               </SidebarMenuItem>
 
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={isActive("/skills")} tooltip="Skills">
-                  <Link to="/skills">
+                <SidebarMenuButton asChild isActive={isActive("/recipes")} tooltip="Recipes">
+                  <Link to="/recipes">
                     <FlaskConical />
-                    <span>Skills</span>
+                    <span>Recipes</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

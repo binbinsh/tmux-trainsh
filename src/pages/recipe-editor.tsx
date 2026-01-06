@@ -33,18 +33,18 @@ import { motion, Reorder, useDragControls } from "framer-motion";
 import { useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import {
-  interactiveSkillApi,
+  interactiveRecipeApi,
   openInExternalEditor,
   useHosts,
-  useSkill,
-  useSaveSkill,
+  useRecipe,
+  useSaveRecipe,
   useStorages,
   useVastInstances,
-  useValidateSkill,
+  useValidateRecipe,
   vastAttachSshKey,
 } from "../lib/tauri-api";
 import { useTerminalOptional } from "../contexts/TerminalContext";
-import type { Host, Skill, Step, Storage, TargetHostType, TargetRequirements, ValidationResult } from "../lib/types";
+import type { Host, Recipe, Step, Storage, TargetHostType, TargetRequirements, ValidationResult } from "../lib/types";
 import { vastInstanceToHostCandidate } from "../lib/vast-host";
 import { FilePicker, type EndpointType, type SelectedEndpoint } from "../components/FilePicker";
 import { cn } from "@/lib/utils";
@@ -1089,7 +1089,7 @@ function VastCopyOpFields({ opData, updateOp }: { opData: Record<string, unknown
     <div className="space-y-4">
       <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
         <p className="text-sm text-blue-700">
-          Target uses the host you select when running the skill. Paths map to
+          Target uses the host you select when running the recipe. Paths map to
           Vast copy prefixes like <code>C.target:/workspace/</code>. SSH uses
           the Vast key from Settings.
         </p>
@@ -1386,7 +1386,7 @@ function StepBlock({
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground w-20">Host</span>
               <Input
-                placeholder="${target} (uses skill target)"
+                placeholder="${target} (uses recipe target)"
                 value={(opData.host_id as string) ?? ""}
                 onChange={(e) => updateOp("host_id", e.target.value.trim() ? e.target.value : null)}
               />
@@ -1457,7 +1457,7 @@ function StepBlock({
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground w-20">Host</span>
               <Input
-                placeholder="${target} (uses skill target)"
+                placeholder="${target} (uses recipe target)"
                 value={(opData.host_id as string) ?? ""}
                 onChange={(e) => updateOp("host_id", e.target.value.trim() ? e.target.value : null)}
               />
@@ -1505,7 +1505,7 @@ function StepBlock({
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground w-20">Host</span>
               <Input
-                placeholder="${target} (uses skill target)"
+                placeholder="${target} (uses recipe target)"
                 value={(opData.host_id as string) ?? ""}
                 onChange={(e) => updateOp("host_id", e.target.value.trim() ? e.target.value : null)}
               />
@@ -1667,7 +1667,7 @@ function StepBlock({
         return (
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-700">
-              Uses the skill target host (selected when you run the skill).
+              Uses the recipe target host (selected when you run the recipe).
             </p>
           </div>
         );
@@ -2081,21 +2081,21 @@ function ActionPalette({ onSelect }: { onSelect: (opType: string) => void }) {
   );
 }
 
-export function SkillEditorPage() {
-  const params = useParams({ from: "/skills/$path" });
+export function RecipeEditorPage() {
+  const params = useParams({ from: "/recipes/$path" });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const routePath = decodeURIComponent(params.path);
   const terminalContext = useTerminalOptional();
   
-  const skillPathRef = useRef(routePath);
+  const recipePathRef = useRef(routePath);
   useEffect(() => {
-    skillPathRef.current = routePath;
+    recipePathRef.current = routePath;
   }, [routePath]);
 
-  const skillQuery = useSkill(routePath);
-  const saveMutation = useSaveSkill();
-  const validateMutation = useValidateSkill();
+  const recipeQuery = useRecipe(routePath);
+  const saveMutation = useSaveRecipe();
+  const validateMutation = useValidateRecipe();
   
   const [isVarsOpen, setIsVarsOpen] = useState(false);
   const [isTargetOpen, setIsTargetOpen] = useState(false);
@@ -2111,15 +2111,15 @@ export function SkillEditorPage() {
   const onRunErrorOpen = () => setIsRunErrorOpen(true);
   const onRunErrorClose = () => setIsRunErrorOpen(false);
   
-  const [skill, setSkill] = useState<Skill | null>(null);
+  const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   
-  // Ref to track last saved skill for comparison
-  const lastSavedSkillRef = useRef<string>('');
+  // Ref to track last saved recipe for comparison
+  const lastSavedRecipeRef = useRef<string>('');
   // Track if we've loaded data (to skip initial save)
   const hasLoadedRef = useRef(false);
   
@@ -2130,30 +2130,30 @@ export function SkillEditorPage() {
   // Debounced save function using use-debounce
   // This is more reliable than manual setTimeout as it properly handles closure values
   const debouncedSave = useDebouncedCallback(
-    async (skillToSave: Skill) => {
-      const skillJson = JSON.stringify(skillToSave);
+    async (recipeToSave: Recipe) => {
+      const recipeJson = JSON.stringify(recipeToSave);
       
       // Skip if no actual changes
-      if (skillJson === lastSavedSkillRef.current) {
+      if (recipeJson === lastSavedRecipeRef.current) {
         return;
       }
       
       setSaveStatus('saving');
       try {
-        const currentPath = skillPathRef.current;
-        const newPath = await saveMutation.mutateAsync({ path: currentPath, skill: skillToSave });
+        const currentPath = recipePathRef.current;
+        const newPath = await saveMutation.mutateAsync({ path: currentPath, recipe: recipeToSave });
         if (newPath !== currentPath) {
-          skillPathRef.current = newPath;
+          recipePathRef.current = newPath;
           navigate({
-            to: "/skills/$path",
+            to: "/recipes/$path",
             params: { path: encodeURIComponent(newPath) },
             replace: true,
           });
         }
-        lastSavedSkillRef.current = skillJson;
+        lastSavedRecipeRef.current = recipeJson;
         setSaveStatus('saved');
       } catch (e) {
-        console.error("Failed to save skill:", e);
+        console.error("Failed to save recipe:", e);
         setSaveStatus('error');
       }
     },
@@ -2161,44 +2161,44 @@ export function SkillEditorPage() {
     { maxWait: 2000 } // Max 2s wait to ensure saves happen
   );
   
-  // Load (and refresh) skill data from the query cache.
+  // Load (and refresh) recipe data from the query cache.
   // If the user has unsaved local edits, don't overwrite the editor state.
   useEffect(() => {
-    if (!skillQuery.data) return;
+    if (!recipeQuery.data) return;
 
-    const incomingJson = JSON.stringify(skillQuery.data);
+    const incomingJson = JSON.stringify(recipeQuery.data);
 
-    setSkill((current) => {
+    setRecipe((current) => {
       if (!current) {
-        lastSavedSkillRef.current = incomingJson;
+        lastSavedRecipeRef.current = incomingJson;
         hasLoadedRef.current = true;
-        return skillQuery.data;
+        return recipeQuery.data;
       }
 
       const currentJson = JSON.stringify(current);
-      const hasUnsavedChanges = currentJson !== lastSavedSkillRef.current;
+      const hasUnsavedChanges = currentJson !== lastSavedRecipeRef.current;
       if (hasUnsavedChanges || currentJson === incomingJson) {
         return current;
       }
 
-      lastSavedSkillRef.current = incomingJson;
-      return skillQuery.data;
+      lastSavedRecipeRef.current = incomingJson;
+      return recipeQuery.data;
     });
-  }, [skillQuery.data]);
+  }, [recipeQuery.data]);
   
-  // Auto-save effect - triggers debounced save when skill changes
+  // Auto-save effect - triggers debounced save when recipe changes
   useEffect(() => {
-    if (!skill || !hasLoadedRef.current) return;
+    if (!recipe || !hasLoadedRef.current) return;
     
-    // Check if skill actually changed from last saved version
-    const skillJson = JSON.stringify(skill);
-    if (skillJson === lastSavedSkillRef.current) {
+    // Check if recipe actually changed from last saved version
+    const recipeJson = JSON.stringify(recipe);
+    if (recipeJson === lastSavedRecipeRef.current) {
       return; // No changes, skip save
     }
     
-    // Trigger debounced save with current skill
-    debouncedSave(skill);
-  }, [skill, debouncedSave]);
+    // Trigger debounced save with current recipe
+    debouncedSave(recipe);
+  }, [recipe, debouncedSave]);
   
   // Flush pending saves on unmount
   useEffect(() => {
@@ -2209,23 +2209,23 @@ export function SkillEditorPage() {
   
   // Validate on changes
   useEffect(() => {
-    if (skill) {
-      validateMutation.mutate(skill, {
+    if (recipe) {
+      validateMutation.mutate(recipe, {
         onSuccess: setValidation,
       });
     }
-  }, [skill]);
+  }, [recipe]);
   
   const handleRunClick = () => {
-    if (!skill) return;
+    if (!recipe) return;
     if (!validation?.valid) {
-      setRunError("Skill is invalid. Fix validation errors before running.");
+      setRunError("Recipe is invalid. Fix validation errors before running.");
       onRunErrorOpen();
       return;
     }
     
-    // If skill has a target defined, show host selection modal
-    if (skill.target) {
+    // If recipe has a target defined, show host selection modal
+    if (recipe.target) {
       setSelectedHostId(null);
       onHostSelectOpen();
     } else {
@@ -2235,13 +2235,13 @@ export function SkillEditorPage() {
   };
   
   const executeRun = async (targetHostId?: string) => {
-    if (!skill || !validation?.valid) return;
+    if (!recipe || !validation?.valid) return;
     
     setIsRunning(true);
     try {
       // Ensure any pending save is completed before running
       await debouncedSave.flush();
-      const runPath = skillPathRef.current;
+      const runPath = recipePathRef.current;
       
       // Build variables with target host if selected
       const variables: Record<string, string> = {};
@@ -2261,23 +2261,23 @@ export function SkillEditorPage() {
       }
       
       // Prepare interactive execution (pending, manual start)
-      const execution = await interactiveSkillApi.prepare({
+      const execution = await interactiveRecipeApi.prepare({
         path: runPath,
         hostId: targetHostId || "__local__",
         variables,
       });
       
       // Immediately seed the query cache with execution data
-      // This allows the sidebar to show skill info instantly
+      // This allows the sidebar to show recipe info instantly
       queryClient.setQueryData(
         ["interactive-executions", execution.id],
         execution
       );
       
       // Navigate to run page
-      navigate({ to: "/skills/runs/$id", params: { id: execution.id } });
+      navigate({ to: "/recipes/runs/$id", params: { id: execution.id } });
     } catch (e) {
-      console.error("Failed to run skill:", e);
+      console.error("Failed to run recipe:", e);
       const msg =
         typeof e === "object" && e !== null && "message" in e
           ? String((e as { message: unknown }).message)
@@ -2292,7 +2292,7 @@ export function SkillEditorPage() {
   };
   
   const handleConfirmRun = () => {
-    if (!selectedHostId && skill?.target) {
+    if (!selectedHostId && recipe?.target) {
       return; // Must select a host or local
     }
     onHostSelectClose();
@@ -2307,86 +2307,86 @@ export function SkillEditorPage() {
   ];
 
   const compatibleHosts = allHosts.filter((host: Host) => {
-    if (!skill?.target) return true;
+    if (!recipe?.target) return true;
     
     // "any" type allows all hosts
-    if (skill.target.type === "any") {
+    if (recipe.target.type === "any") {
       // Still apply GPU/memory filters if specified
-    } else if (skill.target.type === "local") {
+    } else if (recipe.target.type === "local") {
       // Local target doesn't need remote hosts
       return false;
     } else {
       // Check host type for specific types
-      if (skill.target.type !== host.type) return false;
+      if (recipe.target.type !== host.type) return false;
     }
     
     // Check GPU count
-    if (skill.target.min_gpus && (host.num_gpus ?? 0) < skill.target.min_gpus) return false;
+    if (recipe.target.min_gpus && (host.num_gpus ?? 0) < recipe.target.min_gpus) return false;
     
     // Check GPU type (case-insensitive partial match)
-    if (skill.target.gpu_type && host.gpu_name) {
-      if (!host.gpu_name.toLowerCase().includes(skill.target.gpu_type.toLowerCase())) {
+    if (recipe.target.gpu_type && host.gpu_name) {
+      if (!host.gpu_name.toLowerCase().includes(recipe.target.gpu_type.toLowerCase())) {
         return false;
       }
     }
     
     // Check memory
-    if (skill.target.min_memory_gb && host.system_info?.memory_total_gb) {
-      if (host.system_info.memory_total_gb < skill.target.min_memory_gb) return false;
+    if (recipe.target.min_memory_gb && host.system_info?.memory_total_gb) {
+      if (host.system_info.memory_total_gb < recipe.target.min_memory_gb) return false;
     }
     
     return true;
   });
   
   // Check if Local option should be shown (for "any" or "local" target types)
-  const showLocalOption = skill?.target?.type === "any" || skill?.target?.type === "local";
+  const showLocalOption = recipe?.target?.type === "any" || recipe?.target?.type === "local";
   
-  const updateSkill = (updates: Partial<Skill>) => {
-    if (!skill) return;
-    setSkill({ ...skill, ...updates });
+  const updateRecipe = (updates: Partial<Recipe>) => {
+    if (!recipe) return;
+    setRecipe({ ...recipe, ...updates });
   };
   
   const addStep = (opType: string) => {
-    if (!skill) return;
+    if (!recipe) return;
     
     // Generate step ID based on operation type
     // Convert underscores to hyphens (e.g., "run_commands" -> "run-commands", "tmux_new" -> "tmux-new")
     const prefix = opType.replace(/_/g, "-");
     
     // Count existing steps with the same prefix
-    const existingCount = skill.steps.filter(s => s.id.startsWith(prefix + "-")).length;
+    const existingCount = recipe.steps.filter(s => s.id.startsWith(prefix + "-")).length;
     const newId = `${prefix}-${existingCount + 1}`;
     
     const newStep = createEmptyStep(newId, opType);
     
     // Auto-add dependency on previous step for sequential execution
-    if (skill.steps.length > 0) {
-      const lastStep = skill.steps[skill.steps.length - 1];
+    if (recipe.steps.length > 0) {
+      const lastStep = recipe.steps[recipe.steps.length - 1];
       newStep.depends_on = [lastStep.id];
     }
     
-    updateSkill({ steps: [...skill.steps, newStep] });
+    updateRecipe({ steps: [...recipe.steps, newStep] });
   };
   
   const updateStep = (stepId: string, newStep: Step) => {
-    if (!skill) return;
-    const steps = skill.steps.map(s => s.id === stepId ? newStep : s);
-    updateSkill({ steps });
+    if (!recipe) return;
+    const steps = recipe.steps.map(s => s.id === stepId ? newStep : s);
+    updateRecipe({ steps });
   };
   
   const deleteStep = (stepId: string) => {
-    if (!skill) return;
+    if (!recipe) return;
     
     // Find the step being deleted and its position
-    const stepIndex = skill.steps.findIndex(s => s.id === stepId);
+    const stepIndex = recipe.steps.findIndex(s => s.id === stepId);
     if (stepIndex === -1) return;
     
     // Get remaining steps
-    let newSteps = skill.steps.filter(s => s.id !== stepId);
+    let newSteps = recipe.steps.filter(s => s.id !== stepId);
     
     // Fix broken dependencies: if a step depended on the deleted step,
     // make it depend on what the deleted step depended on
-    const deletedStep = skill.steps[stepIndex];
+    const deletedStep = recipe.steps[stepIndex];
     newSteps = newSteps.map(s => {
       if (s.depends_on.includes(stepId)) {
         // Replace dependency on deleted step with deleted step's dependencies
@@ -2397,7 +2397,7 @@ export function SkillEditorPage() {
       return s;
     });
     
-    updateSkill({ steps: newSteps });
+    updateRecipe({ steps: newSteps });
   };
   
   const handleReorder = (newOrder: Step[]) => {
@@ -2411,21 +2411,21 @@ export function SkillEditorPage() {
         return { ...step, depends_on: [newOrder[index - 1].id] };
       }
     });
-    updateSkill({ steps: updatedSteps });
+    updateRecipe({ steps: updatedSteps });
   };
   
   const updateVariable = (key: string, value: string) => {
-    if (!skill) return;
-    const variables = { ...skill.variables };
+    if (!recipe) return;
+    const variables = { ...recipe.variables };
     if (value) {
       variables[key] = value;
     } else {
       delete variables[key];
     }
-    updateSkill({ variables });
+    updateRecipe({ variables });
   };
   
-  if (skillQuery.isLoading || !skill) {
+  if (recipeQuery.isLoading || !recipe) {
     return (
       <div className="h-full flex flex-col overflow-hidden">
         {/* Skeleton Header */}
@@ -2505,7 +2505,7 @@ export function SkillEditorPage() {
       <header className="flex items-center gap-4 px-4 h-14 border-b border-border bg-background">
         {/* Left: Back button */}
         <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-          <Link to="/skills">
+          <Link to="/recipes">
             <IconArrowLeft />
           </Link>
         </Button>
@@ -2515,10 +2515,10 @@ export function SkillEditorPage() {
           <div className="flex items-center gap-3">
             <Input
               type="text"
-              value={skill.name}
-              onChange={(e) => updateSkill({ name: e.target.value })}
+              value={recipe.name}
+              onChange={(e) => updateRecipe({ name: e.target.value })}
               className="h-9 px-0 py-0 text-lg font-semibold bg-transparent border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 min-w-0 max-w-[300px]"
-              placeholder="Skill name"
+              placeholder="Recipe name"
             />
             {saveStatus === 'saving' && (
               <Badge variant="outline" className="gap-1 bg-primary/10 border-primary/20 text-primary">
@@ -2530,21 +2530,21 @@ export function SkillEditorPage() {
               <Badge variant="destructive">Save failed</Badge>
             )}
             <span className="text-xs text-muted-foreground flex items-center gap-1">
-              {skill.steps.length} steps •
+              {recipe.steps.length} steps •
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex items-center gap-1">
                     <span>v</span>
                   <Input
                     type="text"
-                    value={skill.version}
-                    onChange={(e) => updateSkill({ version: e.target.value })}
+                    value={recipe.version}
+                    onChange={(e) => updateRecipe({ version: e.target.value })}
                     className="h-6 w-12 text-xs bg-transparent border-0 shadow-none px-1 py-0 hover:bg-muted focus:bg-muted focus-visible:ring-0 focus-visible:ring-offset-0"
                     placeholder="1.0.0"
                   />
                   </span>
                 </TooltipTrigger>
-                <TooltipContent>Skill version (for tracking changes)</TooltipContent>
+                <TooltipContent>Recipe version (for tracking changes)</TooltipContent>
               </Tooltip>
             </span>
           </div>
@@ -2572,9 +2572,9 @@ export function SkillEditorPage() {
           >
             <IconTarget />
             Target
-            {skill?.target && (
+            {recipe?.target && (
               <Badge variant="outline" className="ml-1">
-                {skill.target.type}
+                {recipe.target.type}
               </Badge>
             )}
           </Button>
@@ -2604,31 +2604,31 @@ export function SkillEditorPage() {
         {/* Steps Canvas */}
         <div className="flex-1 overflow-auto">
           <div className="p-8 max-w-2xl mx-auto">
-            {skill.steps.length === 0 ? (
+            {recipe.steps.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20">
                 <div className="w-20 h-20 rounded-3xl bg-muted/50 border border-border flex items-center justify-center mb-4">
                   <span className="text-4xl">📜</span>
                 </div>
                 <h3 className="text-lg font-semibold mb-2">No steps yet</h3>
                 <p className="text-muted-foreground text-center mb-6 max-w-sm">
-                  Add actions from the palette on the right to build your skill workflow.
+                  Add actions from the palette on the right to build your recipe workflow.
                 </p>
               </div>
             ) : (
               <Reorder.Group
                 axis="y"
-                values={skill.steps}
+                values={recipe.steps}
                 onReorder={handleReorder}
                 className="space-y-6"
               >
-                {skill.steps.map((step, index) => (
+                {recipe.steps.map((step, index) => (
                   <StepBlock
                     key={step.id}
                     step={step}
                     onChange={(s) => updateStep(step.id, s)}
                     onDelete={() => deleteStep(step.id)}
                     isFirst={index === 0}
-                    isLast={index === skill.steps.length - 1}
+                    isLast={index === recipe.steps.length - 1}
                   />
                 ))}
               </Reorder.Group>
@@ -2659,7 +2659,7 @@ export function SkillEditorPage() {
         <div className="w-72 border-l border-border bg-background flex flex-col">
           <div className="p-4 border-b border-border">
             <h3 className="font-semibold">Actions</h3>
-            <p className="text-xs text-muted-foreground">Click to add to skill</p>
+            <p className="text-xs text-muted-foreground">Click to add to recipe</p>
           </div>
           <ScrollArea className="flex-1 p-3">
             <ActionPalette onSelect={addStep} />
@@ -2683,13 +2683,13 @@ export function SkillEditorPage() {
               <code className="rounded bg-muted px-1 font-mono text-xs">${"{name}"}</code> syntax.
             </p>
             
-            {Object.keys(skill.variables).length === 0 ? (
+            {Object.keys(recipe.variables).length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-muted-foreground mb-4">No variables defined yet.</p>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => updateVariable(`var_${Object.keys(skill.variables).length + 1}`, "")}
+                  onClick={() => updateVariable(`var_${Object.keys(recipe.variables).length + 1}`, "")}
                 >
                   <IconPlus />
                   Add Variable
@@ -2697,7 +2697,7 @@ export function SkillEditorPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {Object.entries(skill.variables).map(([key, value]) => (
+                {Object.entries(recipe.variables).map(([key, value]) => (
                   <div key={key} className="flex items-center gap-2">
                     <div className="relative flex-1">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
@@ -2706,10 +2706,10 @@ export function SkillEditorPage() {
                         value={key}
                         onChange={(e) => {
                           const newKey = e.target.value;
-                          const vars = { ...skill.variables };
+                          const vars = { ...recipe.variables };
                           delete vars[key];
                           vars[newKey] = value;
-                          updateSkill({ variables: vars });
+                          updateRecipe({ variables: vars });
                         }}
                         className="pl-7"
                       />
@@ -2725,9 +2725,9 @@ export function SkillEditorPage() {
                       variant="ghost"
                       className="text-danger hover:text-danger"
                       onClick={() => {
-                        const vars = { ...skill.variables };
+                        const vars = { ...recipe.variables };
                         delete vars[key];
-                        updateSkill({ variables: vars });
+                        updateRecipe({ variables: vars });
                       }}
                       aria-label={`Delete variable ${key}`}
                     >
@@ -2739,7 +2739,7 @@ export function SkillEditorPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => updateVariable(`var_${Object.keys(skill.variables).length + 1}`, "")}
+                  onClick={() => updateVariable(`var_${Object.keys(recipe.variables).length + 1}`, "")}
                   className="w-full mt-2"
                 >
                   <IconPlus />
@@ -2767,7 +2767,7 @@ export function SkillEditorPage() {
 
           <div className="grid gap-4">
             <p className="text-sm text-muted-foreground">
-              Define requirements for the target host. The actual host will be selected when running the skill.
+              Define requirements for the target host. The actual host will be selected when running the recipe.
             </p>
             
             <div className="space-y-4">
@@ -2775,16 +2775,16 @@ export function SkillEditorPage() {
               <div className="flex items-center gap-4">
                 <span className="text-sm font-medium w-24">Host Type</span>
                 <Select
-                  value={skill?.target?.type ?? "__none__"}
+                  value={recipe?.target?.type ?? "__none__"}
                   onValueChange={(value) => {
                     if (value === "__none__") {
-                      updateSkill({ target: null });
+                      updateRecipe({ target: null });
                       return;
                     }
 
-                    updateSkill({
+                    updateRecipe({
                       target: {
-                        ...(skill?.target ?? {}),
+                        ...(recipe?.target ?? {}),
                         type: value as TargetHostType,
                       } as TargetRequirements,
                     });
@@ -2802,30 +2802,30 @@ export function SkillEditorPage() {
                     <SelectItem value="custom">Custom SSH</SelectItem>
                   </SelectContent>
                 </Select>
-                {skill?.target && (
+                {recipe?.target && (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="text-danger hover:text-danger"
-                    onClick={() => updateSkill({ target: null })}
+                    onClick={() => updateRecipe({ target: null })}
                   >
                     Clear
                   </Button>
                 )}
               </div>
               
-              {skill?.target && (
+              {recipe?.target && (
                 <>
                   {/* GPU Type */}
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-medium w-24">GPU Type</span>
                     <Input
                       placeholder="Any (e.g., T4, A100, H100)"
-                      value={skill.target.gpu_type ?? ""}
+                      value={recipe.target.gpu_type ?? ""}
                       onChange={(e) =>
-                        updateSkill({
+                        updateRecipe({
                           target: {
-                            ...skill.target!,
+                            ...recipe.target!,
                             gpu_type: e.target.value.trim() ? e.target.value : null,
                           },
                         })
@@ -2841,11 +2841,11 @@ export function SkillEditorPage() {
                       type="number"
                       inputMode="numeric"
                       placeholder="1"
-                      value={skill.target.min_gpus?.toString() ?? ""}
+                      value={recipe.target.min_gpus?.toString() ?? ""}
                       onChange={(e) =>
-                        updateSkill({
+                        updateRecipe({
                           target: {
-                            ...skill.target!,
+                            ...recipe.target!,
                             min_gpus: e.target.value ? parseInt(e.target.value, 10) : null,
                           },
                         })
@@ -2862,11 +2862,11 @@ export function SkillEditorPage() {
                         type="number"
                         inputMode="decimal"
                         placeholder="16"
-                        value={skill.target.min_memory_gb?.toString() ?? ""}
+                        value={recipe.target.min_memory_gb?.toString() ?? ""}
                         onChange={(e) =>
-                          updateSkill({
+                          updateRecipe({
                             target: {
-                              ...skill.target!,
+                              ...recipe.target!,
                               min_memory_gb: e.target.value ? parseFloat(e.target.value) : null,
                             },
                           })
@@ -2880,7 +2880,7 @@ export function SkillEditorPage() {
               )}
             </div>
             
-            {!skill?.target && (
+            {!recipe?.target && (
               <div className="mt-2 p-4 bg-warning/10 border border-warning/20 rounded-lg">
                 <p className="text-sm text-warning">
                   No target defined. Operations that use{" "}
@@ -2897,7 +2897,7 @@ export function SkillEditorPage() {
         </DialogContent>
       </Dialog>
       
-      {/* Host Selection Modal (shown when running a skill with target) */}
+      {/* Host Selection Modal (shown when running a recipe with target) */}
       <Dialog open={isHostSelectOpen} onOpenChange={setIsHostSelectOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -2908,27 +2908,27 @@ export function SkillEditorPage() {
           </DialogHeader>
 
           <div className="grid gap-4">
-            {skill?.target && (
+            {recipe?.target && (
               <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                 <p className="text-sm font-medium text-primary mb-1">Target Requirements</p>
                 <div className="text-sm text-muted-foreground space-y-0.5">
                   <p>
-                    Type: <span className="font-medium text-foreground">{skill.target.type}</span>
+                    Type: <span className="font-medium text-foreground">{recipe.target.type}</span>
                   </p>
-                  {skill.target.gpu_type && (
+                  {recipe.target.gpu_type && (
                     <p>
-                      GPU: <span className="font-medium text-foreground">{skill.target.gpu_type}</span>
+                      GPU: <span className="font-medium text-foreground">{recipe.target.gpu_type}</span>
                     </p>
                   )}
-                  {skill.target.min_gpus && (
+                  {recipe.target.min_gpus && (
                     <p>
-                      Min GPUs: <span className="font-medium text-foreground">{skill.target.min_gpus}</span>
+                      Min GPUs: <span className="font-medium text-foreground">{recipe.target.min_gpus}</span>
                     </p>
                   )}
-                  {skill.target.min_memory_gb && (
+                  {recipe.target.min_memory_gb && (
                     <p>
                       Min Memory:{" "}
-                      <span className="font-medium text-foreground">{skill.target.min_memory_gb} GB</span>
+                      <span className="font-medium text-foreground">{recipe.target.min_memory_gb} GB</span>
                     </p>
                   )}
                 </div>
@@ -2943,7 +2943,7 @@ export function SkillEditorPage() {
             ) : (
               <div className="space-y-2">
                 <p className="text-sm text-muted-foreground mb-2">
-                  Select a target to run this skill on:
+                  Select a target to run this recipe on:
                 </p>
                 <RadioGroup
                   value={selectedHostId ?? ""}
@@ -2959,8 +2959,8 @@ export function SkillEditorPage() {
                           : "border-border hover:bg-muted/50"
                       )}
                     >
-                      <RadioGroupItem value="__local__" id="skill-target-local" className="mt-0.5" />
-                      <Label htmlFor="skill-target-local" className="flex-1 cursor-pointer font-normal">
+                      <RadioGroupItem value="__local__" id="recipe-target-local" className="mt-0.5" />
+                      <Label htmlFor="recipe-target-local" className="flex-1 cursor-pointer font-normal">
                         <div className="flex items-center gap-3">
                           <div className="flex-1">
                             <p className="font-medium text-foreground">Local</p>
@@ -2976,7 +2976,7 @@ export function SkillEditorPage() {
 
                   {/* Remote hosts */}
                   {compatibleHosts.map((host: Host) => {
-                    const id = `skill-target-${host.id}`;
+                    const id = `recipe-target-${host.id}`;
                     const isSelected = selectedHostId === host.id;
                     const statusVariant =
                       host.status === "offline"
@@ -3025,7 +3025,7 @@ export function SkillEditorPage() {
             </Button>
             <Button
               onClick={handleConfirmRun}
-              disabled={(!selectedHostId && skill?.target !== undefined) || isRunning}
+              disabled={(!selectedHostId && recipe?.target !== undefined) || isRunning}
             >
               {isRunning && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
               {selectedHostId === "__local__" ? "Run Locally" : "Run on Selected Host"}
@@ -3037,7 +3037,7 @@ export function SkillEditorPage() {
       <Dialog open={isRunErrorOpen} onOpenChange={setIsRunErrorOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Failed to run skill</DialogTitle>
+            <DialogTitle>Failed to run recipe</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-danger whitespace-pre-wrap">{runError ?? "Unknown error"}</p>
           <DialogFooter>

@@ -1,6 +1,6 @@
-# Example Skill: Train LLaMA Model on Vast.ai
+# Example Recipe: Train LLaMA Model on Vast.ai
 #
-# This skill demonstrates how to automate a complete training workflow:
+# This recipe demonstrates how to automate a complete training workflow:
 # 1. Start a Vast.ai instance
 # 2. Wait for it to come online
 # 3. Sync code and data
@@ -10,7 +10,7 @@
 # 7. Download results
 # 8. Stop the instance
 
-[skill]
+[recipe]
 name = "train-llama"
 version = "1.0.0"
 description = "Train LLaMA model on Vast.ai with automatic provisioning"

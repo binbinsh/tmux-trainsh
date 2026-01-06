@@ -1,6 +1,6 @@
-//! Persistent skill execution logs (JSONL).
+//! Persistent recipe execution logs (JSONL).
 //!
-//! Each interactive skill execution writes structured log entries to a JSONL file
+//! Each interactive recipe execution writes structured log entries to a JSONL file
 //! under the app data directory so logs can be replayed and exported.
 
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum SkillLogStream {
+pub enum RecipeLogStream {
     System,
     Progress,
     Stdout,
@@ -22,25 +22,25 @@ pub enum SkillLogStream {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillLogEntry {
+pub struct RecipeLogEntry {
     pub timestamp: String,
-    pub stream: SkillLogStream,
+    pub stream: RecipeLogStream,
     #[serde(default)]
     pub step_id: Option<String>,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillLogChunk {
+pub struct RecipeLogChunk {
     pub execution_id: String,
     pub cursor: u64,
     pub next_cursor: u64,
     pub eof: bool,
-    pub entries: Vec<SkillLogEntry>,
+    pub entries: Vec<RecipeLogEntry>,
 }
 
 fn logs_dir() -> PathBuf {
-    doppio_data_dir().join("skill_executions").join("logs")
+    doppio_data_dir().join("recipe_executions").join("logs")
 }
 
 fn log_path(execution_id: &str) -> PathBuf {
@@ -51,7 +51,7 @@ pub fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }
 
-pub async fn append_entry(execution_id: &str, entry: &SkillLogEntry) -> Result<(), AppError> {
+pub async fn append_entry(execution_id: &str, entry: &RecipeLogEntry) -> Result<(), AppError> {
     if execution_id.trim().is_empty() {
         return Err(AppError::invalid_input("execution_id is required"));
     }
@@ -76,7 +76,7 @@ pub async fn read_chunk(
     execution_id: &str,
     cursor: Option<u64>,
     max_bytes: Option<u64>,
-) -> Result<SkillLogChunk, AppError> {
+) -> Result<RecipeLogChunk, AppError> {
     if execution_id.trim().is_empty() {
         return Err(AppError::invalid_input("execution_id is required"));
     }
@@ -88,7 +88,7 @@ pub async fn read_chunk(
     let meta = match tokio::fs::metadata(&path).await {
         Ok(m) => m,
         Err(_) => {
-            return Ok(SkillLogChunk {
+            return Ok(RecipeLogChunk {
                 execution_id: execution_id.to_string(),
                 cursor,
                 next_cursor: cursor,
@@ -99,7 +99,7 @@ pub async fn read_chunk(
     };
     let file_len = meta.len();
     if cursor >= file_len {
-        return Ok(SkillLogChunk {
+        return Ok(RecipeLogChunk {
             execution_id: execution_id.to_string(),
             cursor,
             next_cursor: cursor,
@@ -133,11 +133,11 @@ pub async fn read_chunk(
             continue;
         }
 
-        match serde_json::from_str::<SkillLogEntry>(trimmed) {
+        match serde_json::from_str::<RecipeLogEntry>(trimmed) {
             Ok(entry) => entries.push(entry),
-            Err(_) => entries.push(SkillLogEntry {
+            Err(_) => entries.push(RecipeLogEntry {
                 timestamp: now_rfc3339(),
-                stream: SkillLogStream::System,
+                stream: RecipeLogStream::System,
                 step_id: None,
                 message: trimmed.to_string(),
             }),
@@ -145,7 +145,7 @@ pub async fn read_chunk(
     }
 
     let next_cursor = cursor.saturating_add(bytes_read);
-    Ok(SkillLogChunk {
+    Ok(RecipeLogChunk {
         execution_id: execution_id.to_string(),
         cursor,
         next_cursor,

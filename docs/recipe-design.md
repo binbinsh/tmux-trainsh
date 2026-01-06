@@ -1,28 +1,28 @@
-# Skill System Design
+# Recipe System Design
 
 ## Overview
 
-The Skill system replaces the fixed 6-step Task/Session workflow with a flexible, composable workflow engine that supports:
+The Recipe system replaces the fixed 6-step Task/Session workflow with a flexible, composable workflow engine that supports:
 
 - **Atomic operations**: Basic building blocks (SSH commands, file sync, Vast.ai operations, etc.)
 - **Operation groups**: Compositions of atomic operations or other groups
 - **Dependency graphs**: Steps can depend on other steps, enabling parallel execution
 - **Execution control**: Pause, resume, cancel, and retry steps
-- **Persistence**: Save/load skills as TOML files
+- **Persistence**: Save/load recipes as TOML files
 
 ## Core Concepts
 
 ### Step
 
-A Step is the basic execution unit in a Skill. Each step:
-- Has a unique ID within the skill
+A Step is the basic execution unit in a Recipe. Each step:
+- Has a unique ID within the recipe
 - Contains an operation (atomic or group)
 - Can declare dependencies on other steps
 - Tracks execution status and output
 
 ### Target Host Type
 
-Skills define **requirements** for a target host, not a specific host. The actual host is selected at runtime:
+Recipes define **requirements** for a target host, not a specific host. The actual host is selected at runtime:
 
 ```toml
 [target]
@@ -32,7 +32,7 @@ min_memory_gb = 16
 gpu_type = "T4"
 ```
 
-Operations can use `${target}` as the host_id, or leave host_id empty to default to the skill target.
+Operations can use `${target}` as the host_id, or leave host_id empty to default to the recipe target.
 
 ### Operations
 
@@ -76,7 +76,7 @@ Endpoints can be:
 Supported `src`/`dst` formats follow the Vast CLI:
 - `[instance_id:]path`
 - `C.instance_id:path`
-- `target:path` or `C.target:path` (uses the skill target Vast host)
+- `target:path` or `C.target:path` (uses the recipe target Vast host)
 - `cloud_service:path` (e.g. `drive:/folder/file.txt`)
 - `cloud_service.connection_id:path` (e.g. `s3.101:/data`)
 - `local:path`
@@ -207,7 +207,7 @@ Special variables:
 ## TOML Schema
 
 ```toml
-[skill]
+[recipe]
 name = "train-llama"
 version = "1.0.0"
 description = "Train LLaMA model on Vast.ai"
@@ -242,19 +242,19 @@ rsync_upload = { host_id = "${target}", local_path = "${local_project}", remote_
 
 Interactive executions are persisted as JSON under the app data directory:
 
-`<data_dir>/skill_executions/interactive-<execution_id>.json`
+`<data_dir>/recipe_executions/interactive-<execution_id>.json`
 
 Example (abridged):
 
 ```json
 {
   "id": "exec-123",
-  "skill_path": "train-llama.toml",
-  "skill_name": "train-llama",
+  "recipe_path": "train-llama.toml",
+  "recipe_name": "train-llama",
   "terminal_id": null,
   "terminal": {
-    "title": "Skill: train-llama",
-    "tmux_session": "skill-acde",
+    "title": "Recipe: train-llama",
+    "tmux_session": "recipe-acde",
     "cols": 120,
     "rows": 32
   },
@@ -273,22 +273,22 @@ Example (abridged):
 
 ## UI Components
 
-### Skill Editor
+### Recipe Editor
 - Visual DAG editor for step dependencies
 - Form-based step configuration
 - Variable management
 - Live validation
 
-### Skill Runner
+### Recipe Runner
 - Step status visualization
 - Real-time logs per step
 - Pause/Resume/Retry controls
 - Variable override before run
 
-### Skill Library
-- List saved skills
+### Recipe Library
+- List saved recipes
 - Quick run with variable overrides
-- Duplicate and modify skills
+- Duplicate and modify recipes
 
 ## Rust Implementation
 
@@ -296,9 +296,9 @@ Example (abridged):
 
 ```
 src-tauri/src/
-  skill/
+  recipe/
     mod.rs           # Module exports
-    types.rs         # Skill, Step, Operation types
+    types.rs         # Recipe, Step, Operation types
     parser.rs        # TOML parsing
     execution.rs     # Shared step execution helpers
     interactive.rs   # Interactive execution + persistence + resume
@@ -314,7 +314,7 @@ src-tauri/src/
 ### Key Types
 
 ```rust
-pub struct Skill {
+pub struct Recipe {
     pub name: String,
     pub version: String,
     pub description: Option<String>,
@@ -368,44 +368,44 @@ pub enum StepStatus {
 ### Tauri Commands
 
 ```rust
-// Skill CRUD
-skill_list() -> Vec<SkillSummary>
-skill_get(path: String) -> Skill
-skill_save(path: String, skill: Skill) -> ()
-skill_delete(path: String) -> ()
-skill_validate(skill: Skill) -> ValidationResult
+// Recipe CRUD
+recipe_list() -> Vec<RecipeSummary>
+recipe_get(path: String) -> Recipe
+recipe_save(path: String, recipe: Recipe) -> ()
+recipe_delete(path: String) -> ()
+recipe_validate(recipe: Recipe) -> ValidationResult
 
 // Execution
-skill_run_interactive(app: AppHandle, term_mgr: State<TerminalManager>, path: String, host_id: String, variables: HashMap<String, String>, cols?: u16, rows?: u16) -> InteractiveExecution
-skill_interactive_get(execution_id: String) -> InteractiveExecution
-skill_interactive_list() -> Vec<InteractiveExecution>
-skill_interactive_pause(execution_id: String) -> ()
-skill_interactive_resume(app: AppHandle, term_mgr: State<TerminalManager>, execution_id: String) -> InteractiveExecution
-skill_interactive_cancel(execution_id: String) -> ()
-skill_interactive_send(execution_id: String, data: String) -> ()
-skill_interactive_interrupt(execution_id: String) -> ()
-skill_interactive_lock(execution_id: String, locked: bool) -> ()
-skill_interactive_exec_command(execution_id: String, command: String) -> ()
-skill_interactive_mark_complete(execution_id: String, step_id: String) -> ()
+recipe_run_interactive(app: AppHandle, term_mgr: State<TerminalManager>, path: String, host_id: String, variables: HashMap<String, String>, cols?: u16, rows?: u16) -> InteractiveExecution
+recipe_interactive_get(execution_id: String) -> InteractiveExecution
+recipe_interactive_list() -> Vec<InteractiveExecution>
+recipe_interactive_pause(execution_id: String) -> ()
+recipe_interactive_resume(app: AppHandle, term_mgr: State<TerminalManager>, execution_id: String) -> InteractiveExecution
+recipe_interactive_cancel(execution_id: String) -> ()
+recipe_interactive_send(execution_id: String, data: String) -> ()
+recipe_interactive_interrupt(execution_id: String) -> ()
+recipe_interactive_lock(execution_id: String, locked: bool) -> ()
+recipe_interactive_exec_command(execution_id: String, command: String) -> ()
+recipe_interactive_mark_complete(execution_id: String, step_id: String) -> ()
 
 // Events (emitted to frontend)
-skill:interactive_started { execution_id, terminal_id, skill_name, host_id, steps }
-skill:execution_updated { execution_id, status }
-skill:step_started { execution_id, step_id, step_index }
-skill:step_progress { execution_id, step_id, progress }
-skill:step_completed { execution_id, step_id }
-skill:step_failed { execution_id, step_id, error }
-skill:execution_completed { execution_id }
-skill:execution_failed { execution_id, error }
-skill:execution_cancelled { execution_id }
+recipe:interactive_started { execution_id, terminal_id, recipe_name, host_id, steps }
+recipe:execution_updated { execution_id, status }
+recipe:step_started { execution_id, step_id, step_index }
+recipe:step_progress { execution_id, step_id, progress }
+recipe:step_completed { execution_id, step_id }
+recipe:step_failed { execution_id, step_id, error }
+recipe:execution_completed { execution_id }
+recipe:execution_failed { execution_id, error }
+recipe:execution_cancelled { execution_id }
 ```
 
 ## Migration from Session
 
-The existing Session system can be expressed as a Skill:
+The existing Session system can be expressed as a Recipe:
 
 ```toml
-[skill]
+[recipe]
 name = "session-${name}"
 
 [[step]]

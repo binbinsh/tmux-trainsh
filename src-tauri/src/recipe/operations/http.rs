@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::error::AppError;
-use crate::skill::types::HttpMethod;
+use crate::recipe::types::HttpMethod;
 
 /// Make an HTTP request
 pub async fn request(

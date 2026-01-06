@@ -16,16 +16,16 @@ import type {
   HostPricing,
   ScamalyticsInfo,
   InteractiveExecution,
-  InteractiveSkillEvent,
-  SkillLogAppendedEvent,
+  InteractiveRecipeEvent,
+  RecipeLogAppendedEvent,
   LogEntry,
   LogSnapshot,
   LogStreamStatus,
   PricingSettings,
   PricingSource,
-  SkillRunLogChunk,
-  Skill,
-  SkillSummary,
+  RecipeRunLogChunk,
+  Recipe,
+  RecipeSummary,
   RemoteJobMeta,
   Session,
   SessionConfig,
@@ -50,10 +50,10 @@ import type {
   VastPricingRates,
 } from "./types";
 import {
-  loadSkillFolderAssignments,
-  renameSkillPathInAssignments,
-  saveSkillFolderAssignments,
-} from "./skill-folders";
+  loadRecipeFolderAssignments,
+  renameRecipePathInAssignments,
+  saveRecipeFolderAssignments,
+} from "./recipe-folders";
 
 // ============================================================
 // Error Handling
@@ -1221,115 +1221,115 @@ export function useSyncVastPricing() {
 }
 
 // ============================================================
-// Skill API
+// Recipe API
 // ============================================================
 
-export const skillApi = {
-  /** List all skills */
-  list: async (): Promise<SkillSummary[]> => {
-    return await safeInvoke<SkillSummary[]>("skill_list");
+export const recipeApi = {
+  /** List all recipes */
+  list: async (): Promise<RecipeSummary[]> => {
+    return await safeInvoke<RecipeSummary[]>("recipe_list");
   },
 
-  /** Get a skill by path */
-  get: async (path: string): Promise<Skill> => {
-    return await safeInvoke<Skill>("skill_get", { path });
+  /** Get a recipe by path */
+  get: async (path: string): Promise<Recipe> => {
+    return await safeInvoke<Recipe>("recipe_get", { path });
   },
 
-  /** Save a skill to a file */
-  save: async (path: string, skill: Skill): Promise<string> => {
-    return await safeInvoke<string>("skill_save", { path, skill });
+  /** Save a recipe to a file */
+  save: async (path: string, recipe: Recipe): Promise<string> => {
+    return await safeInvoke<string>("recipe_save", { path, recipe });
   },
 
-  /** Delete a skill file */
+  /** Delete a recipe file */
   delete: async (path: string): Promise<void> => {
-    await safeInvoke("skill_delete", { path });
+    await safeInvoke("recipe_delete", { path });
   },
 
-  /** Validate a skill */
-  validate: async (skill: Skill): Promise<ValidationResult> => {
-    return await safeInvoke<ValidationResult>("skill_validate", { skill });
+  /** Validate a recipe */
+  validate: async (recipe: Recipe): Promise<ValidationResult> => {
+    return await safeInvoke<ValidationResult>("recipe_validate", { recipe });
   },
 
-  /** Create a new empty skill */
+  /** Create a new empty recipe */
   create: async (name: string): Promise<string> => {
-    return await safeInvoke<string>("skill_create", { name });
+    return await safeInvoke<string>("recipe_create", { name });
   },
 
-  /** Import a skill from external file */
+  /** Import a recipe from external file */
   import: async (sourcePath: string): Promise<string> => {
-    return await safeInvoke<string>("skill_import", { sourcePath });
+    return await safeInvoke<string>("recipe_import", { sourcePath });
   },
 
-  /** Export a skill to external file */
-  export: async (skillPath: string, destPath: string): Promise<void> => {
-    await safeInvoke("skill_export", { skillPath, destPath });
+  /** Export a recipe to external file */
+  export: async (recipePath: string, destPath: string): Promise<void> => {
+    await safeInvoke("recipe_export", { recipePath, destPath });
   },
 
-  /** Duplicate a skill */
+  /** Duplicate a recipe */
   duplicate: async (path: string, newName: string): Promise<string> => {
-    return await safeInvoke<string>("skill_duplicate", { path, newName });
+    return await safeInvoke<string>("recipe_duplicate", { path, newName });
   },
 };
 
 // ============================================================
-// Skill Hooks
+// Recipe Hooks
 // ============================================================
 
-export function useSkills() {
+export function useRecipes() {
   return useQuery({
-    queryKey: ["skills"],
-    queryFn: skillApi.list,
+    queryKey: ["recipes"],
+    queryFn: recipeApi.list,
     staleTime: 30_000,
   });
 }
 
-export function useSkill(path: string | null) {
+export function useRecipe(path: string | null) {
   return useQuery({
-    queryKey: ["skills", path],
-    queryFn: () => skillApi.get(path!),
+    queryKey: ["recipes", path],
+    queryFn: () => recipeApi.get(path!),
     enabled: !!path,
   });
 }
 
-export function useCreateSkill() {
+export function useCreateRecipe() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: skillApi.create,
+    mutationFn: recipeApi.create,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills"] });
+      queryClient.invalidateQueries({ queryKey: ["recipes"] });
     },
   });
 }
 
-export function useSaveSkill() {
+export function useSaveRecipe() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ path, skill }: { path: string; skill: Skill }) =>
-      skillApi.save(path, skill),
+    mutationFn: ({ path, recipe }: { path: string; recipe: Recipe }) =>
+      recipeApi.save(path, recipe),
     onSuccess: (newPath, variables) => {
       if (newPath !== variables.path) {
-        const assignments = loadSkillFolderAssignments();
-        const next = renameSkillPathInAssignments(assignments, variables.path, newPath);
+        const assignments = loadRecipeFolderAssignments();
+        const next = renameRecipePathInAssignments(assignments, variables.path, newPath);
         if (next !== assignments) {
-          saveSkillFolderAssignments(next);
+          saveRecipeFolderAssignments(next);
         }
       }
 
-      // Keep the skill detail + list caches in sync so navigation shows the latest content.
-      queryClient.setQueryData(["skills", newPath], variables.skill);
+      // Keep the recipe detail + list caches in sync so navigation shows the latest content.
+      queryClient.setQueryData(["recipes", newPath], variables.recipe);
       if (newPath !== variables.path) {
-        queryClient.removeQueries({ queryKey: ["skills", variables.path] });
+        queryClient.removeQueries({ queryKey: ["recipes", variables.path] });
       }
 
-      queryClient.setQueryData<SkillSummary[]>(["skills"], (prev) => {
+      queryClient.setQueryData<RecipeSummary[]>(["recipes"], (prev) => {
         if (!prev) return prev;
 
-        const nextSummary: SkillSummary = {
+        const nextSummary: RecipeSummary = {
           path: newPath,
-          name: variables.skill.name,
-          version: variables.skill.version,
-          description: variables.skill.description ?? null,
-          step_count: variables.skill.steps.length,
+          name: variables.recipe.name,
+          version: variables.recipe.version,
+          description: variables.recipe.description ?? null,
+          step_count: variables.recipe.steps.length,
         };
 
         const oldIndex = prev.findIndex((r) => r.path === variables.path);
@@ -1346,39 +1346,39 @@ export function useSaveSkill() {
   });
 }
 
-export function useDeleteSkill() {
+export function useDeleteRecipe() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: skillApi.delete,
+    mutationFn: recipeApi.delete,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills"] });
+      queryClient.invalidateQueries({ queryKey: ["recipes"] });
     },
   });
 }
 
-export function useValidateSkill() {
+export function useValidateRecipe() {
   return useMutation({
-    mutationFn: skillApi.validate,
+    mutationFn: recipeApi.validate,
   });
 }
 
-export function useDuplicateSkill() {
+export function useDuplicateRecipe() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ path, newName }: { path: string; newName: string }) =>
-      skillApi.duplicate(path, newName),
+      recipeApi.duplicate(path, newName),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills"] });
+      queryClient.invalidateQueries({ queryKey: ["recipes"] });
     },
   });
 }
 
 // ============================================================
-// Interactive Skill Execution API
+// Interactive Recipe Execution API
 // ============================================================
 
-export const interactiveSkillApi = {
-  /** Start an interactive skill execution with terminal output */
+export const interactiveRecipeApi = {
+  /** Start an interactive recipe execution with terminal output */
   run: async (params: {
     path: string;
     hostId: string;
@@ -1388,7 +1388,7 @@ export const interactiveSkillApi = {
     startStepId?: string | null;
     startImmediately?: boolean | null;
   }): Promise<InteractiveExecution> => {
-    return await safeInvoke<InteractiveExecution>("skill_run_interactive", {
+    return await safeInvoke<InteractiveExecution>("recipe_run_interactive", {
       path: params.path,
       hostId: params.hostId,
       variables: params.variables ?? {},
@@ -1399,7 +1399,7 @@ export const interactiveSkillApi = {
     });
   },
 
-  /** Prepare an interactive skill execution (pending, manual start) */
+  /** Prepare an interactive recipe execution (pending, manual start) */
   prepare: async (params: {
     path: string;
     hostId: string;
@@ -1408,7 +1408,7 @@ export const interactiveSkillApi = {
     rows?: number;
     startStepId?: string | null;
   }): Promise<InteractiveExecution> => {
-    return await interactiveSkillApi.run({
+    return await interactiveRecipeApi.run({
       ...params,
       startImmediately: false,
     });
@@ -1416,77 +1416,77 @@ export const interactiveSkillApi = {
 
   /** Send data to the interactive terminal (for human intervention) */
   send: async (executionId: string, data: string): Promise<void> => {
-    await safeInvoke("skill_interactive_send", { executionId, data });
+    await safeInvoke("recipe_interactive_send", { executionId, data });
   },
 
   /** Send interrupt (Ctrl+C) to the interactive execution */
   interrupt: async (executionId: string): Promise<void> => {
-    await safeInvoke("skill_interactive_interrupt", { executionId });
+    await safeInvoke("recipe_interactive_interrupt", { executionId });
   },
 
   /** Lock/unlock intervention */
   setLock: async (executionId: string, locked: boolean): Promise<void> => {
-    await safeInvoke("skill_interactive_lock", { executionId, locked });
+    await safeInvoke("recipe_interactive_lock", { executionId, locked });
   },
 
   /** Get execution state */
   get: async (executionId: string): Promise<InteractiveExecution> => {
-    return await safeInvoke<InteractiveExecution>("skill_interactive_get", { executionId });
+    return await safeInvoke<InteractiveExecution>("recipe_interactive_get", { executionId });
   },
 
   /** List all interactive executions */
   list: async (): Promise<InteractiveExecution[]> => {
-    return await safeInvoke<InteractiveExecution[]>("skill_interactive_list");
+    return await safeInvoke<InteractiveExecution[]>("recipe_interactive_list");
   },
 
-  /** Execute a command in the interactive terminal (used by skill runner) */
+  /** Execute a command in the interactive terminal (used by recipe runner) */
   execCommand: async (executionId: string, stepId: string, command: string): Promise<void> => {
-    await safeInvoke("skill_interactive_exec_command", { executionId, stepId, command });
+    await safeInvoke("recipe_interactive_exec_command", { executionId, stepId, command });
   },
 
   /** Pause an interactive execution */
   pause: async (executionId: string): Promise<void> => {
-    await safeInvoke("skill_interactive_pause", { executionId });
+    await safeInvoke("recipe_interactive_pause", { executionId });
   },
 
   /** Resume a paused interactive execution */
   resume: async (executionId: string): Promise<InteractiveExecution> => {
-    return await safeInvoke<InteractiveExecution>("skill_interactive_resume", { executionId });
+    return await safeInvoke<InteractiveExecution>("recipe_interactive_resume", { executionId });
   },
 
   /** Start a prepared (pending) interactive execution */
   start: async (executionId: string): Promise<InteractiveExecution> => {
-    return await safeInvoke<InteractiveExecution>("skill_interactive_start", { executionId });
+    return await safeInvoke<InteractiveExecution>("recipe_interactive_start", { executionId });
   },
 
   /** Reconnect terminal for a prepared (pending) execution */
   reconnectTerminal: async (executionId: string): Promise<InteractiveExecution> => {
-    return await safeInvoke<InteractiveExecution>("skill_interactive_reconnect_terminal", { executionId });
+    return await safeInvoke<InteractiveExecution>("recipe_interactive_reconnect_terminal", { executionId });
   },
 
   /** Cancel an interactive execution */
   cancel: async (executionId: string): Promise<void> => {
-    await safeInvoke("skill_interactive_cancel", { executionId });
+    await safeInvoke("recipe_interactive_cancel", { executionId });
   },
 
   /** Skip a pending/waiting step */
   skipStep: async (executionId: string, stepId: string): Promise<void> => {
-    await safeInvoke("skill_interactive_skip_step", { executionId, stepId });
+    await safeInvoke("recipe_interactive_skip_step", { executionId, stepId });
   },
 
   /** Toggle skip for a step (best for prepared/pending executions) */
   toggleSkipStep: async (executionId: string, stepId: string): Promise<void> => {
-    await safeInvoke("skill_interactive_toggle_skip_step", { executionId, stepId });
+    await safeInvoke("recipe_interactive_toggle_skip_step", { executionId, stepId });
   },
 
   /** Mark all steps as complete and finish execution */
   markComplete: async (executionId: string): Promise<void> => {
-    await safeInvoke("skill_interactive_mark_complete", { executionId });
+    await safeInvoke("recipe_interactive_mark_complete", { executionId });
   },
 
   /** Send user input to a command waiting for input (password, y/n, etc.) */
   sendInput: async (executionId: string, input: string): Promise<void> => {
-    await safeInvoke("skill_interactive_send_input", { executionId, input });
+    await safeInvoke("recipe_interactive_send_input", { executionId, input });
   },
 
   /** Read persisted execution logs (JSONL) */
@@ -1494,8 +1494,8 @@ export const interactiveSkillApi = {
     executionId: string;
     cursor?: number | null;
     maxBytes?: number | null;
-  }): Promise<SkillRunLogChunk> => {
-    return await safeInvoke<SkillRunLogChunk>("skill_interactive_log_read", {
+  }): Promise<RecipeRunLogChunk> => {
+    return await safeInvoke<RecipeRunLogChunk>("recipe_interactive_log_read", {
       executionId: params.executionId,
       cursor: params.cursor ?? null,
       maxBytes: params.maxBytes ?? null,
@@ -1504,32 +1504,32 @@ export const interactiveSkillApi = {
 
   /** Clear persisted execution logs */
   logClear: async (executionId: string): Promise<void> => {
-    await safeInvoke("skill_interactive_log_clear", { executionId });
+    await safeInvoke("recipe_interactive_log_clear", { executionId });
   },
 };
 
 // ============================================================
-// Interactive Skill Event Listeners
+// Interactive Recipe Event Listeners
 // ============================================================
 
-/** Listen for interactive skill events */
-export async function listenInteractiveSkillEvents(
-  callback: (event: InteractiveSkillEvent) => void
+/** Listen for interactive recipe events */
+export async function listenInteractiveRecipeEvents(
+  callback: (event: InteractiveRecipeEvent) => void
 ): Promise<UnlistenFn> {
   const unlisteners: UnlistenFn[] = [];
   
   const eventTypes = [
-    "skill:interactive_started",
-    "skill:connected",
-    "skill:command_pending",
-    "skill:command_sending",
-    "skill:command_sent",
-    "skill:intervention_lock_changed",
-    "skill:waiting_for_confirmation",
+    "recipe:interactive_started",
+    "recipe:connected",
+    "recipe:command_pending",
+    "recipe:command_sending",
+    "recipe:command_sent",
+    "recipe:intervention_lock_changed",
+    "recipe:waiting_for_confirmation",
   ];
   
   for (const eventType of eventTypes) {
-    const unlisten = await listen<InteractiveSkillEvent>(eventType, (event) => {
+    const unlisten = await listen<InteractiveRecipeEvent>(eventType, (event) => {
       callback(event.payload);
     });
     unlisteners.push(unlisten);
@@ -1543,22 +1543,22 @@ export async function listenInteractiveSkillEvents(
 }
 
 /** Listen for persisted log appends for a specific execution */
-export async function listenSkillLogAppended(
-  callback: (event: SkillLogAppendedEvent) => void
+export async function listenRecipeLogAppended(
+  callback: (event: RecipeLogAppendedEvent) => void
 ): Promise<UnlistenFn> {
-  return await listen<SkillLogAppendedEvent>("skill:log_appended", (event) => {
+  return await listen<RecipeLogAppendedEvent>("recipe:log_appended", (event) => {
     callback(event.payload);
   });
 }
 
 // ============================================================
-// Interactive Skill Hooks
+// Interactive Recipe Hooks
 // ============================================================
 
 export function useInteractiveExecutions() {
   return useQuery({
     queryKey: ["interactive-executions"],
-    queryFn: interactiveSkillApi.list,
+    queryFn: interactiveRecipeApi.list,
     refetchInterval: 5_000,
     staleTime: 3_000,
   });
@@ -1567,7 +1567,7 @@ export function useInteractiveExecutions() {
 export function useInteractiveExecution(id: string | null) {
   const queryClient = useQueryClient();
   
-  // Listen for skill events to trigger immediate refetch
+  // Listen for recipe events to trigger immediate refetch
   useEffect(() => {
     if (!id) return;
     
@@ -1576,20 +1576,20 @@ export function useInteractiveExecution(id: string | null) {
     const setupListeners = async () => {
       const { listen } = await import("@tauri-apps/api/event");
       
-      // Listen for any skill event that might update execution state
+      // Listen for any recipe event that might update execution state
       const events = [
-        "skill:interactive_started",
-        "skill:execution_updated",
-        "skill:step_started",
-        "skill:step_completed", 
-        "skill:step_failed",
-        "skill:step_progress",
-        "skill:command_sending",
-        "skill:command_failed",
-        "skill:execution_completed",
-        "skill:execution_failed",
-        "skill:execution_cancelled",
-        "skill:intervention_lock_changed",
+        "recipe:interactive_started",
+        "recipe:execution_updated",
+        "recipe:step_started",
+        "recipe:step_completed", 
+        "recipe:step_failed",
+        "recipe:step_progress",
+        "recipe:command_sending",
+        "recipe:command_failed",
+        "recipe:execution_completed",
+        "recipe:execution_failed",
+        "recipe:execution_cancelled",
+        "recipe:intervention_lock_changed",
       ];
       
       const unlisteners: (() => void)[] = [];
@@ -1607,7 +1607,7 @@ export function useInteractiveExecution(id: string | null) {
 	          } | null;
 	        }>(eventName, (event) => {
 	          if (event.payload.execution_id === id) {
-	            // Debug log for skill events
+	            // Debug log for recipe events
 	            console.log("[useInteractiveExecution] event received:", eventName, event.payload);
 	            queryClient.setQueryData<InteractiveExecution | undefined>(
 	              ["interactive-executions", id],
@@ -1620,7 +1620,7 @@ export function useInteractiveExecution(id: string | null) {
                 const next: InteractiveExecution = JSON.parse(JSON.stringify(prev));
                 const stepId = event.payload.step_id;
 
-                if (eventName === "skill:execution_updated" && event.payload.status) {
+                if (eventName === "recipe:execution_updated" && event.payload.status) {
                   next.status = event.payload.status as InteractiveExecution["status"];
                   // Also update pending_input if provided in the event
                   if (event.payload.pending_input !== undefined) {
@@ -1634,10 +1634,10 @@ export function useInteractiveExecution(id: string | null) {
                     next.pending_input = null;
                   }
                 }
-                if (eventName === "skill:execution_completed") next.status = "completed";
-                if (eventName === "skill:execution_failed") next.status = "failed";
-                if (eventName === "skill:execution_cancelled") next.status = "cancelled";
-                if (eventName === "skill:step_progress") {
+                if (eventName === "recipe:execution_completed") next.status = "completed";
+                if (eventName === "recipe:execution_failed") next.status = "failed";
+                if (eventName === "recipe:execution_cancelled") next.status = "cancelled";
+                if (eventName === "recipe:step_progress") {
                   const stepIdForProgress = event.payload.step_id;
                   if (stepIdForProgress) {
                     const map = { ...(prev.step_progress ?? {}) };
@@ -1653,10 +1653,10 @@ export function useInteractiveExecution(id: string | null) {
 	                if (stepId) {
 	                  const steps: InteractiveExecution["steps"] = prev.steps.map((step) => {
 	                    if (step.step_id !== stepId) return step;
-	                    if (eventName === "skill:step_started") return { ...step, status: "running" };
-	                    if (eventName === "skill:step_completed") return { ...step, status: "success" };
-	                    if (eventName === "skill:step_failed") return { ...step, status: "failed" };
-	                    if (eventName === "skill:command_sending") return { ...step, status: "running" };
+	                    if (eventName === "recipe:step_started") return { ...step, status: "running" };
+	                    if (eventName === "recipe:step_completed") return { ...step, status: "success" };
+	                    if (eventName === "recipe:step_failed") return { ...step, status: "failed" };
+	                    if (eventName === "recipe:command_sending") return { ...step, status: "running" };
 	                    return step;
 	                  });
 	                  next.steps = steps;
@@ -1669,7 +1669,7 @@ export function useInteractiveExecution(id: string | null) {
 
             // For waiting_for_input status, force a refetch to ensure all subscribers are notified
             // This is needed because setQueryData may not trigger re-renders in all cases
-            if (eventName === "skill:execution_updated" && event.payload.status === "waiting_for_input") {
+            if (eventName === "recipe:execution_updated" && event.payload.status === "waiting_for_input") {
               console.log("[useInteractiveExecution] forcing refetch for waiting_for_input");
               // Use refetchQueries instead of invalidateQueries to ensure immediate update
               // The backend has already persisted pending_input, so refetch will get the correct data
@@ -1686,11 +1686,11 @@ export function useInteractiveExecution(id: string | null) {
               // (e.g., pending_input being cleared by stale refetch response).
               // The query has refetchInterval as a fallback for full state sync.
               const skipInvalidateEvents = [
-                "skill:execution_updated",
-                "skill:step_progress",
-                "skill:step_started",
-                "skill:step_completed",
-                "skill:step_failed",
+                "recipe:execution_updated",
+                "recipe:step_progress",
+                "recipe:step_started",
+                "recipe:step_completed",
+                "recipe:step_failed",
               ];
               if (!skipInvalidateEvents.includes(eventName)) {
                 queryClient.invalidateQueries({ queryKey: ["interactive-executions", id] });
@@ -1715,7 +1715,7 @@ export function useInteractiveExecution(id: string | null) {
     queryKey: ["interactive-executions", id],
     queryFn: async () => {
       console.log("[useInteractiveExecution] queryFn called for", id);
-      const result = await interactiveSkillApi.get(id!);
+      const result = await interactiveRecipeApi.get(id!);
       console.log("[useInteractiveExecution] queryFn result:", { status: result.status, pending_input: result.pending_input });
       return result;
     },
@@ -1725,13 +1725,13 @@ export function useInteractiveExecution(id: string | null) {
   });
 }
 
-export function useRunInteractiveSkill() {
+export function useRunInteractiveRecipe() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: interactiveSkillApi.run,
+    mutationFn: interactiveRecipeApi.run,
     onSuccess: (execution) => {
       // Immediately seed the query cache with the returned execution data
-      // This allows the sidebar to show the skill info instantly
+      // This allows the sidebar to show the recipe info instantly
       queryClient.setQueryData(
         ["interactive-executions", execution.id],
         execution
@@ -1741,16 +1741,16 @@ export function useRunInteractiveSkill() {
   });
 }
 
-export function useInteractiveSkillSend() {
+export function useInteractiveRecipeSend() {
   return useMutation({
     mutationFn: ({ executionId, data }: { executionId: string; data: string }) =>
-      interactiveSkillApi.send(executionId, data),
+      interactiveRecipeApi.send(executionId, data),
   });
 }
 
-export function useInteractiveSkillInterrupt() {
+export function useInteractiveRecipeInterrupt() {
   return useMutation({
-    mutationFn: interactiveSkillApi.interrupt,
+    mutationFn: interactiveRecipeApi.interrupt,
   });
 }
 

@@ -3,14 +3,14 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { Cable, ChevronDown, Loader2, MoreHorizontal, Pause, Play, RotateCcw, Send, SkipForward, Square, X } from "lucide-react";
 import {
-  interactiveSkillApi,
-  listenSkillLogAppended,
+  interactiveRecipeApi,
+  listenRecipeLogAppended,
   useInteractiveExecution,
   useHosts,
-  useSkill,
+  useRecipe,
 } from "@/lib/tauri-api";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Condition, SkillRunLogEntry, Step as SkillStep, ValueSource } from "@/lib/types";
+import type { Condition, RecipeRunLogEntry, Step as RecipeStep, ValueSource } from "@/lib/types";
 import {
   Button,
   Card,
@@ -107,7 +107,7 @@ function formatLogTimestamp(ts: string) {
   )}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
 }
 
-function streamBadgeClass(stream: SkillRunLogEntry["stream"]) {
+function streamBadgeClass(stream: RecipeRunLogEntry["stream"]) {
   switch (stream) {
     case "stdout":
       return "bg-success/10 text-success border-success/20";
@@ -120,12 +120,12 @@ function streamBadgeClass(stream: SkillRunLogEntry["stream"]) {
   }
 }
 
-function isMetaLogStream(stream: SkillRunLogEntry["stream"]) {
+function isMetaLogStream(stream: RecipeRunLogEntry["stream"]) {
   return stream === "system" || stream === "progress";
 }
 
 /** Check if timestamp should be shown (first entry or > 1 minute gap from previous) */
-function shouldShowTimestamp(entries: SkillRunLogEntry[], idx: number): boolean {
+function shouldShowTimestamp(entries: RecipeRunLogEntry[], idx: number): boolean {
   if (idx === 0) return true;
   const prev = new Date(entries[idx - 1].timestamp).getTime();
   const curr = new Date(entries[idx].timestamp).getTime();
@@ -358,7 +358,7 @@ function formatValueSource(
   return STEP_TITLE_FALLBACK;
 }
 
-function getOperationKey(step: SkillStep): OperationKey | null {
+function getOperationKey(step: RecipeStep): OperationKey | null {
   for (const key of OPERATION_KEYS) {
     if (key in step) return key;
   }
@@ -375,7 +375,7 @@ function formatVastTargetHint(
 }
 
 function formatShortCommandForStep(
-  def: SkillStep,
+  def: RecipeStep,
   variables: Record<string, string>,
   executionHostId: string,
   hostNameById: Map<string, string>
@@ -513,7 +513,7 @@ function formatShortCommandForStep(
 
 function formatStepTitleLine(
   stepId: string,
-  defStep: SkillStep | undefined,
+  defStep: RecipeStep | undefined,
   variables: Record<string, string>,
   executionHostId: string,
   hostNameById: Map<string, string>
@@ -525,16 +525,16 @@ function formatStepTitleLine(
   return shortCmd ? `${actionName}: ${shortCmd}` : actionName;
 }
 
-export function SkillRunPage() {
-  const { id } = useParams({ from: "/skills/runs/$id" });
+export function RecipeRunPage() {
+  const { id } = useParams({ from: "/recipes/runs/$id" });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const { data: execution, isLoading, isError, error } = useInteractiveExecution(id);
-  const { data: skill } = useSkill(execution?.skill_path ?? null);
+  const { data: recipe } = useRecipe(execution?.recipe_path ?? null);
   const { data: hosts } = useHosts();
 
-  const [logEntries, setLogEntries] = useState<SkillRunLogEntry[]>([]);
+  const [logEntries, setLogEntries] = useState<RecipeRunLogEntry[]>([]);
   const [logCursor, setLogCursor] = useState(0);
   const [logLoading, setLogLoading] = useState(false);
   const logCursorRef = useRef(0);
@@ -557,7 +557,7 @@ export function SkillRunPage() {
   // Focus input when pending_input appears
   useEffect(() => {
     if (execution?.pending_input) {
-      console.log("[SkillRunPage] pending_input detected, focusing input");
+      console.log("[RecipeRunPage] pending_input detected, focusing input");
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [execution?.pending_input]);
@@ -576,7 +576,7 @@ export function SkillRunPage() {
         pendingLogRefreshRef.current = false;
       }
       const startCursor = reset ? 0 : logCursorRef.current;
-      const chunk = await interactiveSkillApi.logRead({
+      const chunk = await interactiveRecipeApi.logRead({
         executionId: id,
         cursor: startCursor,
         maxBytes: 256 * 1024,
@@ -586,7 +586,7 @@ export function SkillRunPage() {
       logCursorRef.current = chunk.next_cursor;
     } catch (e) {
       // Ignore errors when loading logs (e.g., execution not found)
-      console.warn("[SkillRunPage] Failed to load logs:", e);
+      console.warn("[RecipeRunPage] Failed to load logs:", e);
     } finally {
       logLoadingRef.current = false;
       setLogLoading(false);
@@ -618,7 +618,7 @@ export function SkillRunPage() {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     (async () => {
-      unlisten = await listenSkillLogAppended((payload) => {
+      unlisten = await listenRecipeLogAppended((payload) => {
         if (payload.execution_id !== id) return;
         if (logLoadingRef.current) {
           pendingLogRefreshRef.current = true;
@@ -644,7 +644,7 @@ export function SkillRunPage() {
 
 
   const logsByStep = useMemo(() => {
-    const logs = new Map<string, SkillRunLogEntry[]>();
+    const logs = new Map<string, RecipeRunLogEntry[]>();
 
     for (const entry of logEntries) {
       const key = entry.step_id ?? RUN_SECTION_KEY;
@@ -665,13 +665,13 @@ export function SkillRunPage() {
     return map;
   }, [hosts]);
 
-  const skillStepsById = useMemo(() => {
-    const map = new Map<string, SkillStep>();
-    for (const step of skill?.steps ?? []) {
+  const recipeStepsById = useMemo(() => {
+    const map = new Map<string, RecipeStep>();
+    for (const step of recipe?.steps ?? []) {
       map.set(step.id, step);
     }
     return map;
-  }, [skill?.steps]);
+  }, [recipe?.steps]);
 
   const [action, setAction] = useState<null | "pause" | "resume" | "interrupt" | "cancel" | "restart" | "start" | "reconnect">(null);
   const [stepAction, setStepAction] = useState<null | { stepId: string; action: "rerun" | "skip" }>(null);
@@ -694,7 +694,7 @@ export function SkillRunPage() {
     if (!execution) return;
     setAction("pause");
     try {
-      await interactiveSkillApi.pause(execution.id);
+      await interactiveRecipeApi.pause(execution.id);
     } finally {
       setAction(null);
     }
@@ -703,7 +703,7 @@ export function SkillRunPage() {
     if (!execution) return;
     setAction("resume");
     try {
-      await interactiveSkillApi.resume(execution.id);
+      await interactiveRecipeApi.resume(execution.id);
     } finally {
       setAction(null);
     }
@@ -712,7 +712,7 @@ export function SkillRunPage() {
     if (!execution) return;
     setAction("interrupt");
     try {
-      await interactiveSkillApi.interrupt(execution.id);
+      await interactiveRecipeApi.interrupt(execution.id);
     } finally {
       setAction(null);
     }
@@ -721,7 +721,7 @@ export function SkillRunPage() {
     if (!execution) return;
     setAction("cancel");
     try {
-      await interactiveSkillApi.cancel(execution.id);
+      await interactiveRecipeApi.cancel(execution.id);
     } finally {
       setAction(null);
     }
@@ -731,7 +731,7 @@ export function SkillRunPage() {
     if (!execution || !execution.pending_input || inputSending) return;
     setInputSending(true);
     try {
-      await interactiveSkillApi.sendInput(execution.id, inputValue);
+      await interactiveRecipeApi.sendInput(execution.id, inputValue);
       setInputValue("");
     } finally {
       setInputSending(false);
@@ -754,21 +754,21 @@ export function SkillRunPage() {
     try {
       if (canCancel) {
         try {
-          await interactiveSkillApi.cancel(execution.id);
+          await interactiveRecipeApi.cancel(execution.id);
         } catch {
           // Ignore and still restart.
         }
       }
 
-      const restarted = await interactiveSkillApi.prepare({
-        path: execution.skill_path,
+      const restarted = await interactiveRecipeApi.prepare({
+        path: execution.recipe_path,
         hostId: execution.host_id,
         variables: sanitizeVariables(execution.variables),
         cols: execution.terminal?.cols ?? 120,
         rows: execution.terminal?.rows ?? 32,
         startStepId: startStepId ?? null,
       });
-      navigate({ to: `/skills/runs/${restarted.id}` });
+      navigate({ to: `/recipes/runs/${restarted.id}` });
     } finally {
       setAction(null);
     }
@@ -778,7 +778,7 @@ export function SkillRunPage() {
     if (!execution) return;
     setAction("start");
     try {
-      await interactiveSkillApi.start(execution.id);
+      await interactiveRecipeApi.start(execution.id);
     } finally {
       setAction(null);
     }
@@ -788,7 +788,7 @@ export function SkillRunPage() {
     if (!execution) return;
     setAction("reconnect");
     try {
-      const updated = await interactiveSkillApi.reconnectTerminal(execution.id);
+      const updated = await interactiveRecipeApi.reconnectTerminal(execution.id);
       queryClient.setQueryData(["interactive-executions", updated.id], updated);
     } finally {
       setAction(null);
@@ -799,21 +799,21 @@ export function SkillRunPage() {
     if (!execution) return;
     setStepAction({ stepId, action: "skip" });
     try {
-      await interactiveSkillApi.toggleSkipStep(execution.id, stepId);
+      await interactiveRecipeApi.toggleSkipStep(execution.id, stepId);
     } finally {
       setStepAction(null);
     }
   };
 
   const accentStyle = useMemo(() => {
-    const key = execution?.skill_path || execution?.skill_name || execution?.id || "skill";
+    const key = execution?.recipe_path || execution?.recipe_name || execution?.id || "recipe";
     const variable = projectAccentVar(key);
     const style: CSSProperties & Record<string, string> = {
       borderLeftColor: `rgb(var(${variable}))`,
-      "--skill-accent": `var(${variable})`,
+      "--recipe-accent": `var(${variable})`,
     };
     return style;
-  }, [execution?.id, execution?.skill_name, execution?.skill_path]);
+  }, [execution?.id, execution?.recipe_name, execution?.recipe_path]);
 
   if (isError) {
     const msg =
@@ -824,11 +824,11 @@ export function SkillRunPage() {
       <div className="h-full p-6">
         <Card>
           <CardHeader>
-            <CardTitle>Skill Run</CardTitle>
+            <CardTitle>Recipe Run</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="text-sm text-destructive">Failed to load execution: {msg}</div>
-            <Button onClick={() => navigate({ to: "/skills" })}>Back to Skills</Button>
+            <Button onClick={() => navigate({ to: "/recipes" })}>Back to Recipes</Button>
           </CardContent>
         </Card>
       </div>
@@ -968,7 +968,7 @@ export function SkillRunPage() {
                           onClick={() => void doReconnectTerminal()}
                           disabled={!canReconnect || action !== null}
                           className="h-7 px-2 text-xs gap-1.5"
-                          title={canReconnect ? "Reconnect terminal" : "Reconnect is available before starting the skill"}
+                          title={canReconnect ? "Reconnect terminal" : "Reconnect is available before starting the recipe"}
                         >
                           {action === "reconnect" ? (
                             <Loader2 className="size-3.5 animate-spin" />
@@ -1012,8 +1012,8 @@ export function SkillRunPage() {
                       style={accentStyle}
                       className={cn(
                         "w-full text-left flex items-center gap-2 px-3 h-7 transition-colors border-l-2",
-                        "bg-[rgb(var(--skill-accent)/0.08)] hover:bg-[rgb(var(--skill-accent)/0.12)]",
-                        isOpen && "bg-[rgb(var(--skill-accent)/0.16)]"
+                        "bg-[rgb(var(--recipe-accent)/0.08)] hover:bg-[rgb(var(--recipe-accent)/0.12)]",
+                        isOpen && "bg-[rgb(var(--recipe-accent)/0.16)]"
                       )}
                     >
                       <div className="flex items-center">
@@ -1109,7 +1109,7 @@ export function SkillRunPage() {
 	                      const stepLogs = logsByStep.get(step.step_id) ?? [];
 	                      const isOpen = !!expandedSections[step.step_id];
 	                      const headerProgress = execution.step_progress?.[step.step_id] ?? null;
-	                      const defStep = skillStepsById.get(step.step_id);
+	                      const defStep = recipeStepsById.get(step.step_id);
 	                      const title = formatStepTitleLine(
 	                        step.step_id,
 	                        defStep,
@@ -1130,8 +1130,8 @@ export function SkillRunPage() {
 	                      className={cn(
 	                        "w-full text-left flex items-center gap-2 px-3 h-9 transition-colors border-l-2",
 	                        "group",
-	                        "bg-[rgb(var(--skill-accent)/0.08)] hover:bg-[rgb(var(--skill-accent)/0.12)]",
-	                        isOpen && "bg-[rgb(var(--skill-accent)/0.16)]"
+	                        "bg-[rgb(var(--recipe-accent)/0.08)] hover:bg-[rgb(var(--recipe-accent)/0.12)]",
+	                        isOpen && "bg-[rgb(var(--recipe-accent)/0.16)]"
 	                      )}
 	                    >
                       <div className="flex items-center">

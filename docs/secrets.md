@@ -11,11 +11,11 @@ Secrets are stored in:
 
 This ensures your sensitive data is encrypted at rest and protected by your system's security features.
 
-## Using Secrets in Skills
+## Using Secrets in Recipes
 
 ### Syntax
 
-Reference secrets in your skill using the `${secret:name}` syntax:
+Reference secrets in your recipe using the `${secret:name}` syntax:
 
 ```toml
 [[step]]
@@ -34,7 +34,7 @@ wandb login --relogin
 
 | Syntax | Source | Storage | Use Case |
 |--------|--------|---------|----------|
-| `${var_name}` | Skill `variables` | Plain text in skill TOML | Paths, instance IDs, config values |
+| `${var_name}` | Recipe `variables` | Plain text in recipe TOML | Paths, instance IDs, config values |
 | `${secret:name}` | OS Keychain | Encrypted by OS | API keys, tokens, passwords |
 
 ## Managing Secrets
@@ -75,7 +75,7 @@ kaggle/key
 ## Example: Training with Private HuggingFace Model
 
 ```toml
-[skill]
+[recipe]
 name = "train-private-model"
 version = "1.0.0"
 
@@ -108,7 +108,7 @@ python train.py --model ${remote_workdir}/model --wandb-project my-project
 
 ## Security Notes
 
-1. **Secrets never appear in skill files** - Only references like `${secret:huggingface/token}` are stored
+1. **Secrets never appear in recipe files** - Only references like `${secret:huggingface/token}` are stored
 2. **Secrets are resolved at runtime** - Values are fetched from keychain only when the step executes
 3. **Secrets are injected via environment** - They're passed to remote commands as environment variables
 4. **Keychain access may require authentication** - Your OS may prompt for password/biometrics

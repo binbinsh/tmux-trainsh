@@ -740,10 +740,10 @@ export type PricingSettings = {
 };
 
 // ============================================================
-// Skill Types
+// Recipe Types
 // ============================================================
 
-export type Skill = {
+export type Recipe = {
   name: string;
   version: string;
   description?: string | null;
@@ -753,7 +753,7 @@ export type Skill = {
   steps: Step[];
 };
 
-/** Target host requirements for a skill */
+/** Target host requirements for a recipe */
 export type TargetRequirements = {
   /** Required host type */
   type: TargetHostType;
@@ -822,7 +822,7 @@ export type Operation =
 
 /** Run commands on target host with optional tmux support */
 export type RunCommandsOp = {
-  /** Host ID (if null, uses skill target) */
+  /** Host ID (if null, uses recipe target) */
   host_id?: string | null;
   /** Commands to execute (one per line) */
   commands: string;
@@ -865,7 +865,7 @@ export type TransferEndpoint =
 
 /** Git clone operation */
 export type GitCloneOp = {
-  /** Host ID (if null, uses skill target) */
+  /** Host ID (if null, uses recipe target) */
   host_id?: string | null;
   /** Repository URL */
   repo_url: string;
@@ -881,7 +881,7 @@ export type GitCloneOp = {
 
 /** HuggingFace download operation */
 export type HfDownloadOp = {
-  /** Host ID (if null, uses skill target) */
+  /** Host ID (if null, uses recipe target) */
   host_id?: string | null;
   /** Repo ID (e.g., "meta-llama/Llama-2-7b") */
   repo_id: string;
@@ -1056,7 +1056,7 @@ export type StepStatus =
   | "retrying"
   | "cancelled";
 
-export type SkillSummary = {
+export type RecipeSummary = {
   path: string;
   name: string;
   version: string;
@@ -1081,7 +1081,7 @@ export type ValidationWarning = {
 };
 
 // ============================================================
-// Interactive Skill Execution Types
+// Interactive Recipe Execution Types
 // ============================================================
 
 export type InteractiveStatus =
@@ -1116,8 +1116,8 @@ export type PendingInput = {
 
 export type InteractiveExecution = {
   id: string;
-  skill_path: string;
-  skill_name: string;
+  recipe_path: string;
+  recipe_name: string;
   terminal_id?: string | null;
   terminal: InteractiveTerminal;
   host_id: string;
@@ -1135,33 +1135,33 @@ export type InteractiveExecution = {
 };
 
 // ============================================================
-// Skill Run Logs (Persisted)
+// Recipe Run Logs (Persisted)
 // ============================================================
 
-export type SkillLogStream = "system" | "progress" | "stdout" | "stderr";
+export type RecipeLogStream = "system" | "progress" | "stdout" | "stderr";
 
-export type SkillRunLogEntry = {
+export type RecipeRunLogEntry = {
   timestamp: string;
-  stream: SkillLogStream;
+  stream: RecipeLogStream;
   step_id?: string | null;
   message: string;
 };
 
-export type SkillRunLogChunk = {
+export type RecipeRunLogChunk = {
   execution_id: string;
   cursor: number;
   next_cursor: number;
   eof: boolean;
-  entries: SkillRunLogEntry[];
+  entries: RecipeRunLogEntry[];
 };
 
-export type SkillLogAppendedEvent = {
+export type RecipeLogAppendedEvent = {
   execution_id: string;
-  entry: SkillRunLogEntry;
+  entry: RecipeRunLogEntry;
 };
 
-// Interactive skill events
-export type InteractiveSkillEvent =
+// Interactive recipe events
+export type InteractiveRecipeEvent =
   | { type: "interactive_started"; execution_id: string; terminal_id: string }
   | { type: "connected"; execution_id: string; host_id: string }
   | { type: "step_started"; execution_id: string; step_id: string; command?: string | null }

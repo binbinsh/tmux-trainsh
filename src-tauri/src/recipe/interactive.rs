@@ -1,6 +1,6 @@
-//! Interactive skill execution with PTY support
+//! Interactive recipe execution with PTY support
 //!
-//! This module enables skill execution through a terminal session,
+//! This module enables recipe execution through a terminal session,
 //! allowing real-time output display and human intervention.
 
 use std::collections::HashMap;
@@ -59,7 +59,7 @@ pub struct InteractiveTerminal {
 impl Default for InteractiveTerminal {
     fn default() -> Self {
         Self {
-            title: "Skill".to_string(),
+            title: "Recipe".to_string(),
             tmux_session: None,
             cols: default_terminal_cols(),
             rows: default_terminal_rows(),
@@ -84,10 +84,10 @@ pub struct PendingInput {
 pub struct InteractiveExecution {
     /// Unique execution ID
     pub id: String,
-    /// Skill path
-    pub skill_path: String,
-    /// Skill name
-    pub skill_name: String,
+    /// Recipe path
+    pub recipe_path: String,
+    /// Recipe name
+    pub recipe_name: String,
     /// Associated terminal session ID
     #[serde(default)]
     pub terminal_id: Option<String>,
@@ -219,7 +219,7 @@ pub enum InteractiveEvent {
 // ============================================================
 
 fn executions_dir() -> PathBuf {
-    doppio_data_dir().join("skill_executions")
+    doppio_data_dir().join("recipe_executions")
 }
 
 fn execution_path(id: &str) -> PathBuf {
@@ -256,7 +256,7 @@ async fn load_executions_from_disk() -> Result<Vec<InteractiveExecution>, AppErr
             Ok(data) => data,
             Err(e) => {
                 eprintln!(
-                    "[interactive_skill] Failed to read execution file {:?}: {}",
+                    "[interactive_recipe] Failed to read execution file {:?}: {}",
                     path, e
                 );
                 continue;
@@ -266,7 +266,7 @@ async fn load_executions_from_disk() -> Result<Vec<InteractiveExecution>, AppErr
             Ok(exec) => executions.push(exec),
             Err(e) => {
                 eprintln!(
-                    "[interactive_skill] Failed to parse execution file {:?}: {}",
+                    "[interactive_recipe] Failed to parse execution file {:?}: {}",
                     path, e
                 );
             }
@@ -277,7 +277,7 @@ async fn load_executions_from_disk() -> Result<Vec<InteractiveExecution>, AppErr
     Ok(executions)
 }
 
-/// Manages interactive skill executions
+/// Manages interactive recipe executions
 pub struct InteractiveRunner {
     /// Active interactive executions
     executions: RwLock<HashMap<String, Arc<InteractiveExecutionState>>>,
@@ -351,12 +351,12 @@ impl InteractiveRunner {
         execution.updated_at = Some(chrono::Utc::now().to_rfc3339());
     }
 
-    /// Start an interactive skill execution
+    /// Start an interactive recipe execution
     /// Returns (execution_id, terminal_id)
     pub async fn start(
         &self,
-        skill: Skill,
-        skill_path: String,
+        recipe: Recipe,
+        recipe_path: String,
         host_id: String,
         terminal_id: String,
         terminal: InteractiveTerminal,
@@ -366,7 +366,7 @@ impl InteractiveRunner {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Initialize step states
-        let steps: Vec<InteractiveStepState> = skill
+        let steps: Vec<InteractiveStepState> = recipe
             .steps
             .iter()
             .map(|s| InteractiveStepState {
@@ -379,8 +379,8 @@ impl InteractiveRunner {
 
         let execution = InteractiveExecution {
             id: id.clone(),
-            skill_path,
-            skill_name: skill.name.clone(),
+            recipe_path,
+            recipe_name: recipe.name.clone(),
             terminal_id: Some(terminal_id.clone()),
             terminal,
             host_id: host_id.clone(),

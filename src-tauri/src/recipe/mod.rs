@@ -1,7 +1,7 @@
-//! Skill System
+//! Recipe System
 //!
 //! A flexible workflow engine for composing and executing automation tasks.
-//! Skills define a DAG of steps that can run in parallel with dependency resolution.
+//! Recipes define a DAG of steps that can run in parallel with dependency resolution.
 
 pub mod execution;
 pub mod interactive;
@@ -166,12 +166,12 @@ async fn stream_terminal_output_until_marker(
         if let Some((marker_start, _marker_end, code)) = find_marker_with_exit_code(&buf, done_marker_prefix) {
             let out = buf[..marker_start].to_string();
             if !out.is_empty() {
-                append_skill_log(
+                append_recipe_log(
                     app,
                     log_lock,
                     exec_id,
                     Some(step_id),
-                    run_logs::SkillLogStream::Stdout,
+                    run_logs::RecipeLogStream::Stdout,
                     out,
                 )
                 .await;
@@ -180,12 +180,12 @@ async fn stream_terminal_output_until_marker(
         }
 
         if !buf.is_empty() {
-            append_skill_log(
+            append_recipe_log(
                 app,
                 log_lock,
                 exec_id,
                 Some(step_id),
-                run_logs::SkillLogStream::Stdout,
+                run_logs::RecipeLogStream::Stdout,
                 std::mem::take(&mut buf),
             )
             .await;
@@ -245,7 +245,7 @@ async fn stream_tmux_pane_until_marker(
         }
 
         // Capture enough scrollback to reliably include the begin/done markers.
-        let capture = crate::skill::operations::tmux::capture_pane_advanced(
+        let capture = crate::recipe::operations::tmux::capture_pane_advanced(
             host_id,
             tmux_session,
             Some(-5000),
@@ -256,12 +256,12 @@ async fn stream_tmux_pane_until_marker(
         let capture = match capture {
             Ok(out) => out,
             Err(e) => {
-                append_skill_log(
+                append_recipe_log(
                     app,
                     log_lock,
                     exec_id,
                     Some(step_id),
-                    run_logs::SkillLogStream::System,
+                    run_logs::RecipeLogStream::System,
                     format!("tmux capture-pane failed, falling back to raw terminal stream: {e}"),
                 )
                 .await;
@@ -313,7 +313,7 @@ async fn stream_tmux_pane_until_marker(
                     .set_step_progress(exec_id, step_id, Some(progress.to_string()))
                     .await;
                 let _ = app.emit(
-                    "skill:step_progress",
+                    "recipe:step_progress",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "step_id": step_id,
@@ -338,12 +338,12 @@ async fn stream_tmux_pane_until_marker(
         if !new_lines.is_empty() {
             let mut msg = new_lines.join("\n");
             msg.push('\n');
-            append_skill_log(
+            append_recipe_log(
                 app,
                 log_lock,
                 exec_id,
                 Some(step_id),
-                run_logs::SkillLogStream::Stdout,
+                run_logs::RecipeLogStream::Stdout,
                 msg,
             )
             .await;
@@ -356,7 +356,7 @@ async fn stream_tmux_pane_until_marker(
             let runner = interactive::get_runner().await;
             let _ = runner.set_step_progress(exec_id, step_id, None).await;
             let _ = app.emit(
-                "skill:step_progress",
+                "recipe:step_progress",
                 serde_json::json!({
                     "execution_id": exec_id,
                     "step_id": step_id,
@@ -370,15 +370,15 @@ async fn stream_tmux_pane_until_marker(
     }
 }
 
-async fn append_skill_log(
+async fn append_recipe_log(
     app: &tauri::AppHandle,
     log_lock: &tokio::sync::Mutex<()>,
     execution_id: &str,
     step_id: Option<&str>,
-    stream: run_logs::SkillLogStream,
+    stream: run_logs::RecipeLogStream,
     message: String,
 ) {
-    let entry = run_logs::SkillLogEntry {
+    let entry = run_logs::RecipeLogEntry {
         timestamp: run_logs::now_rfc3339(),
         stream,
         step_id: step_id.map(|s| s.to_string()),
@@ -387,11 +387,11 @@ async fn append_skill_log(
 
     let _guard = log_lock.lock().await;
     if let Err(e) = run_logs::append_entry(execution_id, &entry).await {
-        eprintln!("[skill_log] Failed to append log: {}", e);
+        eprintln!("[recipe_log] Failed to append log: {}", e);
         return;
     }
     let _ = app.emit(
-        "skill:log_appended",
+        "recipe:log_appended",
         serde_json::json!({
             "execution_id": execution_id,
             "entry": entry,
@@ -399,7 +399,7 @@ async fn append_skill_log(
     );
 }
 
-fn skill_slug_from_name(name: &str) -> Result<String, AppError> {
+fn recipe_slug_from_name(name: &str) -> Result<String, AppError> {
     let mut out = String::new();
     let mut last_was_dash = false;
 
@@ -419,35 +419,35 @@ fn skill_slug_from_name(name: &str) -> Result<String, AppError> {
     let out = out.trim_matches('-').to_string();
     if out.is_empty() {
         return Err(AppError::invalid_input(
-            "Skill name must contain at least one alphanumeric character",
+            "Recipe name must contain at least one alphanumeric character",
         ));
     }
 
     Ok(out)
 }
 
-fn skill_path_for_name(skills_dir: &Path, name: &str) -> Result<PathBuf, AppError> {
-    Ok(skills_dir.join(format!("{}.toml", skill_slug_from_name(name)?)))
+fn recipe_path_for_name(recipes_dir: &Path, name: &str) -> Result<PathBuf, AppError> {
+    Ok(recipes_dir.join(format!("{}.toml", recipe_slug_from_name(name)?)))
 }
 
 // ============================================================
-// Skill Store
+// Recipe Store
 // ============================================================
 
-/// Manages skill storage and execution
-pub struct SkillStore {
-    skills_dir: PathBuf,
+/// Manages recipe storage and execution
+pub struct RecipeStore {
+    recipes_dir: PathBuf,
 }
 
-impl SkillStore {
+impl RecipeStore {
     pub fn new(data_dir: &Path) -> Self {
         Self {
-            skills_dir: data_dir.join("skills"),
+            recipes_dir: data_dir.join("recipes"),
         }
     }
 
-    fn skills_dir(&self) -> &PathBuf {
-        &self.skills_dir
+    fn recipes_dir(&self) -> &PathBuf {
+        &self.recipes_dir
     }
 }
 
@@ -455,13 +455,13 @@ impl SkillStore {
 // Tauri Commands
 // ============================================================
 
-/// List all skills in the skills directory
+/// List all recipes in the recipes directory
 #[tauri::command]
-pub async fn skill_list(
-    store: State<'_, Arc<RwLock<SkillStore>>>,
-) -> Result<Vec<SkillSummary>, AppError> {
+pub async fn recipe_list(
+    store: State<'_, Arc<RwLock<RecipeStore>>>,
+) -> Result<Vec<RecipeSummary>, AppError> {
     let store = store.read().await;
-    let dir = store.skills_dir();
+    let dir = store.recipes_dir();
 
     if !dir.exists() {
         return Ok(vec![]);
@@ -473,20 +473,20 @@ pub async fn skill_list(
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
         if path.extension().map_or(false, |e| e == "toml") {
-            match get_skill_summary(&path).await {
+            match get_recipe_summary(&path).await {
                 Ok(mut summary) => {
-                    match skill_path_for_name(dir, &summary.name) {
+                    match recipe_path_for_name(dir, &summary.name) {
                         Ok(desired_path) => {
                             if desired_path != path {
                                 if desired_path.exists() {
                                     eprintln!(
-                                        "Skill file name mismatch for {:?} (wanted {:?}) but destination exists; keeping original",
+                                        "Recipe file name mismatch for {:?} (wanted {:?}) but destination exists; keeping original",
                                         path, desired_path
                                     );
                                 } else if let Err(e) = tokio::fs::rename(&path, &desired_path).await
                                 {
                                     eprintln!(
-                                        "Failed to rename skill file {:?} -> {:?}: {}",
+                                        "Failed to rename recipe file {:?} -> {:?}: {}",
                                         path, desired_path, e
                                     );
                                 } else {
@@ -495,13 +495,13 @@ pub async fn skill_list(
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to derive skill filename for {:?}: {}", path, e);
+                            eprintln!("Failed to derive recipe filename for {:?}: {}", path, e);
                         }
                     }
                     summaries.push(summary)
                 }
                 Err(e) => {
-                    eprintln!("Failed to load skill {:?}: {}", path, e);
+                    eprintln!("Failed to load recipe {:?}: {}", path, e);
                 }
             }
         }
@@ -512,90 +512,90 @@ pub async fn skill_list(
     Ok(summaries)
 }
 
-/// Get a skill by path
+/// Get a recipe by path
 #[tauri::command]
-pub async fn skill_get(path: String) -> Result<Skill, AppError> {
-    load_skill(Path::new(&path)).await
+pub async fn recipe_get(path: String) -> Result<Recipe, AppError> {
+    load_recipe(Path::new(&path)).await
 }
 
-/// Save a skill to a file
+/// Save a recipe to a file
 #[tauri::command]
-pub async fn skill_save(
+pub async fn recipe_save(
     path: String,
-    skill: Skill,
-    store: State<'_, Arc<RwLock<SkillStore>>>,
+    recipe: Recipe,
+    store: State<'_, Arc<RwLock<RecipeStore>>>,
 ) -> Result<String, AppError> {
     let store = store.read().await;
-    let dir = store.skills_dir();
+    let dir = store.recipes_dir();
 
     tokio::fs::create_dir_all(dir)
         .await
-        .map_err(|e| AppError::io(format!("Failed to create skills directory: {e}")))?;
+        .map_err(|e| AppError::io(format!("Failed to create recipes directory: {e}")))?;
 
-    let desired_path = skill_path_for_name(dir, &skill.name)?;
+    let desired_path = recipe_path_for_name(dir, &recipe.name)?;
 
     let current_path = PathBuf::from(path);
     if current_path.exists() {
         if !current_path.starts_with(dir) {
-            return Err(AppError::invalid_input("Invalid skill path"));
+            return Err(AppError::invalid_input("Invalid recipe path"));
         }
 
         if current_path != desired_path {
             if desired_path.exists() {
                 return Err(AppError::invalid_input(
-                    "A skill with this name already exists",
+                    "A recipe with this name already exists",
                 ));
             }
 
             tokio::fs::rename(&current_path, &desired_path)
                 .await
-                .map_err(|e| AppError::io(format!("Failed to rename skill file: {e}")))?;
+                .map_err(|e| AppError::io(format!("Failed to rename recipe file: {e}")))?;
         }
     }
 
-    save_skill(&desired_path, &skill).await?;
+    save_recipe(&desired_path, &recipe).await?;
     Ok(desired_path.to_string_lossy().to_string())
 }
 
-/// Delete a skill file
+/// Delete a recipe file
 #[tauri::command]
-pub async fn skill_delete(path: String) -> Result<(), AppError> {
+pub async fn recipe_delete(path: String) -> Result<(), AppError> {
     let p = Path::new(&path);
     if p.exists() {
         tokio::fs::remove_file(p)
             .await
-            .map_err(|e| AppError::io(format!("Failed to delete skill: {e}")))?;
+            .map_err(|e| AppError::io(format!("Failed to delete recipe: {e}")))?;
     }
     Ok(())
 }
 
-/// Validate a skill
+/// Validate a recipe
 #[tauri::command]
-pub async fn skill_validate(skill: Skill) -> Result<ValidationResult, AppError> {
-    Ok(validate_skill(&skill))
+pub async fn recipe_validate(recipe: Recipe) -> Result<ValidationResult, AppError> {
+    Ok(validate_recipe(&recipe))
 }
 
-/// Create a new empty skill file
+/// Create a new empty recipe file
 #[tauri::command]
-pub async fn skill_create(
+pub async fn recipe_create(
     name: String,
-    store: State<'_, Arc<RwLock<SkillStore>>>,
+    store: State<'_, Arc<RwLock<RecipeStore>>>,
 ) -> Result<String, AppError> {
     let store = store.read().await;
-    let dir = store.skills_dir();
+    let dir = store.recipes_dir();
 
     tokio::fs::create_dir_all(dir)
         .await
-        .map_err(|e| AppError::io(format!("Failed to create skills directory: {e}")))?;
+        .map_err(|e| AppError::io(format!("Failed to create recipes directory: {e}")))?;
 
-    let path = skill_path_for_name(dir, &name)?;
+    let path = recipe_path_for_name(dir, &name)?;
     if path.exists() {
         return Err(AppError::invalid_input(
-            "A skill with this name already exists",
+            "A recipe with this name already exists",
         ));
     }
 
-    let skill = Skill {
+    let recipe = Recipe {
         name,
         version: "1.0.0".to_string(),
         description: None,
@@ -604,20 +604,20 @@ pub async fn skill_create(
         steps: vec![],
     };
 
-    save_skill(&path, &skill).await?;
+    save_recipe(&path, &recipe).await?;
 
     Ok(path.to_string_lossy().to_string())
 }
 
-/// Import a skill from a file
+/// Import a recipe from a file
 #[tauri::command]
-pub async fn skill_import(
+pub async fn recipe_import(
     source_path: String,
-    store: State<'_, Arc<RwLock<SkillStore>>>,
+    store: State<'_, Arc<RwLock<RecipeStore>>>,
 ) -> Result<String, AppError> {
-    // Load and validate the skill first
-    let skill = load_skill(Path::new(&source_path)).await?;
-    let validation = validate_skill(&skill);
+    // Load and validate the recipe first
+    let recipe = load_recipe(Path::new(&source_path)).await?;
+    let validation = validate_recipe(&recipe);
 
     if !validation.valid {
         let errors: Vec<String> = validation
@@ -626,55 +626,55 @@ pub async fn skill_import(
             .map(|e| e.message.clone())
             .collect();
         return Err(AppError::invalid_input(format!(
-            "Invalid skill: {}",
+            "Invalid recipe: {}",
             errors.join(", ")
         )));
     }
 
-    // Copy to skills directory
+    // Copy to recipes directory
     let store = store.read().await;
-    let dir = store.skills_dir();
+    let dir = store.recipes_dir();
     tokio::fs::create_dir_all(dir).await?;
 
-    let dest_path = skill_path_for_name(dir, &skill.name)?;
+    let dest_path = recipe_path_for_name(dir, &recipe.name)?;
     if dest_path.exists() {
         return Err(AppError::invalid_input(
-            "A skill with this name already exists",
+            "A recipe with this name already exists",
         ));
     }
-    save_skill(&dest_path, &skill).await?;
+    save_recipe(&dest_path, &recipe).await?;
 
     Ok(dest_path.to_string_lossy().to_string())
 }
 
-/// Export a skill to a file
+/// Export a recipe to a file
 #[tauri::command]
-pub async fn skill_export(skill_path: String, dest_path: String) -> Result<(), AppError> {
-    let skill = load_skill(Path::new(&skill_path)).await?;
-    save_skill(Path::new(&dest_path), &skill).await
+pub async fn recipe_export(recipe_path: String, dest_path: String) -> Result<(), AppError> {
+    let recipe = load_recipe(Path::new(&recipe_path)).await?;
+    save_recipe(Path::new(&dest_path), &recipe).await
 }
 
-/// Duplicate a skill
+/// Duplicate a recipe
 #[tauri::command]
-pub async fn skill_duplicate(
+pub async fn recipe_duplicate(
     path: String,
     new_name: String,
-    store: State<'_, Arc<RwLock<SkillStore>>>,
+    store: State<'_, Arc<RwLock<RecipeStore>>>,
 ) -> Result<String, AppError> {
-    let mut skill = load_skill(Path::new(&path)).await?;
-    skill.name = new_name.clone();
+    let mut recipe = load_recipe(Path::new(&path)).await?;
+    recipe.name = new_name.clone();
 
     let store = store.read().await;
-    let dir = store.skills_dir();
+    let dir = store.recipes_dir();
 
-    let new_path = skill_path_for_name(dir, &new_name)?;
+    let new_path = recipe_path_for_name(dir, &new_name)?;
     if new_path.exists() {
         return Err(AppError::invalid_input(
-            "A skill with this name already exists",
+            "A recipe with this name already exists",
         ));
     }
 
-    save_skill(&new_path, &skill).await?;
+    save_recipe(&new_path, &recipe).await?;
 
     Ok(new_path.to_string_lossy().to_string())
 }
@@ -686,10 +686,10 @@ pub async fn skill_duplicate(
 /// Special target value for local execution
 const LOCAL_TARGET: &str = "__local__";
 
-/// Start an interactive skill execution with terminal output
+/// Start an interactive recipe execution with terminal output
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn skill_run_interactive(
+pub async fn recipe_run_interactive(
     app: tauri::AppHandle,
     term_mgr: State<'_, crate::terminal::TerminalManager>,
     path: String,
@@ -703,9 +703,9 @@ pub async fn skill_run_interactive(
     use crate::terminal::TermSessionInfo;
     use tauri::Emitter;
 
-    // Load and validate skill
-    let skill = load_skill(Path::new(&path)).await?;
-    let validation = validate_skill(&skill);
+    // Load and validate recipe
+    let recipe = load_recipe(Path::new(&path)).await?;
+    let validation = validate_recipe(&recipe);
     if !validation.valid {
         let errors: Vec<String> = validation
             .errors
@@ -713,7 +713,7 @@ pub async fn skill_run_interactive(
             .map(|e| e.message.clone())
             .collect();
         return Err(AppError::invalid_input(format!(
-            "Skill validation failed: {}",
+            "Recipe validation failed: {}",
             errors.join(", ")
         )));
     }
@@ -728,7 +728,7 @@ pub async fn skill_run_interactive(
         Option<String>,
     ) = if is_local {
         // Local execution - open a local terminal
-        let title = format!("Skill: {} (Local)", skill.name);
+        let title = format!("Recipe: {} (Local)", recipe.name);
         let info = crate::terminal::open_local_inner(
             app.clone(),
             &term_mgr,
@@ -758,7 +758,7 @@ pub async fn skill_run_interactive(
                 .unwrap_or_else(|| format!("Vast #{}", vast_instance_id));
 
             let tmux_session = format!(
-                "skill-{}",
+                "recipe-{}",
                 uuid::Uuid::new_v4()
                     .to_string()
                     .split('-')
@@ -766,14 +766,14 @@ pub async fn skill_run_interactive(
                     .unwrap_or("exec")
             );
 
-            // If the skill contains a `vast_start` step, avoid probing SSH here (it can block the UI for ~20s).
+            // If the recipe contains a `vast_start` step, avoid probing SSH here (it can block the UI for ~20s).
             // We'll connect the terminal right after `vast_start` succeeds.
-            let defer_connect_after_start = skill
+            let defer_connect_after_start = recipe
                 .steps
                 .iter()
                 .any(|s| matches!(s.operation, types::Operation::VastStart(_)));
             if defer_connect_after_start {
-                let title = format!("Skill: {} (Waiting for Vast start)", skill.name);
+                let title = format!("Recipe: {} (Waiting for Vast start)", recipe.name);
                 let info = crate::terminal::open_local_inner(
                     app.clone(),
                     &term_mgr,
@@ -796,7 +796,7 @@ pub async fn skill_run_interactive(
                 };
 
                 if let Some(ssh) = ssh {
-                    let title = format!("Skill: {} on {}", skill.name, inst_label);
+                    let title = format!("Recipe: {} on {}", recipe.name, inst_label);
 
                     let info: TermSessionInfo = crate::terminal::open_ssh_tmux_inner_static(
                         app.clone(),
@@ -812,8 +812,8 @@ pub async fn skill_run_interactive(
 
                     (info, host_id.clone(), None, Some(tmux_session))
                 } else {
-                    // Vast instance may be stopped and not exposing SSH metadata yet. Still allow starting the skill.
-                    let title = format!("Skill: {} (Waiting for Vast SSH)", skill.name);
+                    // Vast instance may be stopped and not exposing SSH metadata yet. Still allow starting the recipe.
+                    let title = format!("Recipe: {} (Waiting for Vast SSH)", recipe.name);
                     let info = crate::terminal::open_local_inner(
                         app.clone(),
                         &term_mgr,
@@ -838,14 +838,14 @@ pub async fn skill_run_interactive(
                 .ok_or_else(|| AppError::invalid_input("Host has no SSH configuration"))?;
 
             let tmux_session = format!(
-                "skill-{}",
+                "recipe-{}",
                 uuid::Uuid::new_v4()
                     .to_string()
                     .split('-')
                     .next()
                     .unwrap_or("exec")
             );
-            let title = format!("Skill: {} on {}", skill.name, host.name);
+            let title = format!("Recipe: {} on {}", recipe.name, host.name);
 
             let info: TermSessionInfo = crate::terminal::open_ssh_tmux_inner_static(
                 app.clone(),
@@ -862,8 +862,8 @@ pub async fn skill_run_interactive(
         }
     };
 
-    // Merge skill variables with overrides
-    let mut merged_variables = skill.variables.clone();
+    // Merge recipe variables with overrides
+    let mut merged_variables = recipe.variables.clone();
     merged_variables.extend(variables.clone());
     // Add target variable if not present
     if !merged_variables.contains_key("target") {
@@ -888,7 +888,7 @@ pub async fn skill_run_interactive(
     let runner = interactive::get_runner().await;
     let (exec_id, term_id) = runner
         .start(
-            skill.clone(),
+            recipe.clone(),
             path.clone(),
             effective_host_id.clone(),
             term_info.id.clone(),
@@ -897,7 +897,7 @@ pub async fn skill_run_interactive(
         )
         .await?;
 
-    // If this execution is meant to be started manually, mark it inactive until `skill_interactive_start`.
+    // If this execution is meant to be started manually, mark it inactive until `recipe_interactive_start`.
     let auto_start = start_immediately.unwrap_or(true);
     if !auto_start {
         runner.set_active(&exec_id, false).await?;
@@ -907,7 +907,7 @@ pub async fn skill_run_interactive(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
     {
-        let step_order = execution::compute_execution_order(&skill.steps)?;
+        let step_order = execution::compute_execution_order(&recipe.steps)?;
         let mut skipped_steps = vec![];
         for sid in step_order {
             if sid == start_step_id {
@@ -918,12 +918,12 @@ pub async fn skill_run_interactive(
 
         if !skipped_steps.is_empty() {
             let log_lock = tokio::sync::Mutex::new(());
-            append_skill_log(
+            append_recipe_log(
                 &app,
                 &log_lock,
                 &exec_id,
                 None,
-                run_logs::SkillLogStream::System,
+                run_logs::RecipeLogStream::System,
                 format!(
                     "Restarting from step: {start_step_id} (skipping {} step(s))",
                     skipped_steps.len()
@@ -936,7 +936,7 @@ pub async fn skill_run_interactive(
                     .update_step_status(&exec_id, &sid, StepStatus::Skipped)
                     .await;
                 let _ = app.emit(
-                    "skill:step_skipped",
+                    "recipe:step_skipped",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "step_id": sid,
@@ -956,7 +956,7 @@ pub async fn skill_run_interactive(
                 completed.insert(s.step_id.clone());
             }
         }
-        for step in &skill.steps {
+        for step in &recipe.steps {
             if completed.contains(&step.id) {
                 continue;
             }
@@ -973,13 +973,13 @@ pub async fn skill_run_interactive(
     let execution = runner.get_execution(&exec_id).await?;
 
     // Emit event with terminal session info
-    // Emit event immediately so frontend can show the skill info
+    // Emit event immediately so frontend can show the recipe info
     let _ = app.emit(
-        "skill:interactive_started",
+        "recipe:interactive_started",
         serde_json::json!({
             "execution_id": exec_id,
             "terminal_id": term_id,
-            "skill_name": skill.name,
+            "recipe_name": recipe.name,
             "host_id": effective_host_id,
             "steps": execution.steps.iter().map(|s| serde_json::json!({
                 "step_id": s.step_id,
@@ -990,32 +990,32 @@ pub async fn skill_run_interactive(
     );
 
     if auto_start {
-        // Spawn background task to run the skill
+        // Spawn background task to run the recipe
         let exec_id_clone = exec_id.clone();
         let term_id_clone = term_id.clone();
         let app_clone = app.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = run_interactive_skill(
+            if let Err(e) = run_interactive_recipe(
                 app_clone,
                 exec_id_clone,
                 term_id_clone,
-                skill,
+                recipe,
                 merged_variables,
             )
             .await
             {
-                eprintln!("[interactive_skill] Error running skill: {:?}", e);
+                eprintln!("[interactive_recipe] Error running recipe: {:?}", e);
             }
         });
     } else {
         let log_lock = tokio::sync::Mutex::new(());
-        append_skill_log(
+        append_recipe_log(
             &app,
             &log_lock,
             &exec_id,
             None,
-            run_logs::SkillLogStream::System,
+            run_logs::RecipeLogStream::System,
             "Prepared. Waiting for manual start.".to_string(),
         )
         .await;
@@ -1024,12 +1024,12 @@ pub async fn skill_run_interactive(
     Ok(execution)
 }
 
-/// Background task to run an interactive skill
-async fn run_interactive_skill(
+/// Background task to run an interactive recipe
+async fn run_interactive_recipe(
     app: tauri::AppHandle,
     exec_id: String,
     term_id: String,
-    skill: Skill,
+    recipe: Recipe,
     variables: HashMap<String, String>,
 ) -> Result<(), AppError> {
     use std::collections::{HashMap, HashSet};
@@ -1040,13 +1040,13 @@ async fn run_interactive_skill(
 
     let term_mgr = app.state::<crate::terminal::TerminalManager>();
     let log_lock = Arc::new(tokio::sync::Mutex::new(()));
-    append_skill_log(
+    append_recipe_log(
         &app,
         log_lock.as_ref(),
         &exec_id,
         None,
-        run_logs::SkillLogStream::System,
-        format!("Execution started: {}", skill.name),
+        run_logs::RecipeLogStream::System,
+        format!("Execution started: {}", recipe.name),
     )
     .await;
 
@@ -1055,14 +1055,14 @@ async fn run_interactive_skill(
         .take_control_receiver(&exec_id)
         .await?;
 
-    let step_order = execution::compute_execution_order(&skill.steps)?;
-    let step_index: HashMap<String, usize> = skill
+    let step_order = execution::compute_execution_order(&recipe.steps)?;
+    let step_index: HashMap<String, usize> = recipe
         .steps
         .iter()
         .enumerate()
         .map(|(index, step)| (step.id.clone(), index))
         .collect();
-    let step_map: HashMap<String, Step> = skill
+    let step_map: HashMap<String, Step> = recipe
         .steps
         .iter()
         .cloned()
@@ -1090,7 +1090,7 @@ async fn run_interactive_skill(
         }
     }
 
-    for step in &skill.steps {
+    for step in &recipe.steps {
         if completed.contains(&step.id) {
             continue;
         }
@@ -1111,7 +1111,7 @@ async fn run_interactive_skill(
         .await?;
 
     let _ = app.emit(
-        "skill:execution_updated",
+        "recipe:execution_updated",
         serde_json::json!({
             "execution_id": exec_id,
             "status": "running",
@@ -1120,7 +1120,7 @@ async fn run_interactive_skill(
 
     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
-    eprintln!("[interactive_skill] Starting execution {}", exec_id);
+    eprintln!("[interactive_recipe] Starting execution {}", exec_id);
 
     const BEGIN_MARKER: &str = "___DOPPIO_BEGIN___";
     const DONE_MARKER: &str = "___DOPPIO_DONE___";
@@ -1148,18 +1148,18 @@ async fn run_interactive_skill(
                 .update_step_status(&exec_id, &step_id, StepStatus::Skipped)
                 .await?;
             let _ = app.emit(
-                "skill:step_skipped",
+                "recipe:step_skipped",
                 serde_json::json!({
                     "execution_id": exec_id,
                     "step_id": step_id,
                 }),
             );
-            append_skill_log(
+            append_recipe_log(
                 &app,
                 log_lock.as_ref(),
                 &exec_id,
                 Some(&step_id),
-                run_logs::SkillLogStream::System,
+                run_logs::RecipeLogStream::System,
                 "Step skipped".to_string(),
             )
             .await;
@@ -1181,7 +1181,7 @@ async fn run_interactive_skill(
                     .update_step_status(&exec_id, &step.id, StepStatus::Skipped)
                     .await?;
                 let _ = app.emit(
-                    "skill:step_skipped",
+                    "recipe:step_skipped",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "step_id": step.id,
@@ -1203,11 +1203,11 @@ async fn run_interactive_skill(
         if let Err(e) =
             crate::terminal::history_step_start(&term_mgr, &term_id, &step.id, step_index).await
         {
-            eprintln!("[interactive_skill] history step start failed: {}", e);
+            eprintln!("[interactive_recipe] history step start failed: {}", e);
         }
 
         let _ = app.emit(
-            "skill:step_started",
+            "recipe:step_started",
             serde_json::json!({
                 "execution_id": exec_id,
                 "step_id": step.id,
@@ -1237,7 +1237,7 @@ async fn run_interactive_skill(
                     .update_step_status(&exec_id, &step.id, StepStatus::Retrying)
                     .await?;
                 let _ = app.emit(
-                    "skill:step_retrying",
+                    "recipe:step_retrying",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "step_id": step.id,
@@ -1250,20 +1250,20 @@ async fn run_interactive_skill(
 
             let commands = extract_commands_from_step(&step, &variables);
             eprintln!(
-                "[interactive_skill] Step {} operation {:?} => commands: {:?}",
+                "[interactive_recipe] Step {} operation {:?} => commands: {:?}",
                 step.id,
                 std::mem::discriminant(&step.operation),
                 commands.as_ref().map(|s| s.len())
             );
 
             if let Some(cmds) = commands {
-                eprintln!("[interactive_skill] Using TERMINAL execution for step {}", step.id);
+                eprintln!("[interactive_recipe] Using TERMINAL execution for step {}", step.id);
                 interactive::get_runner()
                     .await
                     .lock_intervention(&exec_id)
                     .await?;
                 let _ = app.emit(
-                    "skill:intervention_lock_changed",
+                    "recipe:intervention_lock_changed",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "terminal_id": term_id,
@@ -1272,18 +1272,18 @@ async fn run_interactive_skill(
                 );
 
                 let _ = app.emit(
-                    "skill:command_sending",
+                    "recipe:command_sending",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "step_id": step.id,
                     }),
                 );
-                append_skill_log(
+                append_recipe_log(
                     &app,
                     log_lock.as_ref(),
                     &exec_id,
                     Some(&step.id),
-                    run_logs::SkillLogStream::System,
+                    run_logs::RecipeLogStream::System,
                     "Sending commands to terminal…".to_string(),
                 )
                 .await;
@@ -1291,12 +1291,12 @@ async fn run_interactive_skill(
                 if let types::Operation::RunCommands(op) = &step.operation {
                     let preview = interpolate_for_log(&op.commands, &variables);
                     if !preview.trim().is_empty() {
-                        append_skill_log(
+                        append_recipe_log(
                             &app,
                             log_lock.as_ref(),
                             &exec_id,
                             Some(&step.id),
-                            run_logs::SkillLogStream::System,
+                            run_logs::RecipeLogStream::System,
                             format!("Commands:\n{}", preview.trim_end()),
                         )
                         .await;
@@ -1332,7 +1332,7 @@ async fn run_interactive_skill(
                 );
                 let send_result = crate::terminal::term_write_inner(&term_mgr, &term_id, &heredoc).await;
 
-                eprintln!("[interactive_skill] Sent commands for step {}", step.id);
+                eprintln!("[interactive_recipe] Sent commands for step {}", step.id);
 
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -1341,7 +1341,7 @@ async fn run_interactive_skill(
                     .unlock_intervention(&exec_id)
                     .await?;
                 let _ = app.emit(
-                    "skill:intervention_lock_changed",
+                    "recipe:intervention_lock_changed",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "terminal_id": term_id,
@@ -1350,24 +1350,24 @@ async fn run_interactive_skill(
                 );
 
                 if let Err(e) = send_result {
-                    append_skill_log(
+                    append_recipe_log(
                         &app,
                         log_lock.as_ref(),
                         &exec_id,
                         Some(&step.id),
-                        run_logs::SkillLogStream::Stderr,
+                        run_logs::RecipeLogStream::Stderr,
                         e.to_string(),
                     )
                     .await;
                     step_failed = true;
                     last_error = Some(e.to_string());
                 } else {
-                    append_skill_log(
+                    append_recipe_log(
                         &app,
                         log_lock.as_ref(),
                         &exec_id,
                         Some(&step.id),
-                        run_logs::SkillLogStream::System,
+                        run_logs::RecipeLogStream::System,
                         "Waiting for command completion…".to_string(),
                     )
                     .await;
@@ -1434,17 +1434,17 @@ async fn run_interactive_skill(
                         Ok(exit_code) => {
                             step_exit_code = Some(exit_code);
                             eprintln!(
-                                "[interactive_skill] Step {} exit_code: {}",
+                                "[interactive_recipe] Step {} exit_code: {}",
                                 step.id, exit_code
                             );
 
                             if exit_code != 0 {
-                                append_skill_log(
+                                append_recipe_log(
                                     &app,
                                     log_lock.as_ref(),
                                     &exec_id,
                                     Some(&step.id),
-                                    run_logs::SkillLogStream::Stderr,
+                                    run_logs::RecipeLogStream::Stderr,
                                     format!("Step failed (exit code {exit_code})"),
                                 )
                                 .await;
@@ -1459,12 +1459,12 @@ async fn run_interactive_skill(
                             }
                         }
                         Err(e) => {
-                            append_skill_log(
+                            append_recipe_log(
                                 &app,
                                 log_lock.as_ref(),
                                 &exec_id,
                                 Some(&step.id),
-                                run_logs::SkillLogStream::Stderr,
+                                run_logs::RecipeLogStream::Stderr,
                                 e.to_string(),
                             )
                             .await;
@@ -1480,18 +1480,18 @@ async fn run_interactive_skill(
                     .await?;
             } else {
                 eprintln!(
-                    "[interactive_skill] Using STREAMING execution for step {} operation: {:?}",
+                    "[interactive_recipe] Using STREAMING execution for step {} operation: {:?}",
                     step.id,
                     step.operation
                 );
 
                 let op_desc = get_operation_description(&step.operation, &variables);
-                append_skill_log(
+                append_recipe_log(
                     &app,
                     log_lock.as_ref(),
                     &exec_id,
                     Some(&step.id),
-                    run_logs::SkillLogStream::System,
+                    run_logs::RecipeLogStream::System,
                     op_desc.clone(),
                 )
                 .await;
@@ -1530,12 +1530,12 @@ async fn run_interactive_skill(
                     if let types::Operation::RunCommands(op) = &step.operation {
                         let preview = interpolate_for_log(&op.commands, &variables);
                         if !preview.trim().is_empty() {
-                            append_skill_log(
+                            append_recipe_log(
                                 &app,
                                 log_lock.as_ref(),
                                 &exec_id,
                                 Some(&step.id),
-                                run_logs::SkillLogStream::System,
+                                run_logs::RecipeLogStream::System,
                                 format!("Commands:\n{}", preview.trim_end()),
                             )
                             .await;
@@ -1563,12 +1563,12 @@ async fn run_interactive_skill(
                         Ok(exit_code) => {
                             step_exit_code = Some(exit_code);
                             if exit_code != 0 {
-                                append_skill_log(
+                                append_recipe_log(
                                     &app,
                                     log_lock.as_ref(),
                                     &exec_id,
                                     Some(&step.id),
-                                    run_logs::SkillLogStream::Stderr,
+                                    run_logs::RecipeLogStream::Stderr,
                                     format!("Command failed (exit code {exit_code})"),
                                 )
                                 .await;
@@ -1583,12 +1583,12 @@ async fn run_interactive_skill(
                             }
                         }
                         Err(e) => {
-                            append_skill_log(
+                            append_recipe_log(
                                 &app,
                                 log_lock.as_ref(),
                                 &exec_id,
                                 Some(&step.id),
-                                run_logs::SkillLogStream::Stderr,
+                                run_logs::RecipeLogStream::Stderr,
                                 e.to_string(),
                             )
                             .await;
@@ -1614,19 +1614,19 @@ async fn run_interactive_skill(
                             .set_step_progress(&exec_id, &step_id, Some(message.clone()))
                             .await;
                         let _ = app_handle_inner.emit(
-                            "skill:step_progress",
+                            "recipe:step_progress",
                             serde_json::json!({
                                 "execution_id": exec_id,
                                 "step_id": step_id,
                                 "progress": message,
                             }),
                         );
-                        append_skill_log(
+                        append_recipe_log(
                             &app_handle_inner,
                             log_lock.as_ref(),
                             &exec_id,
                             Some(&step_id),
-                            run_logs::SkillLogStream::Progress,
+                            run_logs::RecipeLogStream::Progress,
                             message,
                         )
                         .await;
@@ -1664,23 +1664,23 @@ async fn run_interactive_skill(
                     Ok(Some(output)) => {
                         let (stdout, stderr) = split_command_output(&output);
                         if let Some(out) = stdout {
-                            append_skill_log(
+                            append_recipe_log(
                                 &app,
                                 log_lock.as_ref(),
                                 &exec_id,
                                 Some(&step.id),
-                                run_logs::SkillLogStream::Stdout,
+                                run_logs::RecipeLogStream::Stdout,
                                 out,
                             )
                             .await;
                         }
                         if let Some(err) = stderr {
-                            append_skill_log(
+                            append_recipe_log(
                                 &app,
                                 log_lock.as_ref(),
                                 &exec_id,
                                 Some(&step.id),
-                                run_logs::SkillLogStream::Stderr,
+                                run_logs::RecipeLogStream::Stderr,
                                 err,
                             )
                             .await;
@@ -1693,12 +1693,12 @@ async fn run_interactive_skill(
                         last_error = None;
                     }
                     Err(e) => {
-                        append_skill_log(
+                        append_recipe_log(
                             &app,
                             log_lock.as_ref(),
                             &exec_id,
                             Some(&step.id),
-                            run_logs::SkillLogStream::Stderr,
+                            run_logs::RecipeLogStream::Stderr,
                             e.to_string(),
                         )
                         .await;
@@ -1716,7 +1716,7 @@ async fn run_interactive_skill(
                         .set_step_progress(&exec_id_clone, &step_id_clone, None)
                         .await;
                     let _ = app_handle.emit(
-                        "skill:step_progress",
+                        "recipe:step_progress",
                         serde_json::json!({
                             "execution_id": exec_id_clone,
                             "step_id": step_id_clone,
@@ -1728,12 +1728,12 @@ async fn run_interactive_skill(
             }
 
             if step_failed && attempt < max_attempts {
-                append_skill_log(
+                append_recipe_log(
                     &app,
                     log_lock.as_ref(),
                     &exec_id,
                     Some(&step.id),
-                    run_logs::SkillLogStream::System,
+                    run_logs::RecipeLogStream::System,
                     format!("Retrying in {delay_secs}s (attempt {attempt}/{max_attempts})"),
                 )
                 .await;
@@ -1749,7 +1749,7 @@ async fn run_interactive_skill(
                 .update_step_status(&exec_id, &step.id, StepStatus::Failed)
                 .await?;
             let _ = app.emit(
-                "skill:step_failed",
+                "recipe:step_failed",
                 serde_json::json!({
                     "execution_id": exec_id,
                     "step_id": step.id,
@@ -1763,18 +1763,18 @@ async fn run_interactive_skill(
                     .update_status(&exec_id, interactive::InteractiveStatus::Failed)
                     .await?;
                 let _ = app.emit(
-                    "skill:execution_failed",
+                    "recipe:execution_failed",
                     serde_json::json!({
                         "execution_id": exec_id,
                         "error": error_msg,
                     }),
                 );
-                append_skill_log(
+                append_recipe_log(
                     &app,
                     log_lock.as_ref(),
                     &exec_id,
                     None,
-                    run_logs::SkillLogStream::Stderr,
+                    run_logs::RecipeLogStream::Stderr,
                     format!("Execution failed: {error_msg}"),
                 )
                 .await;
@@ -1800,22 +1800,22 @@ async fn run_interactive_skill(
                 let target = variables
                     .get("target")
                     .cloned()
-                    .ok_or_else(|| AppError::invalid_input("Missing skill variable: target"))?;
+                    .ok_or_else(|| AppError::invalid_input("Missing recipe variable: target"))?;
                 let tmux_session = variables
                     .get("_doppio_connect_tmux_session")
                     .cloned()
                     .ok_or_else(|| {
                         AppError::invalid_input(
-                            "Missing skill variable: _doppio_connect_tmux_session",
+                            "Missing recipe variable: _doppio_connect_tmux_session",
                         )
                     })?;
 
-                append_skill_log(
+                append_recipe_log(
                     &app,
                     log_lock.as_ref(),
                     &exec_id,
                     Some(&step.id),
-                    run_logs::SkillLogStream::System,
+                    run_logs::RecipeLogStream::System,
                     "Connecting terminal to Vast SSH…".to_string(),
                 )
                 .await;
@@ -1857,20 +1857,20 @@ async fn run_interactive_skill(
                 .await
                 .update_step_status(&exec_id, &step.id, StepStatus::Success)
                 .await?;
-            eprintln!("[interactive_skill] Step {} completed", step.id);
+            eprintln!("[interactive_recipe] Step {} completed", step.id);
             let _ = app.emit(
-                "skill:step_completed",
+                "recipe:step_completed",
                 serde_json::json!({
                     "execution_id": exec_id,
                     "step_id": step.id,
                 }),
             );
-            append_skill_log(
+            append_recipe_log(
                 &app,
                 log_lock.as_ref(),
                 &exec_id,
                 Some(&step.id),
-                run_logs::SkillLogStream::System,
+                run_logs::RecipeLogStream::System,
                 "Step completed".to_string(),
             )
             .await;
@@ -1887,7 +1887,7 @@ async fn run_interactive_skill(
         )
         .await
         {
-            eprintln!("[interactive_skill] history step end failed: {}", e);
+            eprintln!("[interactive_recipe] history step end failed: {}", e);
         }
 
         if !step_failed || step.continue_on_failure {
@@ -1917,17 +1917,17 @@ async fn run_interactive_skill(
             .update_status(&exec_id, interactive::InteractiveStatus::Completed)
             .await?;
         let _ = app.emit(
-            "skill:execution_completed",
+            "recipe:execution_completed",
             serde_json::json!({
                 "execution_id": exec_id,
             }),
         );
-        append_skill_log(
+        append_recipe_log(
             &app,
             log_lock.as_ref(),
             &exec_id,
             None,
-            run_logs::SkillLogStream::System,
+            run_logs::RecipeLogStream::System,
             "Execution completed".to_string(),
         )
         .await;
@@ -1964,7 +1964,7 @@ async fn apply_control_signal(
                 .update_status(exec_id, interactive::InteractiveStatus::Running)
                 .await?;
             let _ = app.emit(
-                "skill:execution_updated",
+                "recipe:execution_updated",
                 serde_json::json!({
                     "execution_id": exec_id,
                     "status": "running",
@@ -1980,14 +1980,14 @@ async fn apply_control_signal(
                 .update_status(exec_id, interactive::InteractiveStatus::Cancelled)
                 .await?;
             let _ = app.emit(
-                "skill:execution_updated",
+                "recipe:execution_updated",
                 serde_json::json!({
                     "execution_id": exec_id,
                     "status": "cancelled",
                 }),
             );
             let _ = app.emit(
-                "skill:execution_cancelled",
+                "recipe:execution_cancelled",
                 serde_json::json!({
                     "execution_id": exec_id,
                 }),
@@ -2033,7 +2033,7 @@ async fn wait_if_paused(
             .update_status(exec_id, interactive::InteractiveStatus::Paused)
             .await?;
         let _ = app.emit(
-            "skill:execution_updated",
+            "recipe:execution_updated",
             serde_json::json!({
                 "execution_id": exec_id,
                 "status": "paused",
@@ -2097,12 +2097,12 @@ async fn execute_streaming_command(
                 match event {
                     Some(StreamEvent::Output { data }) => {
                         // PTY output is combined stdout/stderr, log as stdout
-                        append_skill_log(
+                        append_recipe_log(
                             app,
                             log_lock,
                             exec_id,
                             Some(step_id),
-                            run_logs::SkillLogStream::Stdout,
+                            run_logs::RecipeLogStream::Stdout,
                             data,
                         )
                         .await;
@@ -2133,14 +2133,14 @@ async fn execute_streaming_command(
                                 "is_password": is_password,
                             },
                         });
-                        eprintln!("[execute_streaming_command] Emitting skill:execution_updated: {}", payload);
-                        let _ = app.emit("skill:execution_updated", payload);
-                        append_skill_log(
+                        eprintln!("[execute_streaming_command] Emitting recipe:execution_updated: {}", payload);
+                        let _ = app.emit("recipe:execution_updated", payload);
+                        append_recipe_log(
                             app,
                             log_lock,
                             exec_id,
                             Some(step_id),
-                            run_logs::SkillLogStream::System,
+                            run_logs::RecipeLogStream::System,
                             format!("Waiting for input: {}", prompt),
                         )
                         .await;
@@ -2152,7 +2152,7 @@ async fn execute_streaming_command(
                             eprintln!("[execute_streaming_command] Failed to clear pending input: {e}");
                         }
                         let _ = app.emit(
-                            "skill:execution_updated",
+                            "recipe:execution_updated",
                             serde_json::json!({
                                 "execution_id": exec_id,
                                 "status": "running",
@@ -2174,12 +2174,12 @@ async fn execute_streaming_command(
                     if let interactive::InteractiveControl::SendInput(input) = &signal {
                         // Send input directly to the process
                         if let Err(e) = execution.input_handle.send(input.clone()).await {
-                            append_skill_log(
+                            append_recipe_log(
                                 app,
                                 log_lock,
                                 exec_id,
                                 Some(step_id),
-                                run_logs::SkillLogStream::Stderr,
+                                run_logs::RecipeLogStream::Stderr,
                                 format!("Failed to send input: {}", e),
                             )
                             .await;
@@ -2190,7 +2190,7 @@ async fn execute_streaming_command(
                             eprintln!("[execute_streaming_command] Failed to clear pending input: {e}");
                         }
                         let _ = app.emit(
-                            "skill:execution_updated",
+                            "recipe:execution_updated",
                             serde_json::json!({
                                 "execution_id": exec_id,
                                 "status": "running",
@@ -2215,7 +2215,7 @@ async fn open_terminal_for_resume(
     app: tauri::AppHandle,
     term_mgr: &crate::terminal::TerminalManager,
     exec: &interactive::InteractiveExecution,
-    skill: &Skill,
+    recipe: &Recipe,
 ) -> Result<
     (
         crate::terminal::TermSessionInfo,
@@ -2228,7 +2228,7 @@ async fn open_terminal_for_resume(
     let cols = exec.terminal.cols;
     let rows = exec.terminal.rows;
     let title = if exec.terminal.title.trim().is_empty() {
-        format!("Skill: {}", exec.skill_name)
+        format!("Recipe: {}", exec.recipe_name)
     } else {
         exec.terminal.title.clone()
     };
@@ -2262,7 +2262,7 @@ async fn open_terminal_for_resume(
         step_status.insert(step.step_id.clone(), step.status.clone());
     }
 
-    let needs_vast_start = skill.steps.iter().any(|step| {
+    let needs_vast_start = recipe.steps.iter().any(|step| {
         matches!(step.operation, types::Operation::VastStart(_))
             && step_status
                 .get(&step.id)
@@ -2637,9 +2637,9 @@ fn vast_target_hint(variables: &std::collections::HashMap<String, String>) -> St
     format!(" (target: {target})")
 }
 
-/// Send command to an interactive skill execution's terminal
+/// Send command to an interactive recipe execution's terminal
 #[tauri::command]
-pub async fn skill_interactive_send(
+pub async fn recipe_interactive_send(
     term_mgr: State<'_, crate::terminal::TerminalManager>,
     execution_id: String,
     data: String,
@@ -2668,9 +2668,9 @@ pub async fn skill_interactive_send(
     crate::terminal::term_write_inner(&term_mgr, term_id, &data).await
 }
 
-/// Send interrupt (Ctrl+C) to an interactive skill execution
+/// Send interrupt (Ctrl+C) to an interactive recipe execution
 #[tauri::command]
-pub async fn skill_interactive_interrupt(
+pub async fn recipe_interactive_interrupt(
     term_mgr: State<'_, crate::terminal::TerminalManager>,
     execution_id: String,
 ) -> Result<(), AppError> {
@@ -2688,7 +2688,7 @@ pub async fn skill_interactive_interrupt(
 
 /// Lock/unlock intervention for an interactive execution
 #[tauri::command]
-pub async fn skill_interactive_lock(execution_id: String, locked: bool) -> Result<(), AppError> {
+pub async fn recipe_interactive_lock(execution_id: String, locked: bool) -> Result<(), AppError> {
     let runner = interactive::get_runner().await;
     if locked {
         runner.lock_intervention(&execution_id).await
@@ -2699,7 +2699,7 @@ pub async fn skill_interactive_lock(execution_id: String, locked: bool) -> Resul
 
 /// Get interactive execution state
 #[tauri::command]
-pub async fn skill_interactive_get(
+pub async fn recipe_interactive_get(
     execution_id: String,
 ) -> Result<interactive::InteractiveExecution, AppError> {
     let runner = interactive::get_runner().await;
@@ -2708,30 +2708,30 @@ pub async fn skill_interactive_get(
 
 /// List all interactive executions
 #[tauri::command]
-pub async fn skill_interactive_list() -> Result<Vec<interactive::InteractiveExecution>, AppError> {
+pub async fn recipe_interactive_list() -> Result<Vec<interactive::InteractiveExecution>, AppError> {
     let runner = interactive::get_runner().await;
     Ok(runner.list_executions().await)
 }
 
 /// Read persisted logs for an interactive execution (JSONL), starting at `cursor`.
 #[tauri::command]
-pub async fn skill_interactive_log_read(
+pub async fn recipe_interactive_log_read(
     execution_id: String,
     cursor: Option<u64>,
     max_bytes: Option<u64>,
-) -> Result<run_logs::SkillLogChunk, AppError> {
+) -> Result<run_logs::RecipeLogChunk, AppError> {
     run_logs::read_chunk(&execution_id, cursor, max_bytes).await
 }
 
 /// Clear persisted logs for an interactive execution.
 #[tauri::command]
-pub async fn skill_interactive_log_clear(execution_id: String) -> Result<(), AppError> {
+pub async fn recipe_interactive_log_clear(execution_id: String) -> Result<(), AppError> {
     run_logs::clear(&execution_id).await
 }
 
-/// Pause an interactive skill execution
+/// Pause an interactive recipe execution
 #[tauri::command]
-pub async fn skill_interactive_pause(execution_id: String) -> Result<(), AppError> {
+pub async fn recipe_interactive_pause(execution_id: String) -> Result<(), AppError> {
     let active = {
         let runner = interactive::get_runner().await;
         runner.is_active(&execution_id).await?
@@ -2750,9 +2750,9 @@ pub async fn skill_interactive_pause(execution_id: String) -> Result<(), AppErro
     }
 }
 
-/// Resume a paused interactive skill execution
+/// Resume a paused interactive recipe execution
 #[tauri::command]
-pub async fn skill_interactive_resume(
+pub async fn recipe_interactive_resume(
     app: tauri::AppHandle,
     term_mgr: State<'_, crate::terminal::TerminalManager>,
     execution_id: String,
@@ -2785,9 +2785,9 @@ pub async fn skill_interactive_resume(
         return Err(AppError::invalid_input("Execution is not resumable"));
     }
 
-    let skill = load_skill(Path::new(&exec.skill_path)).await?;
+    let recipe = load_recipe(Path::new(&exec.recipe_path)).await?;
     let (term_info, terminal_meta) =
-        open_terminal_for_resume(app.clone(), &term_mgr, &exec, &skill).await?;
+        open_terminal_for_resume(app.clone(), &term_mgr, &exec, &recipe).await?;
 
     let updated = {
         let runner = interactive::get_runner().await;
@@ -2810,18 +2810,18 @@ pub async fn skill_interactive_resume(
     let variables = updated.variables.clone();
     tokio::spawn(async move {
         if let Err(e) =
-            run_interactive_skill(app_clone, exec_id_clone, term_id_clone, skill, variables).await
+            run_interactive_recipe(app_clone, exec_id_clone, term_id_clone, recipe, variables).await
         {
-            eprintln!("[interactive_skill] Error running skill: {:?}", e);
+            eprintln!("[interactive_recipe] Error running recipe: {:?}", e);
         }
     });
 
     Ok(updated)
 }
 
-/// Start a prepared (pending) interactive skill execution
+/// Start a prepared (pending) interactive recipe execution
 #[tauri::command]
-pub async fn skill_interactive_start(
+pub async fn recipe_interactive_start(
     app: tauri::AppHandle,
     _term_mgr: State<'_, crate::terminal::TerminalManager>,
     execution_id: String,
@@ -2855,7 +2855,7 @@ pub async fn skill_interactive_start(
         return Err(AppError::invalid_input("Execution is not startable"));
     }
 
-    let skill = load_skill(Path::new(&exec.skill_path)).await?;
+    let recipe = load_recipe(Path::new(&exec.recipe_path)).await?;
     {
         let runner = interactive::get_runner().await;
         runner.set_active(&execution_id, true).await?;
@@ -2865,18 +2865,18 @@ pub async fn skill_interactive_start(
     }
 
     let log_lock = Arc::new(tokio::sync::Mutex::new(()));
-    append_skill_log(
+    append_recipe_log(
         &app,
         log_lock.as_ref(),
         &execution_id,
         None,
-        run_logs::SkillLogStream::System,
+        run_logs::RecipeLogStream::System,
         "Manual start requested".to_string(),
     )
     .await;
 
     let _ = app.emit(
-        "skill:execution_updated",
+        "recipe:execution_updated",
         serde_json::json!({
             "execution_id": execution_id,
             "status": "running",
@@ -2888,8 +2888,8 @@ pub async fn skill_interactive_start(
     let app_clone = app.clone();
     let variables = exec.variables.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_interactive_skill(app_clone, exec_id_clone, term_id, skill, variables).await {
-            eprintln!("[interactive_skill] Error running skill: {:?}", e);
+        if let Err(e) = run_interactive_recipe(app_clone, exec_id_clone, term_id, recipe, variables).await {
+            eprintln!("[interactive_recipe] Error running recipe: {:?}", e);
         }
     });
 
@@ -2900,7 +2900,7 @@ pub async fn skill_interactive_start(
 /// Reconnect the terminal session for an interactive execution.
 /// This opens a fresh terminal connection and updates `terminal_id` in the execution state.
 #[tauri::command]
-pub async fn skill_interactive_reconnect_terminal(
+pub async fn recipe_interactive_reconnect_terminal(
     app: tauri::AppHandle,
     term_mgr: State<'_, crate::terminal::TerminalManager>,
     execution_id: String,
@@ -2929,12 +2929,12 @@ pub async fn skill_interactive_reconnect_terminal(
         )
     {
         let log_lock = tokio::sync::Mutex::new(());
-        append_skill_log(
+        append_recipe_log(
             &app,
             &log_lock,
             &execution_id,
             None,
-            run_logs::SkillLogStream::System,
+            run_logs::RecipeLogStream::System,
             "Pause requested for terminal reconnect…".to_string(),
         )
         .await;
@@ -2958,9 +2958,9 @@ pub async fn skill_interactive_reconnect_terminal(
         }
     }
 
-    let skill = load_skill(Path::new(&exec.skill_path)).await?;
+    let recipe = load_recipe(Path::new(&exec.recipe_path)).await?;
     let (term_info, terminal_meta) =
-        open_terminal_for_resume(app.clone(), &term_mgr, &exec, &skill).await?;
+        open_terminal_for_resume(app.clone(), &term_mgr, &exec, &recipe).await?;
 
     let updated = {
         runner
@@ -2973,18 +2973,18 @@ pub async fn skill_interactive_reconnect_terminal(
     };
 
     let log_lock = tokio::sync::Mutex::new(());
-    append_skill_log(
+    append_recipe_log(
         &app,
         &log_lock,
         &execution_id,
         None,
-        run_logs::SkillLogStream::System,
+        run_logs::RecipeLogStream::System,
         "Terminal reconnected".to_string(),
     )
     .await;
 
     let _ = app.emit(
-        "skill:execution_updated",
+        "recipe:execution_updated",
         serde_json::json!({
             "execution_id": execution_id,
             "status": updated.status,
@@ -2994,9 +2994,9 @@ pub async fn skill_interactive_reconnect_terminal(
     Ok(updated)
 }
 
-/// Cancel an interactive skill execution
+/// Cancel an interactive recipe execution
 #[tauri::command]
-pub async fn skill_interactive_cancel(app: tauri::AppHandle, execution_id: String) -> Result<(), AppError> {
+pub async fn recipe_interactive_cancel(app: tauri::AppHandle, execution_id: String) -> Result<(), AppError> {
     let active = {
         let runner = interactive::get_runner().await;
         runner.is_active(&execution_id).await?
@@ -3012,24 +3012,24 @@ pub async fn skill_interactive_cancel(app: tauri::AppHandle, execution_id: Strin
             .update_status(&execution_id, interactive::InteractiveStatus::Cancelled)
             .await?;
         let log_lock = tokio::sync::Mutex::new(());
-        append_skill_log(
+        append_recipe_log(
             &app,
             &log_lock,
             &execution_id,
             None,
-            run_logs::SkillLogStream::System,
+            run_logs::RecipeLogStream::System,
             "Execution cancelled".to_string(),
         )
         .await;
         let _ = app.emit(
-            "skill:execution_updated",
+            "recipe:execution_updated",
             serde_json::json!({
                 "execution_id": execution_id,
                 "status": "cancelled",
             }),
         );
         let _ = app.emit(
-            "skill:execution_cancelled",
+            "recipe:execution_cancelled",
             serde_json::json!({
                 "execution_id": execution_id,
             }),
@@ -3041,25 +3041,25 @@ pub async fn skill_interactive_cancel(app: tauri::AppHandle, execution_id: Strin
             .update_status(&execution_id, interactive::InteractiveStatus::Cancelled)
             .await?;
         let log_lock = tokio::sync::Mutex::new(());
-        append_skill_log(
+        append_recipe_log(
             &app,
             &log_lock,
             &execution_id,
             None,
-            run_logs::SkillLogStream::System,
+            run_logs::RecipeLogStream::System,
             "Execution cancelled".to_string(),
         )
         .await;
         use tauri::Emitter;
         let _ = app.emit(
-            "skill:execution_updated",
+            "recipe:execution_updated",
             serde_json::json!({
                 "execution_id": execution_id,
                 "status": "cancelled",
             }),
         );
         let _ = app.emit(
-            "skill:execution_cancelled",
+            "recipe:execution_cancelled",
             serde_json::json!({
                 "execution_id": execution_id,
             }),
@@ -3068,9 +3068,9 @@ pub async fn skill_interactive_cancel(app: tauri::AppHandle, execution_id: Strin
     }
 }
 
-/// Skip a pending/waiting step in an interactive skill execution
+/// Skip a pending/waiting step in an interactive recipe execution
 #[tauri::command]
-pub async fn skill_interactive_skip_step(
+pub async fn recipe_interactive_skip_step(
     app: tauri::AppHandle,
     execution_id: String,
     step_id: String,
@@ -3094,7 +3094,7 @@ pub async fn skill_interactive_skip_step(
     use tauri::Emitter;
     let runner = interactive::get_runner().await;
     let exec = runner.get_execution(&execution_id).await?;
-    let skill = load_skill(Path::new(&exec.skill_path)).await?;
+    let recipe = load_recipe(Path::new(&exec.recipe_path)).await?;
 
     runner
         .update_step_status(&execution_id, &step_id, StepStatus::Skipped)
@@ -3102,19 +3102,19 @@ pub async fn skill_interactive_skip_step(
     let exec_id_for_emit = execution_id.clone();
     let step_id_for_emit = step_id.clone();
     let _ = app.emit(
-        "skill:step_skipped",
+        "recipe:step_skipped",
         serde_json::json!({
             "execution_id": exec_id_for_emit,
             "step_id": step_id_for_emit,
         }),
     );
     let log_lock = tokio::sync::Mutex::new(());
-    append_skill_log(
+    append_recipe_log(
         &app,
         &log_lock,
         &execution_id,
         Some(&step_id),
-        run_logs::SkillLogStream::System,
+        run_logs::RecipeLogStream::System,
         "Step skipped".to_string(),
     )
     .await;
@@ -3128,7 +3128,7 @@ pub async fn skill_interactive_skip_step(
             completed.insert(s.step_id.clone());
         }
     }
-    for step in &skill.steps {
+    for step in &recipe.steps {
         if completed.contains(&step.id) {
             continue;
         }
@@ -3146,7 +3146,7 @@ pub async fn skill_interactive_skip_step(
 async fn recompute_pending_waiting(
     runner: &interactive::InteractiveRunner,
     execution_id: &str,
-    skill: &Skill,
+    recipe: &Recipe,
     snapshot: &interactive::InteractiveExecution,
 ) -> Result<(), AppError> {
         use std::collections::HashSet;
@@ -3158,7 +3158,7 @@ async fn recompute_pending_waiting(
             }
         }
 
-        for step in &skill.steps {
+        for step in &recipe.steps {
             let current = snapshot.steps.iter().find(|s| s.step_id == step.id);
             let Some(current) = current else { continue };
 
@@ -3184,7 +3184,7 @@ async fn recompute_pending_waiting(
 /// - When active: only allows skipping (cannot unskip while running).
 /// - When inactive: toggles between `skipped` and `pending/waiting` and recomputes downstream statuses.
 #[tauri::command]
-pub async fn skill_interactive_toggle_skip_step(
+pub async fn recipe_interactive_toggle_skip_step(
     app: tauri::AppHandle,
     execution_id: String,
     step_id: String,
@@ -3203,12 +3203,12 @@ pub async fn skill_interactive_toggle_skip_step(
 
     // If running, treat as "skip" only (one-way).
     if active {
-        return skill_interactive_skip_step(app, execution_id, step_id).await;
+        return recipe_interactive_skip_step(app, execution_id, step_id).await;
     }
 
     let runner = interactive::get_runner().await;
     let exec = runner.get_execution(&execution_id).await?;
-    let skill = load_skill(Path::new(&exec.skill_path)).await?;
+    let recipe = load_recipe(Path::new(&exec.recipe_path)).await?;
 
     let current = exec
         .steps
@@ -3231,15 +3231,15 @@ pub async fn skill_interactive_toggle_skip_step(
             .update_step_status(&execution_id, &step_id, StepStatus::Waiting)
             .await?;
         let snapshot = runner.get_execution(&execution_id).await?;
-        recompute_pending_waiting(&runner, &execution_id, &skill, &snapshot).await?;
+        recompute_pending_waiting(&runner, &execution_id, &recipe, &snapshot).await?;
 
         let log_lock = tokio::sync::Mutex::new(());
-        append_skill_log(
+        append_recipe_log(
             &app,
             &log_lock,
             &execution_id,
             Some(&step_id),
-            run_logs::SkillLogStream::System,
+            run_logs::RecipeLogStream::System,
             "Step unskipped".to_string(),
         )
         .await;
@@ -3249,29 +3249,29 @@ pub async fn skill_interactive_toggle_skip_step(
             .update_step_status(&execution_id, &step_id, StepStatus::Skipped)
             .await?;
         let snapshot = runner.get_execution(&execution_id).await?;
-        recompute_pending_waiting(&runner, &execution_id, &skill, &snapshot).await?;
+        recompute_pending_waiting(&runner, &execution_id, &recipe, &snapshot).await?;
 
         let _ = app.emit(
-            "skill:step_skipped",
+            "recipe:step_skipped",
             serde_json::json!({
                 "execution_id": execution_id,
                 "step_id": step_id,
             }),
         );
         let log_lock = tokio::sync::Mutex::new(());
-        append_skill_log(
+        append_recipe_log(
             &app,
             &log_lock,
             &execution_id,
             Some(&step_id),
-            run_logs::SkillLogStream::System,
+            run_logs::RecipeLogStream::System,
             "Step skipped".to_string(),
         )
         .await;
     }
 
     let _ = app.emit(
-        "skill:execution_updated",
+        "recipe:execution_updated",
         serde_json::json!({
             "execution_id": execution_id,
             "status": exec.status,
@@ -3283,7 +3283,7 @@ pub async fn skill_interactive_toggle_skip_step(
 
 /// Mark all steps as complete and finish execution
 #[tauri::command]
-pub async fn skill_interactive_mark_complete(execution_id: String) -> Result<(), AppError> {
+pub async fn recipe_interactive_mark_complete(execution_id: String) -> Result<(), AppError> {
     let runner = interactive::get_runner().await;
 
     // Get execution and mark all running steps as success
@@ -3303,10 +3303,10 @@ pub async fn skill_interactive_mark_complete(execution_id: String) -> Result<(),
         .await
 }
 
-/// Execute a command in the interactive skill's terminal
-/// This is used by the skill runner to send commands and track progress
+/// Execute a command in the interactive recipe's terminal
+/// This is used by the recipe runner to send commands and track progress
 #[tauri::command]
-pub async fn skill_interactive_exec_command(
+pub async fn recipe_interactive_exec_command(
     app: tauri::AppHandle,
     term_mgr: State<'_, crate::terminal::TerminalManager>,
     execution_id: String,
@@ -3328,7 +3328,7 @@ pub async fn skill_interactive_exec_command(
 
     // Emit event that we're sending a command
     let _ = app.emit(
-        "skill:command_sending",
+        "recipe:command_sending",
         serde_json::json!({
             "execution_id": execution_id,
             "step_id": step_id,
@@ -3341,7 +3341,7 @@ pub async fn skill_interactive_exec_command(
 
     // Emit event that command was sent
     let _ = app.emit(
-        "skill:command_sent",
+        "recipe:command_sent",
         serde_json::json!({
             "execution_id": execution_id,
             "step_id": step_id,
@@ -3355,10 +3355,10 @@ pub async fn skill_interactive_exec_command(
     Ok(())
 }
 
-/// Send user input to an interactive skill execution waiting for input
+/// Send user input to an interactive recipe execution waiting for input
 /// This is used when a command is waiting for password, y/n confirmation, etc.
 #[tauri::command]
-pub async fn skill_interactive_send_input(
+pub async fn recipe_interactive_send_input(
     execution_id: String,
     input: String,
 ) -> Result<(), AppError> {

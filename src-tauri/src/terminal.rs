@@ -1241,7 +1241,7 @@ pub async fn term_open_host(host_id: String, tmux_session: Option<String>) -> Re
 }
 
 // ============================================================
-// Helper functions for skill interactive execution
+// Helper functions for recipe interactive execution
 // ============================================================
 
 /// Static version of open_ssh_tmux_inner that works with State reference

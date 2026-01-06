@@ -1150,7 +1150,7 @@ pub async fn test_storage(storage: &Storage) -> StorageTestResult {
 // ============================================================
 
 /// Get a storage by ID directly from the data file.
-/// This is useful for skill execution where AppHandle is not available.
+/// This is useful for recipe execution where AppHandle is not available.
 pub async fn get_storage(storage_id: &str) -> Result<Storage, AppError> {
     let data_path = crate::config::doppio_data_dir().join("storages.json");
     let content = tokio::fs::read_to_string(&data_path)

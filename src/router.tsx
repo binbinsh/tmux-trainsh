@@ -11,9 +11,9 @@ import { TerminalPage } from "./pages/terminal";
 import { StoragePage } from "./pages/storage";
 import { FileBrowserPage } from "./pages/file-browser";
 import { TransferPage } from "./pages/transfer";
-import { SkillsPage } from "./pages/skills";
-import { SkillEditorPage } from "./pages/skill-editor";
-import { SkillRunPage } from "./pages/skill-run";
+import { RecipesPage } from "./pages/recipes";
+import { RecipeEditorPage } from "./pages/recipe-editor";
+import { RecipeRunPage } from "./pages/recipe-run";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -55,12 +55,12 @@ const hostNewRoute = createRoute({
   },
 });
 
-// Legacy session routes - redirect to skills
+// Legacy session routes - redirect to recipes
 const sessionsRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sessions",
   beforeLoad: () => {
-    throw redirect({ to: "/skills" });
+    throw redirect({ to: "/recipes" });
   },
 });
 
@@ -68,7 +68,7 @@ const tasksRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tasks/new",
   beforeLoad: () => {
-    throw redirect({ to: "/skills" });
+    throw redirect({ to: "/recipes" });
   },
 });
 
@@ -122,23 +122,23 @@ const transferRoute = createRoute({
   component: TransferPage,
 });
 
-// Skill routes
-const skillsRoute = createRoute({
+// Recipe routes
+const recipesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/skills",
-  component: SkillsPage,
+  path: "/recipes",
+  component: RecipesPage,
 });
 
-const skillEditorRoute = createRoute({
+const recipeEditorRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/skills/$path",
-  component: SkillEditorPage,
+  path: "/recipes/$path",
+  component: RecipeEditorPage,
 });
 
-const skillRunRoute = createRoute({
+const recipeRunRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/skills/runs/$id",
-  component: SkillRunPage,
+  path: "/recipes/runs/$id",
+  component: RecipeRunPage,
 });
 
 const routeTree = rootRoute.addChildren([
@@ -148,10 +148,10 @@ const routeTree = rootRoute.addChildren([
   hostNewRoute,
   hostDetailRoute,
   vastHostDetailRoute,
-  // Skill routes
-  skillsRoute,
-  skillRunRoute,
-  skillEditorRoute,
+  // Recipe routes
+  recipesRoute,
+  recipeRunRoute,
+  recipeEditorRoute,
   // Storage routes
   storageRoute,
   storageBrowseRoute,

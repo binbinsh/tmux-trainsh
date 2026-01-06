@@ -1,6 +1,6 @@
-//! Skill types and data models
+//! Recipe types and data models
 //!
-//! This module defines the core data structures for the Skill system,
+//! This module defines the core data structures for the Recipe system,
 //! a flexible workflow engine for composing automation tasks.
 
 use std::collections::HashMap;
@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 // ============================================================
-// Skill Definition
+// Recipe Definition
 // ============================================================
 
-/// A Skill is a complete workflow definition containing steps and metadata.
+/// A Recipe is a complete workflow definition containing steps and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Skill {
-    /// Skill name
+pub struct Recipe {
+    /// Recipe name
     pub name: String,
     /// Version string (semver recommended)
     #[serde(default)]
@@ -33,8 +33,8 @@ pub struct Skill {
     pub steps: Vec<Step>,
 }
 
-/// Target host requirements for a skill.
-/// Defines what type of host the skill needs; actual host is selected at runtime.
+/// Target host requirements for a recipe.
+/// Defines what type of host the recipe needs; actual host is selected at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TargetRequirements {
     /// Required host type: any, local, vast, colab, or custom
@@ -67,10 +67,10 @@ pub enum TargetHostType {
     Custom,
 }
 
-/// A step is the basic execution unit in a skill.
+/// A step is the basic execution unit in a recipe.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
-    /// Unique identifier within the skill
+    /// Unique identifier within the recipe
     pub id: String,
     /// Human-readable name (optional)
     #[serde(default)]
@@ -90,7 +90,7 @@ pub struct Step {
     /// Conditional execution (expression that must be true)
     #[serde(default, rename = "when")]
     pub condition: Option<String>,
-    /// Continue skill even if this step fails
+    /// Continue recipe even if this step fails
     #[serde(default)]
     pub continue_on_failure: bool,
 }
@@ -183,10 +183,10 @@ pub enum Operation {
 // ============================================================
 
 /// Run commands on target host with optional tmux support.
-/// This is the primary way to execute commands in a skill.
+/// This is the primary way to execute commands in a recipe.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunCommandsOp {
-    /// Host ID to connect to (if None, uses skill target)
+    /// Host ID to connect to (if None, uses recipe target)
     #[serde(default)]
     pub host_id: Option<String>,
     /// Commands to execute (one per line, executed sequentially)
@@ -299,7 +299,7 @@ pub struct TransferOp {
 pub enum TransferEndpoint {
     /// Local filesystem
     Local { path: String },
-    /// A configured host (uses skill target if host_id is None)
+    /// A configured host (uses recipe target if host_id is None)
     Host {
         #[serde(default)]
         host_id: Option<String>,
@@ -312,7 +312,7 @@ pub enum TransferEndpoint {
 /// Git clone operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitCloneOp {
-    /// Host ID to clone on (if None, uses skill target)
+    /// Host ID to clone on (if None, uses recipe target)
     #[serde(default)]
     pub host_id: Option<String>,
     /// Repository URL (HTTPS or SSH)
@@ -333,7 +333,7 @@ pub struct GitCloneOp {
 /// HuggingFace model/dataset download operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HfDownloadOp {
-    /// Host ID to download on (if None, uses skill target)
+    /// Host ID to download on (if None, uses recipe target)
     #[serde(default)]
     pub host_id: Option<String>,
     /// HuggingFace repo ID (e.g., "meta-llama/Llama-2-7b")
@@ -710,9 +710,9 @@ pub enum StepStatus {
     Cancelled,
 }
 
-/// Summary of a skill (for listing)
+/// Summary of a recipe (for listing)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillSummary {
+pub struct RecipeSummary {
     pub path: String,
     pub name: String,
     pub version: String,
@@ -720,7 +720,7 @@ pub struct SkillSummary {
     pub step_count: usize,
 }
 
-/// Result of skill validation
+/// Result of recipe validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
     pub valid: bool,
