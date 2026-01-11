@@ -1,40 +1,20 @@
-# Instructions for trainsh Doppio
+# Instructions for kitten-trainsh
+
+kitten-trainsh is a plugin suite for training large language models using various cloud services and internet-based resources.
 
 ## General Instructions
 - Always query context7 for the most recent docs and best practices.
+- Always use `uv` (not pip or conda) for Python. Keep `.venv` in the project root.
+- Prefer ast-grep (cmd: `sg`) over regex/string-replace for code manipulation.
+- Prefer ripgrep (cmd: `rg`) over grep or find for file searching.
+- Always fix issues at the root cause. Do not use workarounds, monkey patches, or dirty hacks.
+- No backward compatibility; remove deprecated code paths immediately.
+- After changes, clean up dead code, unused imports, and obsolete comments.
 - All comments, logs and documentations in English.
-- Include only brief end-user instructions in the root README.md file.
-- Place detailed development documentation in docs/*.md (use lowercase filenames).
-- Prioritize ast-grep (cmd: `sg`) over regex/string-replace for code manipulation, using AST patterns to ensure structural accuracy and avoid syntax errors.
-- No legacy code, no backward compatibility.
+- Include all possible end-user commands in the root README.md file, categorize them by frequences.
+- Place detailed development documentation in docs/*.md (use lowercase filenames)
 
-## Tauri App Instructions
-
-### Tech Stack
-- **Platform**: Tauri v2 + Rust (Tokio async runtime)
-- **Frontend**: React 19 + Vite + TanStack (Router, Query, Form)
-- **Styling**: Tailwind CSS v4 + shadcn/ui
-- **Remote**: gRPC (tonic + protobuf-ts)
-- **Animations**: Motion (framer-motion)
-
-### Rust Rules
-- All `#[tauri::command]` must be async
-- Use `thiserror` for errors, return `Result<T, CustomError>`
-- gRPC client lives in Rust, frontend never connects directly
-
-### Frontend Rules
-- Wrap all Tauri commands in `src/lib/tauri-api.ts`
-- Use TanStack Query for caching and state management
-- Generate types from `.proto` files, keep types in sync
-
-### UI Rules
-- Use shadcn/ui components first
-- Root layout: `select-none cursor-default h-screen overflow-hidden`
-- shadcn/ui components + Motion for micro-interactions
-- Add page transitions, hover effects, skeleton loading
-- Use CSS variables + Tailwind for theming (config in `globals.css`)
-
-### Security Rules
-- Minimize Tauri capabilities exposure
-- Validate all inputs in Rust layer
+## Reference
+- https://sw.kovidgoyal.net/kitty/kittens/developing-builtin-kittens/
+- https://sw.kovidgoyal.net/kitty/kittens/custom/
 

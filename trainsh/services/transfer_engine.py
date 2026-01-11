@@ -1,0 +1,752 @@
+# kitten-trainsh transfer engine
+# File transfer using rsync and rclone
+
+import subprocess
+import os
+import re
+from typing import Optional, List, Callable
+from dataclasses import dataclass
+
+from ..core.models import Host, Storage, StorageType, TransferEndpoint, HostType
+
+
+@dataclass
+class TransferProgress:
+    """Progress information for a transfer."""
+    bytes_transferred: int = 0
+    total_bytes: int = 0
+    percent: float = 0.0
+    speed: str = ""
+    eta: str = ""
+    current_file: str = ""
+
+
+@dataclass
+class TransferResult:
+    """Result of a transfer operation."""
+    success: bool
+    exit_code: int
+    message: str
+    bytes_transferred: int = 0
+
+
+class TransferEngine:
+    """
+    File transfer engine supporting rsync and rclone.
+
+    Supports transfers between:
+    - Local filesystem
+    - SSH hosts (using rsync)
+    - Cloud storage (using rclone)
+    """
+
+    def __init__(
+        self,
+        progress_callback: Optional[Callable[[TransferProgress], None]] = None,
+    ):
+        """
+        Initialize the transfer engine.
+
+        Args:
+            progress_callback: Optional callback for progress updates
+        """
+        self.progress_callback = progress_callback
+
+    def rsync(
+        self,
+        source: str,
+        destination: str,
+        host: Optional[Host] = None,
+        upload: bool = True,
+        delete: bool = False,
+        exclude: Optional[List[str]] = None,
+        use_gitignore: bool = False,
+        compress: bool = True,
+        dry_run: bool = False,
+    ) -> TransferResult:
+        """
+        Transfer files using rsync.
+
+        Args:
+            source: Source path
+            destination: Destination path
+            host: Remote host (for SSH transfers)
+            upload: True for upload, False for download
+            delete: Delete files on destination not in source
+            exclude: Patterns to exclude
+            use_gitignore: Exclude files based on .gitignore
+            compress: Enable compression
+            dry_run: Simulate transfer
+
+        Returns:
+            TransferResult with status
+        """
+        args = ["rsync", "-avz", "--progress"]
+
+        if delete:
+            args.append("--delete")
+
+        if compress:
+            args.append("-z")
+
+        if dry_run:
+            args.append("--dry-run")
+
+        # Add exclude patterns
+        for pattern in (exclude or []):
+            args.extend(["--exclude", pattern])
+
+        if use_gitignore:
+            args.append("--filter=:- .gitignore")
+
+        # Build source/destination with SSH host
+        if host:
+            ssh_cmd = f"ssh -p {host.port}"
+            if host.ssh_key_path:
+                key_path = os.path.expanduser(host.ssh_key_path)
+                if os.path.exists(key_path):
+                    ssh_cmd += f" -i {key_path}"
+            args.extend(["-e", ssh_cmd])
+
+            host_prefix = f"{host.username}@{host.hostname}:" if host.username else f"{host.hostname}:"
+
+            if upload:
+                args.append(os.path.expanduser(source))
+                args.append(f"{host_prefix}{destination}")
+            else:
+                args.append(f"{host_prefix}{source}")
+                args.append(os.path.expanduser(destination))
+        else:
+            args.append(os.path.expanduser(source))
+            args.append(os.path.expanduser(destination))
+
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+            )
+
+            # Parse bytes transferred from rsync output
+            bytes_transferred = 0
+            match = re.search(r"sent ([\d,]+) bytes", result.stdout)
+            if match:
+                bytes_transferred = int(match.group(1).replace(",", ""))
+
+            return TransferResult(
+                success=result.returncode == 0,
+                exit_code=result.returncode,
+                message=result.stderr if result.returncode != 0 else "Transfer complete",
+                bytes_transferred=bytes_transferred,
+            )
+        except Exception as e:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message=str(e),
+            )
+
+    def rclone(
+        self,
+        source: str,
+        destination: str,
+        operation: str = "copy",
+        delete: bool = False,
+        dry_run: bool = False,
+        progress: bool = True,
+    ) -> TransferResult:
+        """
+        Transfer files using rclone.
+
+        Args:
+            source: Source path (remote:path format for remotes)
+            destination: Destination path
+            operation: Operation type (copy, sync, move)
+            delete: Delete destination files not in source (for sync)
+            dry_run: Simulate transfer
+            progress: Show progress
+
+        Returns:
+            TransferResult with status
+        """
+        args = ["rclone", operation]
+
+        if progress:
+            args.append("--progress")
+
+        if dry_run:
+            args.append("--dry-run")
+
+        if delete and operation == "sync":
+            args.append("--delete-after")
+
+        args.extend([source, destination])
+
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+            )
+
+            return TransferResult(
+                success=result.returncode == 0,
+                exit_code=result.returncode,
+                message=result.stderr if result.returncode != 0 else "Transfer complete",
+            )
+        except FileNotFoundError:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message="rclone not found. Install with: brew install rclone",
+            )
+        except Exception as e:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message=str(e),
+            )
+
+    def transfer(
+        self,
+        source: TransferEndpoint,
+        destination: TransferEndpoint,
+        hosts: dict[str, Host] = None,
+        storages: dict[str, Storage] = None,
+        delete: bool = False,
+        exclude: Optional[List[str]] = None,
+    ) -> TransferResult:
+        """
+        High-level transfer between endpoints.
+
+        Automatically selects rsync or rclone based on endpoint types.
+
+        Args:
+            source: Source endpoint
+            destination: Destination endpoint
+            hosts: Dictionary of host ID -> Host
+            storages: Dictionary of storage ID -> Storage
+            delete: Delete files not in source
+            exclude: Patterns to exclude
+
+        Returns:
+            TransferResult with status
+        """
+        hosts = hosts or {}
+        storages = storages or {}
+
+        # Determine transfer method based on endpoint types
+        tool = self._select_transfer_tool(source, destination, storages)
+
+        if tool == "rclone":
+            src_path = self._resolve_endpoint(source, hosts, storages, for_rclone=True)
+            dst_path = self._resolve_endpoint(destination, hosts, storages, for_rclone=True)
+
+            return self.rclone(
+                source=src_path,
+                destination=dst_path,
+                operation="sync" if delete else "copy",
+            )
+        else:
+            # Use rsync for local/SSH/host transfers
+            src_host = hosts.get(source.host_id) if source.host_id else None
+            dst_host = hosts.get(destination.host_id) if destination.host_id else None
+
+            # Handle SSH storage as hosts
+            if source.storage_id:
+                src_storage = storages.get(source.storage_id)
+                if src_storage and src_storage.type == StorageType.SSH:
+                    src_host = self._storage_to_host(src_storage)
+            if destination.storage_id:
+                dst_storage = storages.get(destination.storage_id)
+                if dst_storage and dst_storage.type == StorageType.SSH:
+                    dst_host = self._storage_to_host(dst_storage)
+
+            if src_host and dst_host:
+                # Host-to-host transfer
+                return self._transfer_host_to_host(
+                    source, destination, src_host, dst_host, delete, exclude
+                )
+
+            host = src_host or dst_host
+            upload = dst_host is not None
+
+            return self.rsync(
+                source=source.path,
+                destination=destination.path,
+                host=host,
+                upload=upload,
+                delete=delete,
+                exclude=exclude,
+            )
+
+    def _select_transfer_tool(
+        self,
+        source: TransferEndpoint,
+        destination: TransferEndpoint,
+        storages: dict[str, Storage],
+    ) -> str:
+        """Select transfer tool: 'rsync' or 'rclone'."""
+        src_storage = storages.get(source.storage_id) if source.storage_id else None
+        dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
+
+        # SSH Storage uses rsync
+        if src_storage and src_storage.type == StorageType.SSH:
+            return "rsync"
+        if dst_storage and dst_storage.type == StorageType.SSH:
+            return "rsync"
+
+        # Cloud storage uses rclone
+        if src_storage or dst_storage:
+            return "rclone"
+
+        # Host-to-Host or Local uses rsync
+        return "rsync"
+
+    def _storage_to_host(self, storage: Storage) -> Host:
+        """Convert SSH storage to Host object."""
+        config = storage.config
+        return Host(
+            id=storage.id,
+            name=storage.name,
+            type=HostType.SSH,
+            hostname=config.get("host", ""),
+            port=config.get("port", 22),
+            username=config.get("user", ""),
+            ssh_key_path=config.get("key_file"),
+        )
+
+    def _transfer_host_to_host(
+        self,
+        source: TransferEndpoint,
+        destination: TransferEndpoint,
+        src_host: Host,
+        dst_host: Host,
+        delete: bool = False,
+        exclude: Optional[List[str]] = None,
+    ) -> TransferResult:
+        """
+        Transfer files between two remote hosts.
+
+        Strategy:
+        1. If src_host can SSH to dst_host: use remote rsync (direct)
+        2. Otherwise: use scp -3 through local relay
+        """
+        can_direct = self._check_host_connectivity(src_host, dst_host)
+
+        if can_direct:
+            return self._rsync_remote_to_remote(
+                source, destination, src_host, dst_host, delete, exclude
+            )
+        else:
+            return self._scp_three_way(source, destination, src_host, dst_host)
+
+    def _check_host_connectivity(self, src: Host, dst: Host) -> bool:
+        """Check if src_host can SSH to dst_host directly."""
+        try:
+            # Build SSH command to check connectivity
+            dst_spec = f"{dst.username}@{dst.hostname}" if dst.username else dst.hostname
+            check_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no"
+            if dst.port != 22:
+                check_cmd += f" -p {dst.port}"
+            check_cmd += f" {dst_spec} echo ok"
+
+            # Execute check from src_host
+            src_ssh = self._build_ssh_args(src)
+            full_cmd = src_ssh + [check_cmd]
+
+            result = subprocess.run(
+                full_cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            return result.returncode == 0 and "ok" in result.stdout
+        except (subprocess.TimeoutExpired, Exception):
+            return False
+
+    def _rsync_remote_to_remote(
+        self,
+        source: TransferEndpoint,
+        destination: TransferEndpoint,
+        src_host: Host,
+        dst_host: Host,
+        delete: bool = False,
+        exclude: Optional[List[str]] = None,
+    ) -> TransferResult:
+        """Execute rsync from src_host to dst_host directly."""
+        # Build rsync command to run on src_host
+        rsync_parts = ["rsync", "-avz", "--progress"]
+        if delete:
+            rsync_parts.append("--delete")
+        for pattern in (exclude or []):
+            rsync_parts.append(f"--exclude={pattern}")
+
+        # Destination spec
+        dst_spec = f"{dst_host.username}@{dst_host.hostname}" if dst_host.username else dst_host.hostname
+        if dst_host.port != 22:
+            rsync_parts.extend(["-e", f"'ssh -p {dst_host.port}'"])
+
+        rsync_parts.append(source.path)
+        rsync_parts.append(f"{dst_spec}:{destination.path}")
+
+        rsync_cmd = " ".join(rsync_parts)
+
+        # Execute on src_host
+        src_ssh = self._build_ssh_args(src_host)
+        full_cmd = src_ssh + [rsync_cmd]
+
+        try:
+            result = subprocess.run(
+                full_cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600,  # 1 hour timeout for large transfers
+            )
+
+            # Parse bytes transferred
+            bytes_transferred = 0
+            match = re.search(r"sent ([\d,]+) bytes", result.stdout)
+            if match:
+                bytes_transferred = int(match.group(1).replace(",", ""))
+
+            return TransferResult(
+                success=result.returncode == 0,
+                exit_code=result.returncode,
+                message=result.stderr if result.returncode != 0 else "Transfer complete",
+                bytes_transferred=bytes_transferred,
+            )
+        except subprocess.TimeoutExpired:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message="Transfer timed out",
+            )
+        except Exception as e:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message=str(e),
+            )
+
+    def _scp_three_way(
+        self,
+        source: TransferEndpoint,
+        destination: TransferEndpoint,
+        src_host: Host,
+        dst_host: Host,
+    ) -> TransferResult:
+        """Transfer using scp -3 through local relay."""
+        src_spec = self._build_scp_spec(src_host, source.path)
+        dst_spec = self._build_scp_spec(dst_host, destination.path)
+
+        args = ["scp", "-3", "-r", "-o", "StrictHostKeyChecking=no"]
+
+        # Handle non-standard ports
+        if src_host.port != 22 or dst_host.port != 22:
+            # scp -3 doesn't support different ports directly
+            # Need to use SSH config or ProxyJump
+            # For simplicity, use -o options
+            if src_host.port != 22:
+                args.extend(["-o", f"Port={src_host.port}"])
+
+        # Add SSH key if available
+        if src_host.ssh_key_path:
+            key_path = os.path.expanduser(src_host.ssh_key_path)
+            if os.path.exists(key_path):
+                args.extend(["-i", key_path])
+
+        args.extend([src_spec, dst_spec])
+
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=3600,
+            )
+            return TransferResult(
+                success=result.returncode == 0,
+                exit_code=result.returncode,
+                message=result.stderr if result.returncode != 0 else "Transfer complete",
+            )
+        except subprocess.TimeoutExpired:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message="Transfer timed out",
+            )
+        except Exception as e:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message=str(e),
+            )
+
+    def _build_ssh_args(self, host: Host) -> List[str]:
+        """Build SSH command arguments for a host."""
+        args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no"]
+
+        if host.port != 22:
+            args.extend(["-p", str(host.port)])
+
+        if host.ssh_key_path:
+            key_path = os.path.expanduser(host.ssh_key_path)
+            if os.path.exists(key_path):
+                args.extend(["-i", key_path])
+
+        host_spec = f"{host.username}@{host.hostname}" if host.username else host.hostname
+        args.append(host_spec)
+
+        return args
+
+    def _build_scp_spec(self, host: Host, path: str) -> str:
+        """Build SCP path specification for a host."""
+        host_spec = f"{host.username}@{host.hostname}" if host.username else host.hostname
+        return f"{host_spec}:{path}"
+
+    def _resolve_endpoint(
+        self,
+        endpoint: TransferEndpoint,
+        hosts: dict[str, Host],
+        storages: dict[str, Storage],
+        for_rclone: bool = False,
+    ) -> str:
+        """Resolve an endpoint to a path string."""
+        if endpoint.type == "local":
+            return os.path.expanduser(endpoint.path)
+        elif endpoint.type == "host" and endpoint.host_id:
+            host = hosts.get(endpoint.host_id)
+            if host:
+                return f"{host.username}@{host.hostname}:{endpoint.path}"
+            return endpoint.path
+        elif endpoint.type == "storage" and endpoint.storage_id:
+            storage = storages.get(endpoint.storage_id)
+            if storage and for_rclone:
+                # Return rclone remote format
+                return f"{storage.name}:{endpoint.path}"
+            return endpoint.path
+        return endpoint.path
+
+
+class TransferPlan:
+    """Plan for how a transfer will be executed."""
+    def __init__(self, method: str, via: str, description: str = ""):
+        self.method = method  # "rsync" or "rclone"
+        self.via = via  # "direct", "local-relay", "cloud", "local"
+        self.description = description
+
+    def __repr__(self) -> str:
+        return f"TransferPlan(method={self.method}, via={self.via})"
+
+
+def analyze_transfer(
+    source: TransferEndpoint,
+    destination: TransferEndpoint,
+    hosts: dict[str, Host] = None,
+    storages: dict[str, Storage] = None,
+) -> TransferPlan:
+    """
+    Analyze endpoints and determine optimal transfer method.
+
+    Protocol Selection:
+    - SSH Host/Storage <-> SSH Host/Storage: rsync (direct or via local relay)
+    - Any <-> Cloud Storage (r2/s3/b2/gdrive): rclone
+    - Local <-> SSH: rsync
+
+    Args:
+        source: Source endpoint
+        destination: Destination endpoint
+        hosts: Dictionary of host ID -> Host
+        storages: Dictionary of storage ID -> Storage
+
+    Returns:
+        TransferPlan with method and routing
+    """
+    hosts = hosts or {}
+    storages = storages or {}
+
+    def classify_endpoint(endpoint: TransferEndpoint) -> str:
+        """Classify endpoint type."""
+        if endpoint.storage_id:
+            storage = storages.get(endpoint.storage_id)
+            if storage:
+                if storage.type in (StorageType.R2, StorageType.B2, StorageType.S3, StorageType.GOOGLE_DRIVE, StorageType.GCS):
+                    return "cloud"
+                elif storage.type in (StorageType.SSH, StorageType.SMB):
+                    return "ssh"
+        if endpoint.host_id:
+            return "ssh"
+        if endpoint.type == "local":
+            return "local"
+        return "unknown"
+
+    src_type = classify_endpoint(source)
+    dst_type = classify_endpoint(destination)
+
+    # Both are SSH-based -> use rsync
+    if src_type == "ssh" and dst_type == "ssh":
+        # Need to check if direct connection is possible
+        # For now, return direct and let transfer() handle connectivity check
+        return TransferPlan(
+            method="rsync",
+            via="direct",
+            description="SSH to SSH transfer via rsync"
+        )
+
+    # At least one side is cloud storage -> use rclone
+    if src_type == "cloud" or dst_type == "cloud":
+        return TransferPlan(
+            method="rclone",
+            via="cloud",
+            description="Cloud storage transfer via rclone"
+        )
+
+    # Local to SSH or SSH to local -> rsync
+    if (src_type == "local" and dst_type == "ssh") or (src_type == "ssh" and dst_type == "local"):
+        return TransferPlan(
+            method="rsync",
+            via="local",
+            description="Local to/from SSH via rsync"
+        )
+
+    # Local to local
+    return TransferPlan(
+        method="rsync",
+        via="local",
+        description="Local transfer via rsync"
+    )
+
+
+def rsync_with_progress(
+    source: str,
+    destination: str,
+    host: Optional[Host] = None,
+    upload: bool = True,
+    delete: bool = False,
+    exclude: Optional[List[str]] = None,
+    progress_callback: Optional[Callable[[TransferProgress], None]] = None,
+) -> TransferResult:
+    """
+    Transfer files using rsync with progress updates.
+
+    Args:
+        source: Source path
+        destination: Destination path
+        host: Remote host (for SSH transfers)
+        upload: True for upload, False for download
+        delete: Delete files on destination not in source
+        exclude: Patterns to exclude
+        progress_callback: Callback for progress updates
+
+    Returns:
+        TransferResult with status
+    """
+    args = ["rsync", "-avz", "--info=progress2"]
+
+    if delete:
+        args.append("--delete")
+
+    for pattern in (exclude or []):
+        args.extend(["--exclude", pattern])
+
+    # Build source/destination with SSH host
+    if host:
+        ssh_cmd = f"ssh -p {host.port}"
+        if host.ssh_key_path:
+            key_path = os.path.expanduser(host.ssh_key_path)
+            if os.path.exists(key_path):
+                ssh_cmd += f" -i {key_path}"
+        args.extend(["-e", ssh_cmd])
+
+        host_prefix = f"{host.username}@{host.hostname}:" if host.username else f"{host.hostname}:"
+
+        if upload:
+            args.append(os.path.expanduser(source))
+            args.append(f"{host_prefix}{destination}")
+        else:
+            args.append(f"{host_prefix}{source}")
+            args.append(os.path.expanduser(destination))
+    else:
+        args.append(os.path.expanduser(source))
+        args.append(os.path.expanduser(destination))
+
+    try:
+        process = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        bytes_transferred = 0
+        total_bytes = 0
+
+        for line in iter(process.stdout.readline, ""):
+            if not line:
+                break
+
+            # Parse rsync --info=progress2 output
+            # Format: "1,234,567  12%    1.23MB/s    0:01:23"
+            progress = _parse_rsync_progress(line)
+            if progress and progress_callback:
+                progress_callback(progress)
+
+            # Also parse "sent X bytes" line at the end
+            match = re.search(r"sent ([\d,]+) bytes", line)
+            if match:
+                bytes_transferred = int(match.group(1).replace(",", ""))
+
+        exit_code = process.wait()
+
+        return TransferResult(
+            success=exit_code == 0,
+            exit_code=exit_code,
+            message="Transfer complete" if exit_code == 0 else "Transfer failed",
+            bytes_transferred=bytes_transferred,
+        )
+    except Exception as e:
+        return TransferResult(
+            success=False,
+            exit_code=-1,
+            message=str(e),
+        )
+
+
+def _parse_rsync_progress(line: str) -> Optional[TransferProgress]:
+    """Parse rsync --info=progress2 output line."""
+    # Example: "  1,234,567  12%    1.23MB/s    0:01:23"
+    match = re.search(
+        r"([\d,]+)\s+(\d+)%\s+([\d.]+\w+/s)\s+([\d:]+(?:\s+\(xfr.*\))?)",
+        line
+    )
+    if match:
+        bytes_str = match.group(1).replace(",", "")
+        try:
+            return TransferProgress(
+                bytes_transferred=int(bytes_str),
+                percent=float(match.group(2)),
+                speed=match.group(3),
+                eta=match.group(4).split("(")[0].strip(),
+            )
+        except ValueError:
+            pass
+    return None
+
+
+def check_rsync_available() -> bool:
+    """Check if rsync is installed."""
+    try:
+        subprocess.run(["rsync", "--version"], capture_output=True)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def check_rclone_available() -> bool:
+    """Check if rclone is installed."""
+    try:
+        subprocess.run(["rclone", "version"], capture_output=True)
+        return True
+    except FileNotFoundError:
+        return False

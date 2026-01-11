@@ -1,0 +1,2 @@
+# kitten-trainsh dependencies
+keyring>=24.0.0
