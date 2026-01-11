@@ -858,8 +858,10 @@ class ManageTUI:
             print("  2. SSH/SFTP")
             print("  3. Google Drive")
             print("  4. Cloudflare R2")
-            print("  5. Google Cloud Storage")
-            print("  6. SMB/CIFS")
+            print("  5. Backblaze B2")
+            print("  6. Amazon S3")
+            print("  7. Google Cloud Storage")
+            print("  8. SMB/CIFS")
             type_choice = input("Choice [1]: ").strip() or "1"
 
             type_map = {
@@ -867,8 +869,10 @@ class ManageTUI:
                 "2": StorageType.SSH,
                 "3": StorageType.GOOGLE_DRIVE,
                 "4": StorageType.R2,
-                "5": StorageType.GCS,
-                "6": StorageType.SMB,
+                "5": StorageType.B2,
+                "6": StorageType.S3,
+                "7": StorageType.GCS,
+                "8": StorageType.SMB,
             }
             storage_type = type_map.get(type_choice, StorageType.LOCAL)
 
@@ -901,8 +905,27 @@ class ManageTUI:
                 account_id = input("Cloudflare Account ID: ").strip()
                 bucket = input("Bucket name: ").strip()
                 print("\nAccess keys should be stored in secrets.")
+                print("Run 'kitty +kitten trainsh secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
                 config["account_id"] = account_id
                 config["bucket"] = bucket
+                config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
+
+            elif storage_type == StorageType.B2:
+                bucket = input("Bucket name: ").strip()
+                print("\nApplication keys should be stored in secrets.")
+                print("Run 'kitty +kitten trainsh secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
+                config["bucket"] = bucket
+
+            elif storage_type == StorageType.S3:
+                bucket = input("Bucket name: ").strip()
+                region = input("Region [us-east-1]: ").strip() or "us-east-1"
+                endpoint = input("Custom endpoint (optional, for S3-compatible): ").strip()
+                print("\nAWS credentials should be stored in secrets.")
+                print("Run 'kitty +kitten trainsh secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
+                config["bucket"] = bucket
+                config["region"] = region
+                if endpoint:
+                    config["endpoint"] = endpoint
 
             elif storage_type == StorageType.GCS:
                 bucket = input("Bucket name: ").strip()
@@ -986,10 +1009,27 @@ class ManageTUI:
                 for key, label in [
                     ("account_id", "Account ID"),
                     ("bucket", "Bucket"),
+                    ("endpoint", "Endpoint"),
                 ]:
                     current = config.get(key, "")
                     value = input(f"{label} [{current}]: ").strip() or current
                     config[key] = value
+
+            elif storage.type == StorageType.B2:
+                current = config.get("bucket", "")
+                bucket = input(f"Bucket [{current}]: ").strip() or current
+                config["bucket"] = bucket
+
+            elif storage.type == StorageType.S3:
+                for key, label in [
+                    ("bucket", "Bucket"),
+                    ("region", "Region"),
+                    ("endpoint", "Endpoint (optional)"),
+                ]:
+                    current = config.get(key, "")
+                    value = input(f"{label} [{current}]: ").strip() or current
+                    if value or key != "endpoint":
+                        config[key] = value
 
             elif storage.type == StorageType.GCS:
                 current = config.get("bucket", "")
@@ -1087,7 +1127,7 @@ class ManageTUI:
             else:
                 self.message = f"Storage {storage_name}: connection failed."
 
-        elif storage.type.value in ("gdrive", "r2", "gcs"):
+        elif storage.type.value in ("gdrive", "r2", "gcs", "b2", "s3"):
             result = subprocess.run(
                 ["rclone", "lsd", f"{storage_name}:"],
                 capture_output=True,
