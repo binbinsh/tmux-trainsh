@@ -787,7 +787,7 @@ if KITTY_TUI_AVAILABLE:
                         self.print(f"  {name}")
 
             self._draw_message()
-            self._draw_footer("Enter:Run  b:Back  q:Quit")
+            self._draw_footer("Enter:Run  e:Edit  b:Back  q:Quit")
 
         @KittyHandler.atomic_update
         def _draw_secrets(self) -> None:
@@ -1171,6 +1171,12 @@ if KITTY_TUI_AVAILABLE:
             elif self.current_view == "settings":
                 # settings has 6 options
                 self.list_selected = min(5, self.list_selected + 1)
+            elif self.current_view == "recipes":
+                # recipes - get count dynamically
+                from ..commands.recipe import list_recipes
+                recipes = list_recipes()
+                max_idx = min(len(recipes) - 1, 14) if recipes else 0  # max 15 shown
+                self.list_selected = min(max_idx, self.list_selected + 1)
             else:
                 max_idx = len(self.list_items) - 1 if self.list_items else 0
                 self.list_selected = min(max_idx, self.list_selected + 1)
@@ -1190,6 +1196,8 @@ if KITTY_TUI_AVAILABLE:
                 self._secret_edit_start()
             elif self.current_view == "settings":
                 self._settings_edit_start()
+            elif self.current_view == "recipes":
+                self._action_recipe_run()
 
         def _nav_back(self) -> None:
             if self.current_view in ("vast", "hosts", "storage", "recipes",
@@ -1247,6 +1255,53 @@ if KITTY_TUI_AVAILABLE:
             if self.current_view == "hosts" and self.list_items:
                 self._show_message("Edit not implemented yet", "info")
                 self.draw_screen()
+            elif self.current_view == "recipes":
+                self._action_recipe_edit()
+
+        def _action_recipe_run(self) -> None:
+            """Run the selected recipe using recipe TUI."""
+            from ..commands.recipe import list_recipes, get_recipes_dir
+            import os
+
+            recipes = list_recipes()
+            if not recipes or self.list_selected >= len(recipes):
+                self._show_message("No recipe selected", "error")
+                self.draw_screen()
+                return
+
+            recipe_name = recipes[self.list_selected]
+            recipe_path = os.path.join(get_recipes_dir(), recipe_name)
+
+            # Exit TUI and run recipe
+            self.quit()
+
+            # Run the recipe using dsl_executor
+            from ..core.dsl_executor import run_recipe
+            print(f"\nRunning recipe: {recipe_name}")
+            print("-" * 40)
+            run_recipe(recipe_path, visual=True)
+
+        def _action_recipe_edit(self) -> None:
+            """Open the selected recipe in editor."""
+            from ..commands.recipe import list_recipes, get_recipes_dir
+            import os
+            import subprocess
+
+            recipes = list_recipes()
+            if not recipes or self.list_selected >= len(recipes):
+                self._show_message("No recipe selected", "error")
+                self.draw_screen()
+                return
+
+            recipe_name = recipes[self.list_selected]
+            recipe_path = os.path.join(get_recipes_dir(), recipe_name)
+
+            # Get editor from environment
+            editor = os.environ.get("EDITOR", "vim")
+
+            # Exit TUI and open editor
+            self.quit()
+            subprocess.run([editor, recipe_path])
 
         def _action_ssh(self) -> None:
             if self.current_view == "hosts" and self.list_items:
