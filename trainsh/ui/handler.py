@@ -123,8 +123,17 @@ class KittyRemote:
             return output, result.returncode
 
     def launch_ssh(self, host: str, user: str = "root", port: int = 22,
-                   key_file: Optional[str] = None, title: Optional[str] = None) -> tuple[bool, str]:
+                   key_file: Optional[str] = None, title: Optional[str] = None,
+                   remote_cmd: Optional[str] = None) -> tuple[bool, str]:
         """Launch SSH in new kitty tab.
+
+        Args:
+            host: The hostname to connect to
+            user: SSH username
+            port: SSH port
+            key_file: Path to SSH key file
+            title: Tab title
+            remote_cmd: Command to execute on the remote host after connecting
 
         Returns:
             Tuple of (success, error_message)
@@ -140,7 +149,12 @@ class KittyRemote:
             ssh_args.extend(['-p', str(port)])
         if key_file:
             ssh_args.extend(['-i', os.path.expanduser(key_file)])
+        # Allocate TTY for interactive commands like tmux
+        if remote_cmd:
+            ssh_args.append('-t')
         ssh_args.append(host)
+        if remote_cmd:
+            ssh_args.append(remote_cmd)
 
         # Try using subprocess to call kitty @ launch
         # This works when allow_remote_control=yes because kitty
@@ -154,6 +168,46 @@ class KittyRemote:
         if code == 0:
             return True, ""
         return False, output or f"kitty @ launch failed with code {code}"
+
+    def get_remote_tmux_sessions(self, host: str, user: str = "root", port: int = 22,
+                                  key_file: Optional[str] = None) -> tuple[list[str], str]:
+        """Fetch the list of tmux sessions on a remote host.
+
+        Args:
+            host: The hostname to connect to
+            user: SSH username
+            port: SSH port
+            key_file: Path to SSH key file
+
+        Returns:
+            Tuple of (list of session names, error_message)
+        """
+        # Build SSH command to list tmux sessions
+        ssh_cmd = ['ssh', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes']
+        if user:
+            ssh_cmd.extend(['-l', user])
+        if port != 22:
+            ssh_cmd.extend(['-p', str(port)])
+        if key_file:
+            ssh_cmd.extend(['-i', os.path.expanduser(key_file)])
+        ssh_cmd.append(host)
+        ssh_cmd.append('tmux list-sessions -F "#{session_name}" 2>/dev/null || echo ""')
+
+        try:
+            result = subprocess.run(
+                ssh_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                sessions = [s.strip() for s in result.stdout.strip().split('\n') if s.strip()]
+                return sessions, ""
+            return [], result.stderr or "Failed to list tmux sessions"
+        except subprocess.TimeoutExpired:
+            return [], "SSH connection timed out"
+        except Exception as e:
+            return [], str(e)
 
 
 # Global remote instance
@@ -252,6 +306,9 @@ if KITTY_TUI_AVAILABLE:
             # Status monitoring state for Vast.ai instance start/stop
             self._vast_monitoring_id: Optional[int] = None
             self._vast_monitoring_status = ""
+
+            # Pending SSH connection params for tmux session selection
+            self._pending_ssh: Dict[str, Any] = {}
 
         # ====================================================================
         # Utilities
@@ -1209,24 +1266,111 @@ if KITTY_TUI_AVAILABLE:
                         self._show_message("Instance not running. Press 'S' to start.", "error")
                         self.draw_screen()
                         return
-                    # SSH into Vast.ai instance
+                    # SSH into Vast.ai instance with tmux
                     ssh_host = inst.ssh_host or inst.public_ipaddr
                     ssh_port = inst.ssh_port or 22
-                    success, err = remote.launch_ssh(ssh_host, "root", ssh_port, None, title=f"vast-{inst.id}")
-                    if success:
-                        self._show_message(f"SSH to vast-{inst.id} opened in new tab", "success")
-                    else:
-                        self._show_message(f"SSH failed: {err[:40]}" if err else "SSH failed", "error")
+                    self._ssh_with_tmux(remote, ssh_host, "root", ssh_port, None, f"vast-{inst.id}")
                 else:
-                    # Regular host
+                    # Regular host with tmux
                     host = item.data
-                    success, err = remote.launch_ssh(host.hostname, host.username, host.port,
-                                         host.ssh_key_path, title=item.title)
-                    if success:
-                        self._show_message(f"SSH to {item.title} opened in new tab", "success")
-                    else:
-                        self._show_message(f"SSH failed: {err[:40]}" if err else "SSH failed", "error")
+                    self._ssh_with_tmux(remote, host.hostname, host.username, host.port,
+                                        host.ssh_key_path, item.title)
+
+        def _ssh_with_tmux(self, remote: KittyRemote, host: str, user: str, port: int,
+                           key_file: Optional[str], title: str) -> None:
+            """Connect to host via SSH and attach to tmux session."""
+            self._show_message(f"Checking tmux sessions on {title}...", "info")
+            self.draw_screen()
+
+            # Get remote tmux sessions
+            sessions, err = remote.get_remote_tmux_sessions(host, user, port, key_file)
+
+            if err:
+                # Connection failed or tmux error, just connect without tmux
+                self._show_message(f"Connecting to {title}...", "info")
                 self.draw_screen()
+                success, err = remote.launch_ssh(host, user, port, key_file, title=title)
+                if success:
+                    self._show_message(f"SSH to {title} opened in new tab", "success")
+                else:
+                    self._show_message(f"SSH failed: {err[:40]}" if err else "SSH failed", "error")
+                self.draw_screen()
+                return
+
+            if not sessions:
+                # No sessions, create a new "main" session
+                tmux_cmd = 'tmux new-session -s main'
+                success, err = remote.launch_ssh(host, user, port, key_file, title=title, remote_cmd=tmux_cmd)
+                if success:
+                    self._show_message(f"SSH to {title} with tmux:main opened", "success")
+                else:
+                    self._show_message(f"SSH failed: {err[:40]}" if err else "SSH failed", "error")
+                self.draw_screen()
+            else:
+                # Has sessions, show selection dialog (even for 1 session)
+                # Store connection params for later use
+                self._pending_ssh = {
+                    "remote": remote, "host": host, "user": user, "port": port,
+                    "key_file": key_file, "title": title, "sessions": sessions
+                }
+                options = sessions + ["+ New Session"]
+                self._show_dialog(
+                    "Select tmux Session",
+                    f"Found {len(sessions)} session(s) on {title}",
+                    options,
+                    self._on_tmux_session_selected
+                )
+
+        def _on_tmux_session_selected(self, idx: int) -> None:
+            """Handle tmux session selection from dialog."""
+            params = self._pending_ssh
+            sessions = params["sessions"]
+
+            if idx < len(sessions):
+                # Selected an existing session
+                self._do_ssh_tmux_session(
+                    params["remote"], params["host"], params["user"], params["port"],
+                    params["key_file"], params["title"], sessions[idx]
+                )
+            else:
+                # Selected "+ New Session", show form to input session name
+                self._show_form(
+                    "New tmux Session",
+                    [FormField("session_name", "Session Name", "main")],
+                    self._on_new_session_name_submitted
+                )
+
+        def _on_new_session_name_submitted(self, data: Dict[str, str]) -> None:
+            """Handle new session name form submission."""
+            params = self._pending_ssh
+            session_name = data.get("session_name", "main").strip() or "main"
+            tmux_cmd = f'tmux new-session -s {session_name}'
+            success, err = params["remote"].launch_ssh(
+                params["host"], params["user"], params["port"],
+                params["key_file"], title=params["title"], remote_cmd=tmux_cmd
+            )
+            if success:
+                self._show_message(f"SSH to {params['title']} with tmux:{session_name} opened", "success")
+            else:
+                self._show_message(f"SSH failed: {err[:40]}" if err else "SSH failed", "error")
+            self.current_view = "hosts"
+            self.draw_screen()
+
+        def _do_ssh_tmux_session(self, remote: KittyRemote, host: str, user: str, port: int,
+                                  key_file: Optional[str], title: str, session: Optional[str]) -> None:
+            """Execute SSH connection with specified tmux session."""
+            if session:
+                tmux_cmd = f'tmux attach-session -t {session}'
+            else:
+                tmux_cmd = 'tmux new-session -s main'
+            success, err = remote.launch_ssh(host, user, port, key_file, title=title, remote_cmd=tmux_cmd)
+            if success:
+                session_name = session or "main"
+                self._show_message(f"SSH to {title} with tmux:{session_name} opened", "success")
+            else:
+                self._show_message(f"SSH failed: {err[:40]}" if err else "SSH failed", "error")
+            self.current_view = "hosts"
+            self.draw_screen()
 
         def _action_vast_start(self) -> None:
             """Start a Vast.ai instance."""
