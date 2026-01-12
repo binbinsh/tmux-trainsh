@@ -1,24 +1,23 @@
-# tmux-train
+# tmux-trainsh
 
-GPU training workflow automation using tmux for terminal management.
+The missing workflow automation for public cloud GPU and storage.
 
-Manage remote GPU hosts (Vast.ai, Google Colab, custom SSH), cloud storage (R2, B2, S3, Google Drive), and automate training workflows with recipes.
-
-CLI-only: all operations are available via CLI subcommands (no TUI required).
+Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, S3, GDrive), and automate training workflows with a simple recipe DSL.
 
 ## Features
 
-- **Pure tmux-based**: No kitty dependency, works with any terminal
-- **Visual mode**: Watch command execution in tmux panes/windows
-- **Headless mode**: Run recipes without visual output
+- **Recipe DSL**: Define multi-step training workflows in a simple declarative format
+- **Visual execution**: Watch commands run in real-time via tmux panes
+- **Headless mode**: Run recipes unattended on servers
 - **Resume support**: Resume interrupted recipes from last checkpoint
+- **Multi-host orchestration**: Coordinate across multiple GPU hosts and storage backends
 
 ## Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/binbinsh/tmux-train.git
-cd tmux-train
+git clone https://github.com/binbinsh/tmux-trainsh.git
+cd tmux-trainsh
 
 # Install with uv (recommended)
 uv venv
@@ -254,7 +253,7 @@ Commands execute directly via SSH without tmux UI.
 
 - tmux (any version with `wait-for` support)
 - Python 3.11+
-- Optional: `rsync`, `rclone`, `cloudflared`
+- Optional: `rsync`, `rclone`
 
 ## License
 
