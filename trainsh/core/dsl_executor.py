@@ -320,7 +320,7 @@ class DSLExecutor:
                     self.logger.log_detail("skip", f"Step {step_num} skipped (resume)", {"step_num": step_num})
                 continue
 
-            step_name = f"Step {step_num}: {step.raw[:50]}"
+            step_name = f"Step {step_num}: {step.raw}"
             self.log(f"→ {step_name}")
 
             # Build step details for logging
