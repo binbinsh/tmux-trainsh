@@ -635,7 +635,7 @@ class DSLExecutor:
             return False, str(e)
 
     def _cmd_vast_pick(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > vast.pick @host gpu=RTX_5090 num_gpus=8 min_gpu_ram=24"""
+        """Handle: > vast.pick @host gpu=RTX_5090 num_gpus=8 min_gpu_ram=24 (selects from rented instances)"""
         from ..services.vast_api import get_vast_client, VastAPIError
 
         host_name = None
@@ -644,11 +644,6 @@ class DSLExecutor:
         min_gpu_ram = None
         max_dph = None
         limit = 20
-        image = "pytorch/pytorch:latest"
-        disk = 50.0
-        label = None
-        onstart = None
-        direct = False
         skip_if_set = True
 
         for arg in args:
@@ -679,19 +674,6 @@ class DSLExecutor:
                         limit = int(value)
                     except ValueError:
                         return False, f"Invalid limit: {value}"
-                elif key == "image":
-                    image = value
-                elif key == "disk":
-                    try:
-                        disk = float(value)
-                    except ValueError:
-                        return False, f"Invalid disk: {value}"
-                elif key == "label":
-                    label = value
-                elif key == "onstart":
-                    onstart = value
-                elif key == "direct":
-                    direct = value.lower() in ("1", "true", "yes", "y")
                 elif key == "skip_if_set":
                     skip_if_set = value.lower() in ("1", "true", "yes", "y")
                 continue
@@ -723,65 +705,75 @@ class DSLExecutor:
 
         try:
             client = get_vast_client()
-            offers = client.search_offers(
-                gpu_name=gpu_name,
-                num_gpus=num_gpus,
-                min_gpu_ram=min_gpu_ram,
-                max_dph=max_dph,
-                limit=limit,
-            )
+            instances = client.list_instances()
+            if not instances:
+                return False, "No Vast.ai instances found"
 
-            if not offers:
-                return False, "No Vast.ai offers found"
+            def matches_filters(instance) -> bool:
+                if gpu_name and (instance.gpu_name or "").upper() != gpu_name.upper():
+                    return False
+                if num_gpus and (instance.num_gpus or 0) < num_gpus:
+                    return False
+                if min_gpu_ram and instance.gpu_memory_gb < min_gpu_ram:
+                    return False
+                if max_dph and (instance.dph_total or 0.0) > max_dph:
+                    return False
+                return True
 
-            offers = sorted(offers, key=lambda o: o.dph_total or 0.0)
+            instances = [i for i in instances if matches_filters(i)]
+            if not instances:
+                return False, "No Vast.ai instances match filters"
 
-            print("\nSelect a Vast.ai offer:")
-            print("-" * 78)
-            print(f"{'#':<4} {'ID':<10} {'GPU':<18} {'GPUs':<5} {'VRAM':<8} {'$/hr':<8} {'Rel':<6}")
-            print("-" * 78)
-            for idx, offer in enumerate(offers, 1):
-                gpu = offer.gpu_name or "N/A"
-                gpus = offer.num_gpus or 0
-                vram = offer.display_gpu_ram if hasattr(offer, "display_gpu_ram") else "N/A"
-                price = f"${offer.dph_total:.3f}" if offer.dph_total else "N/A"
-                rel = f"{offer.reliability2:.2f}" if offer.reliability2 else "N/A"
-                print(f"{idx:<4} {offer.id:<10} {gpu:<18} {gpus:<5} {vram:<8} {price:<8} {rel:<6}")
-            print("-" * 78)
+            if limit and limit > 0:
+                instances = instances[:limit]
+
+            def status_rank(instance) -> int:
+                status = (instance.actual_status or "").lower()
+                if status == "running":
+                    return 0
+                if status in ("stopped", "exited"):
+                    return 1
+                return 2
+
+            instances = sorted(instances, key=lambda i: (status_rank(i), i.dph_total or 0.0))
+
+            print("\nSelect a Vast.ai instance:")
+            print("-" * 86)
+            print(f"{'#':<4} {'ID':<10} {'Status':<10} {'GPU':<18} {'GPUs':<5} {'VRAM':<8} {'$/hr':<8}")
+            print("-" * 86)
+            for idx, inst in enumerate(instances, 1):
+                gpu = inst.gpu_name or "N/A"
+                gpus = inst.num_gpus or 0
+                vram = f"{inst.gpu_memory_gb:.0f} GB" if inst.gpu_memory_gb else "N/A"
+                price = f"${inst.dph_total:.3f}" if inst.dph_total else "N/A"
+                status = inst.actual_status or "unknown"
+                print(f"{idx:<4} {inst.id:<10} {status:<10} {gpu:<18} {gpus:<5} {vram:<8} {price:<8}")
+            print("-" * 86)
 
             try:
-                choice = input(f"Enter number (1-{len(offers)}) or offer ID: ").strip()
+                choice = input(f"Enter number (1-{len(instances)}) or instance ID: ").strip()
             except (EOFError, KeyboardInterrupt):
                 return False, "Selection cancelled"
 
             selected = None
             if choice.isdigit():
                 num = int(choice)
-                if 1 <= num <= len(offers):
-                    selected = offers[num - 1]
+                if 1 <= num <= len(instances):
+                    selected = instances[num - 1]
                 else:
-                    for offer in offers:
-                        if offer.id == num:
-                            selected = offer
+                    for inst in instances:
+                        if inst.id == num:
+                            selected = inst
                             break
 
             if not selected:
                 return False, "Invalid selection"
 
-            instance_id = client.create_instance(
-                offer_id=selected.id,
-                image=image,
-                disk=disk,
-                label=label,
-                onstart=onstart,
-                direct=direct,
-            )
+            self.ctx.variables["_vast_instance_id"] = str(selected.id)
+            self.ctx.variables["VAST_ID"] = str(selected.id)
+            self.recipe.hosts[host_name] = f"vast:{selected.id}"
 
-            self.ctx.variables["_vast_instance_id"] = str(instance_id)
-            self.ctx.variables["VAST_ID"] = str(instance_id)
-            self.recipe.hosts[host_name] = f"vast:{instance_id}"
-
-            return True, f"Created instance {instance_id} from offer {selected.id}"
+            return True, f"Selected instance {selected.id}"
 
         except (VastAPIError, RuntimeError) as e:
             return False, str(e)
