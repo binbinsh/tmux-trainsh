@@ -8,9 +8,8 @@ from typing import Optional, List
 usage = '''[subcommand] [args...]
 
 Subcommands:
-  list, ls         - List available recipes
+  list             - List available recipes
   run <name>       - Execute a recipe
-  tui              - Interactive recipe runner (TUI)
   show <name>      - Show recipe details
   new <name>       - Create a new recipe from template
   edit <name>      - Open recipe in editor
@@ -453,15 +452,6 @@ def _show_execution_details(reader, exec_id: str) -> None:
         print("-" * 60)
 
 
-def cmd_tui(args: List[str]) -> None:
-    """Launch interactive recipe runner TUI."""
-    from ..ui.recipe_tui import run_recipe_tui
-
-    success = run_recipe_tui()
-    if not success:
-        sys.exit(1)
-
-
 def cmd_status(args: List[str]) -> None:
     """View running recipe sessions."""
     from ..core.session_registry import SessionRegistry
@@ -555,10 +545,8 @@ def main(args: List[str]) -> Optional[str]:
 
     commands = {
         "list": cmd_list,
-        "ls": cmd_list,
         "show": cmd_show,
         "run": cmd_run,
-        "tui": cmd_tui,
         "new": cmd_new,
         "edit": cmd_edit,
         "logs": cmd_logs,

@@ -4,10 +4,12 @@
 import sys
 from typing import Optional, List
 
+from ..cli_utils import prompt_input
+
 usage = '''[subcommand] [args...]
 
 Subcommands:
-  list, ls         - List configured storage backends
+  list             - List configured storage backends
   add              - Add a new storage backend
   show <name>      - Show storage details
   remove <name>    - Remove a storage backend
@@ -125,7 +127,9 @@ def cmd_add(args: List[str]) -> None:
     print("Add new storage backend")
     print("-" * 40)
 
-    name = input("Storage name: ").strip()
+    name = prompt_input("Storage name: ")
+    if name is None:
+        return
     if not name:
         print("Cancelled - name is required.")
         return
@@ -139,7 +143,9 @@ def cmd_add(args: List[str]) -> None:
     print("  6. Amazon S3")
     print("  7. Google Cloud Storage")
     print("  8. SMB/CIFS")
-    type_choice = input("Choice [1]: ").strip() or "1"
+    type_choice = prompt_input("Choice [1]: ", default="1")
+    if type_choice is None:
+        return
 
     type_map = {
         "1": StorageType.LOCAL,
@@ -156,13 +162,21 @@ def cmd_add(args: List[str]) -> None:
     config = {}
 
     if storage_type == StorageType.LOCAL:
-        path = input("Base path: ").strip()
+        path = prompt_input("Base path: ")
+        if path is None:
+            return
         config["path"] = path
 
     elif storage_type == StorageType.SSH:
-        host = input("Host: ").strip()
-        path = input("Base path: ").strip()
-        key_path = input("SSH key path [~/.ssh/id_rsa]: ").strip() or "~/.ssh/id_rsa"
+        host = prompt_input("Host: ")
+        if host is None:
+            return
+        path = prompt_input("Base path: ")
+        if path is None:
+            return
+        key_path = prompt_input("SSH key path [~/.ssh/id_rsa]: ", default="~/.ssh/id_rsa")
+        if key_path is None:
+            return
         config["host"] = host
         config["path"] = path
         config["key_path"] = key_path
@@ -170,12 +184,18 @@ def cmd_add(args: List[str]) -> None:
     elif storage_type == StorageType.GOOGLE_DRIVE:
         print("\nGoogle Drive requires OAuth setup.")
         print("Run 'rclone config' to set up Google Drive, then enter the rclone remote name.")
-        remote_name = input("Rclone remote name: ").strip()
+        remote_name = prompt_input("Rclone remote name: ")
+        if remote_name is None:
+            return
         config["remote_name"] = remote_name
 
     elif storage_type == StorageType.R2:
-        account_id = input("Cloudflare Account ID: ").strip()
-        bucket = input("Bucket name: ").strip()
+        account_id = prompt_input("Cloudflare Account ID: ")
+        if account_id is None:
+            return
+        bucket = prompt_input("Bucket name: ")
+        if bucket is None:
+            return
         print("\nAccess keys will be stored in secrets.")
         print("Run 'kitty +kitten trainsh secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
         config["account_id"] = account_id
@@ -183,15 +203,23 @@ def cmd_add(args: List[str]) -> None:
         config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
 
     elif storage_type == StorageType.B2:
-        bucket = input("Bucket name: ").strip()
+        bucket = prompt_input("Bucket name: ")
+        if bucket is None:
+            return
         print("\nApplication keys will be stored in secrets.")
         print("Run 'kitty +kitten trainsh secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
         config["bucket"] = bucket
 
     elif storage_type == StorageType.S3:
-        bucket = input("Bucket name: ").strip()
-        region = input("Region [us-east-1]: ").strip() or "us-east-1"
-        endpoint = input("Custom endpoint (optional, for S3-compatible): ").strip()
+        bucket = prompt_input("Bucket name: ")
+        if bucket is None:
+            return
+        region = prompt_input("Region [us-east-1]: ", default="us-east-1")
+        if region is None:
+            return
+        endpoint = prompt_input("Custom endpoint (optional, for S3-compatible): ")
+        if endpoint is None:
+            return
         print("\nAWS credentials will be stored in secrets.")
         print("Run 'kitty +kitten trainsh secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
         config["bucket"] = bucket
@@ -200,18 +228,29 @@ def cmd_add(args: List[str]) -> None:
             config["endpoint"] = endpoint
 
     elif storage_type == StorageType.GCS:
-        bucket = input("Bucket name: ").strip()
+        bucket = prompt_input("Bucket name: ")
+        if bucket is None:
+            return
         config["bucket"] = bucket
 
     elif storage_type == StorageType.SMB:
-        server = input("Server: ").strip()
-        share = input("Share name: ").strip()
-        username = input("Username: ").strip()
+        server = prompt_input("Server: ")
+        if server is None:
+            return
+        share = prompt_input("Share name: ")
+        if share is None:
+            return
+        username = prompt_input("Username: ")
+        if username is None:
+            return
         config["server"] = server
         config["share"] = share
         config["username"] = username
 
-    is_default = input("\nSet as default? (y/N): ").lower() == "y"
+    default_choice = prompt_input("\nSet as default? (y/N): ")
+    if default_choice is None:
+        return
+    is_default = default_choice.lower() == "y"
 
     storage = Storage(
         name=name,
@@ -268,8 +307,8 @@ def cmd_remove(args: List[str]) -> None:
         print(f"Storage not found: {name}")
         sys.exit(1)
 
-    confirm = input(f"Remove storage '{name}'? (y/N): ")
-    if confirm.lower() != "y":
+    confirm = prompt_input(f"Remove storage '{name}'? (y/N): ")
+    if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
 
@@ -343,12 +382,6 @@ def cmd_test(args: List[str]) -> None:
         print("Connection test not implemented for this storage type.")
 
 
-def cmd_tui(args: List[str]) -> None:
-    """Launch interactive storage management TUI."""
-    from ..ui.manage_tui import run_storage_tui
-    run_storage_tui()
-
-
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for storage command."""
     if not args or args[0] in ("-h", "--help", "help"):
@@ -360,12 +393,10 @@ def main(args: List[str]) -> Optional[str]:
 
     commands = {
         "list": cmd_list,
-        "ls": cmd_list,
         "add": cmd_add,
         "show": cmd_show,
         "remove": cmd_remove,
         "test": cmd_test,
-        "tui": cmd_tui,
     }
 
     if subcommand not in commands:

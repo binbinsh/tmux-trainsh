@@ -9,7 +9,7 @@ This file serves as the entry point for both:
 Usage:
     kitty +kitten trainsh --help
     kitty +kitten trainsh config show
-    kitty +kitten trainsh host tui
+    kitty +kitten trainsh host list
 """
 
 import sys

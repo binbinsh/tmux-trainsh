@@ -1,33 +1,98 @@
 #!/usr/bin/env python3
 """Test that all commands in README are available and can be imported."""
 
+import json
 import subprocess
 import sys
 import os
+import tempfile
 from pathlib import Path
 
 # Get project root
 PROJECT_ROOT = Path(__file__).parent.parent
 
+TEST_HOME = tempfile.TemporaryDirectory()
+TEST_CONFIG_DIR = Path(TEST_HOME.name) / ".config" / "kitten-trainsh"
+TEST_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+PRICING_FILE = TEST_CONFIG_DIR / "pricing.json"
+
+if not PRICING_FILE.exists():
+    PRICING_FILE.write_text(json.dumps({
+        "exchange_rates": {
+            "base": "USD",
+            "rates": {
+                "USD": 1.0,
+                "CNY": 7.0,
+            },
+            "updated_at": "test",
+        },
+        "display_currency": "USD",
+    }, indent=2))
+
 # Commands to test (from README)
 # Format: (command, expected_in_help_or_error)
 COMMANDS = [
-    # Interactive TUI
-    ("config tui", "TUI"),
+    # Top-level
+    ("--help", "kitten-trainsh"),
+    ("--version", "kitten-trainsh"),
 
-    # Host Management
-    ("host list", "hosts"),
-    ("host add", "Host"),
+    # Host
     ("host --help", "Subcommands"),
+    ("host list", "hosts"),
+    ("host add", "Add new host"),
+    ("host show", "Usage"),
     ("host ssh", "Usage"),
     ("host browse", "Usage"),
-    ("host show", "Usage"),
     ("host test", "Usage"),
     ("host remove", "Usage"),
 
-    # Vast.ai (now independent command)
-    ("vast list", "instances"),
+    # Storage
+    ("storage --help", "Subcommands"),
+    ("storage list", "backends"),
+    ("storage add", "Add new storage backend"),
+    ("storage show", "Usage"),
+    ("storage test", "Usage"),
+    ("storage remove", "Usage"),
+
+    # Transfer
+    ("transfer --help", "Transfer files"),
+
+    # Recipe
+    ("recipe --help", "Subcommands"),
+    ("recipe list", "recipes"),
+    ("recipe show", "Usage"),
+    ("recipe run", "Usage"),
+    ("recipe new", "Usage"),
+    ("recipe edit", "Usage"),
+    ("recipe logs", "execution"),
+    ("recipe logs --last", "execution"),
+    ("recipe status", "sessions"),
+    ("recipe status --all", "sessions"),
+
+    # Secrets
+    ("secrets --help", "Subcommands"),
+    ("secrets list", "secrets"),
+    ("secrets set", "Usage"),
+    ("secrets get", "Usage"),
+    ("secrets delete", "Usage"),
+
+    # Config
+    ("config --help", "Subcommands"),
+    ("config show", "Configuration"),
+    ("config get", "Usage"),
+    ("config set", "Usage"),
+    ("config reset", "Reset all settings"),
+
+    # Colab
+    ("colab --help", "Colab"),
+    ("colab list", "Colab"),
+    ("colab connect", "Connect to Google Colab"),
+    ("colab ssh", "Colab"),
+    ("colab run", "Usage"),
+
+    # Vast.ai
     ("vast --help", "Subcommands"),
+    ("vast list", "instances"),
     ("vast show", "Usage"),
     ("vast ssh", "Usage"),
     ("vast start", "Usage"),
@@ -36,46 +101,15 @@ COMMANDS = [
     ("vast reboot", "Usage"),
     ("vast search", "GPU"),
     ("vast keys", "SSH"),
-    ("vast attach-key", "Key"),
-
-    # Google Colab
-    ("colab --help", "Colab"),
-
-    # Storage
-    ("storage list", "backends"),
-    ("storage add", "Storage"),
-    ("storage --help", "Subcommands"),
-    ("storage show", "Usage"),
-    ("storage test", "Usage"),
-    ("storage remove", "Usage"),
-
-    # Transfer
-    ("transfer --help", "Usage"),
-
-    # Recipe
-    ("recipe list", "recipes"),
-    ("recipe --help", "Subcommands"),
-    ("recipe run", "Usage"),
-    ("recipe new", "Usage"),
-    ("recipe edit", "Usage"),
-    ("recipe status", "sessions"),
-    ("recipe logs", "executions"),
-
-    # Secrets
-    ("secrets list", "secrets"),
-    ("secrets --help", "Subcommands"),
-    ("secrets set", "Usage"),
-    ("secrets get", "Usage"),
-
-    # Config
-    ("config show", "Configuration"),
-    ("config --help", "Subcommands"),
-    ("config set", "Usage"),
-    ("config get", "Usage"),
+    ("vast attach-key", "Key file"),
 
     # Pricing
-    ("pricing --help", "Subcommands"),
-    ("pricing rates", "Exchange"),
+    ("pricing --help", "Pricing"),
+    ("pricing rates", "exchange rates"),
+    ("pricing currency", "Display currency"),
+    ("pricing colab", "Colab Subscription"),
+    ("pricing vast", "Vast.ai"),
+    ("pricing convert 10 USD CNY", "="),
 ]
 
 
@@ -88,7 +122,8 @@ def test_command(cmd: str, expected: str) -> tuple[bool, str]:
             text=True,
             timeout=10,
             cwd=PROJECT_ROOT,
-            env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT)},
+            env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT), "HOME": TEST_HOME.name},
+            stdin=subprocess.DEVNULL,
         )
         output = result.stdout + result.stderr
 
@@ -123,7 +158,6 @@ def test_imports() -> list[tuple[str, bool, str]]:
         "trainsh.commands.colab",
         "trainsh.commands.pricing",
         "trainsh.commands.config_cmd",
-        "trainsh.ui.handler",
         "trainsh.services.vast_api",
         "trainsh.services.ssh",
         "trainsh.services.tmux",

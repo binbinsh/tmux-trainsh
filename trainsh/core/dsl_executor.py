@@ -5,13 +5,15 @@ import subprocess
 import time
 import re
 import os
-from typing import Optional, Dict, List, Callable
+import shlex
+from typing import Optional, Dict, List, Callable, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from .dsl_parser import DSLRecipe, DSLStep, StepType, parse_recipe
 from .execution_log import ExecutionLogger
 from .secrets import get_secrets_manager
+from .models import Host, HostType
 
 
 @dataclass
@@ -32,6 +34,115 @@ class ExecutionContext:
     exec_id: str = ""
     start_time: Optional[datetime] = None
     log_callback: Optional[Callable[[str], None]] = None
+
+
+SSH_OPTION_ARGS = {
+    "-p",
+    "-i",
+    "-J",
+    "-o",
+    "-F",
+    "-S",
+    "-L",
+    "-R",
+    "-D",
+}
+
+
+def _split_ssh_spec(spec: str) -> Tuple[str, List[str]]:
+    """Split SSH spec into host and option args."""
+    tokens = shlex.split(spec) if spec else []
+    host = ""
+    options: List[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token.startswith("-"):
+            options.append(token)
+            if token in SSH_OPTION_ARGS and i + 1 < len(tokens):
+                options.append(tokens[i + 1])
+                i += 1
+            i += 1
+            continue
+        if not host:
+            host = token
+        else:
+            options.append(token)
+        i += 1
+    if not host:
+        host = spec
+    return host, options
+
+
+def _build_ssh_args(spec: str, command: Optional[str] = None, tty: bool = False) -> List[str]:
+    """Build SSH command args from a host spec and optional command."""
+    host, options = _split_ssh_spec(spec)
+    args = ["ssh"]
+    if tty:
+        args.append("-t")
+    args.extend(options)
+    args.append(host)
+    if command:
+        args.append(command)
+    return args
+
+
+def _host_from_ssh_spec(spec: str) -> Host:
+    """Parse SSH spec into a Host object for rsync/ssh."""
+    host_token, options = _split_ssh_spec(spec)
+    username = ""
+    hostname = host_token
+    if "@" in host_token:
+        username, hostname = host_token.split("@", 1)
+
+    port = 22
+    key_path = None
+    jump_host = None
+    i = 0
+    while i < len(options):
+        opt = options[i]
+        if opt == "-p" and i + 1 < len(options):
+            try:
+                port = int(options[i + 1])
+            except ValueError:
+                port = 22
+            i += 2
+            continue
+        if opt == "-i" and i + 1 < len(options):
+            key_path = options[i + 1]
+            i += 2
+            continue
+        if opt == "-J" and i + 1 < len(options):
+            jump_host = options[i + 1]
+            i += 2
+            continue
+        if opt in SSH_OPTION_ARGS:
+            i += 2
+            continue
+        i += 1
+
+    return Host(
+        id=spec,
+        name=spec,
+        type=HostType.SSH,
+        hostname=hostname,
+        port=port,
+        username=username,
+        ssh_key_path=key_path,
+        jump_host=jump_host,
+    )
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds into a compact duration string."""
+    total_seconds = int(seconds)
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
 
 
 class KittyController:
@@ -76,6 +187,7 @@ class KittyController:
         title: str,
         command: Optional[str] = None,
         tab_type: str = "tab",
+        location: Optional[str] = None,
     ) -> tuple[bool, str]:
         """
         Launch a new tab/window with SSH connection.
@@ -85,20 +197,21 @@ class KittyController:
             title: Window title
             command: Optional command to run after connecting
             tab_type: 'tab', 'window', or 'overlay'
+            location: Optional window location (e.g., 'vsplit', 'hsplit')
 
         Returns:
             (success, window_id or error message)
         """
         args = ['launch', '--type', tab_type, '--title', title]
+        if location:
+            args.extend(['--location', location])
 
         # Add hold flag to keep window open
         args.append('--hold')
 
         # Build SSH command
         if host != 'local':
-            ssh_cmd = ['ssh', '-t', host]
-            if command:
-                ssh_cmd.extend(['--', command])
+            ssh_cmd = _build_ssh_args(host, command=command, tty=True)
             args.extend(ssh_cmd)
         elif command:
             args.extend(['bash', '-c', command])
@@ -349,6 +462,12 @@ class DSLExecutor:
             return self._cmd_vast_start(args)
         elif cmd == "vast.stop":
             return self._cmd_vast_stop(args)
+        elif cmd == "vast.pick":
+            return self._cmd_vast_pick(args)
+        elif cmd == "vast.wait":
+            return self._cmd_vast_wait(args)
+        elif cmd == "vast.cost":
+            return self._cmd_vast_cost(args)
         elif cmd == "sleep":
             return self._cmd_sleep(args)
         else:
@@ -356,14 +475,30 @@ class DSLExecutor:
 
     def _cmd_kitty_open(self, args: List[str]) -> tuple[bool, str]:
         """
-        Handle: > kitty.open @host as name ["command"]
+        Handle: > kitty.open @host as name [command] [type=window] [location=vsplit]
         """
         if len(args) < 3 or args[1] != "as":
-            return False, "Usage: kitty.open @host as name [command]"
+            return False, "Usage: kitty.open @host as name [command] [type=window] [location=vsplit]"
 
         host_ref = args[0]
         window_name = args[2]
-        command = args[3] if len(args) > 3 else None
+        command = None
+        launch_type = "tab"
+        location = None
+
+        for arg in args[3:]:
+            if "=" in arg:
+                key, _, value = arg.partition("=")
+                if key == "type":
+                    launch_type = value
+                    continue
+                if key == "location":
+                    location = value
+                    continue
+            if command is None:
+                command = arg
+            else:
+                command = f"{command} {arg}"
 
         # Resolve host
         host = self._resolve_host(host_ref)
@@ -373,6 +508,8 @@ class DSLExecutor:
                 host=host,
                 title=window_name,
                 command=command,
+                tab_type=launch_type,
+                location=location,
             )
 
             if ok:
@@ -434,6 +571,31 @@ class DSLExecutor:
         try:
             client = get_vast_client()
 
+            if args:
+                instance_id = self._interpolate(args[0])
+                try:
+                    inst_id = int(instance_id)
+                except ValueError:
+                    return False, f"Invalid instance ID: {instance_id}"
+
+                instance = client.get_instance(inst_id)
+                if instance.is_running:
+                    self.ctx.variables["_vast_instance_id"] = str(inst_id)
+                    return True, f"Instance already running: {inst_id}"
+
+                try:
+                    client.start_instance(inst_id)
+                    self.ctx.variables["_vast_instance_id"] = str(inst_id)
+                    return True, f"Started instance: {inst_id}"
+                except VastAPIError as e:
+                    msg = f"Failed to start instance {inst_id}: {e}"
+                    try:
+                        client.stop_instance(inst_id)
+                        msg += "; instance stopped"
+                    except VastAPIError as stop_err:
+                        msg += f"; failed to stop instance: {stop_err}"
+                    return False, msg
+
             # For now, just search and create
             offers = client.search_offers(limit=1)
             if not offers:
@@ -448,25 +610,315 @@ class DSLExecutor:
             self.ctx.variables["_vast_instance_id"] = str(instance_id)
             return True, f"Created instance: {instance_id}"
 
-        except VastAPIError as e:
+        except (VastAPIError, RuntimeError) as e:
             return False, str(e)
 
     def _cmd_vast_stop(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > vast.stop @host"""
+        """Handle: > vast.stop <instance_id>"""
         from ..services.vast_api import get_vast_client, VastAPIError
 
         try:
             client = get_vast_client()
 
-            instance_id = self.ctx.variables.get("_vast_instance_id")
+            instance_id = None
+            if args:
+                instance_id = self._interpolate(args[0])
+            if not instance_id:
+                instance_id = self.ctx.variables.get("_vast_instance_id")
             if not instance_id:
                 return False, "No instance to stop"
 
             client.stop_instance(int(instance_id))
             return True, f"Stopped instance: {instance_id}"
 
-        except VastAPIError as e:
+        except (VastAPIError, RuntimeError) as e:
             return False, str(e)
+
+    def _cmd_vast_pick(self, args: List[str]) -> tuple[bool, str]:
+        """Handle: > vast.pick @host gpu=RTX_5090 num_gpus=8 min_gpu_ram=24"""
+        from ..services.vast_api import get_vast_client, VastAPIError
+
+        host_name = None
+        gpu_name = None
+        num_gpus = None
+        min_gpu_ram = None
+        max_dph = None
+        limit = 20
+        image = "pytorch/pytorch:latest"
+        disk = 50.0
+        label = None
+        onstart = None
+        direct = False
+        skip_if_set = True
+
+        for arg in args:
+            if "=" in arg:
+                key, _, value = arg.partition("=")
+                value = self._interpolate(value)
+                if key in ("host", "host_name"):
+                    host_name = value
+                elif key in ("gpu", "gpu_name"):
+                    gpu_name = value
+                elif key in ("num_gpus", "gpus"):
+                    try:
+                        num_gpus = int(value)
+                    except ValueError:
+                        return False, f"Invalid num_gpus: {value}"
+                elif key in ("min_gpu_ram", "min_vram_gb"):
+                    try:
+                        min_gpu_ram = float(value)
+                    except ValueError:
+                        return False, f"Invalid min_gpu_ram: {value}"
+                elif key in ("max_dph", "max_price"):
+                    try:
+                        max_dph = float(value)
+                    except ValueError:
+                        return False, f"Invalid max_dph: {value}"
+                elif key == "limit":
+                    try:
+                        limit = int(value)
+                    except ValueError:
+                        return False, f"Invalid limit: {value}"
+                elif key == "image":
+                    image = value
+                elif key == "disk":
+                    try:
+                        disk = float(value)
+                    except ValueError:
+                        return False, f"Invalid disk: {value}"
+                elif key == "label":
+                    label = value
+                elif key == "onstart":
+                    onstart = value
+                elif key == "direct":
+                    direct = value.lower() in ("1", "true", "yes", "y")
+                elif key == "skip_if_set":
+                    skip_if_set = value.lower() in ("1", "true", "yes", "y")
+                continue
+
+            if host_name is None:
+                host_name = self._interpolate(arg)
+
+        if host_name:
+            if host_name.startswith("@"):
+                host_name = host_name[1:]
+        elif "gpu" in self.recipe.hosts:
+            host_name = "gpu"
+        else:
+            return False, "No host alias provided for vast.pick"
+
+        existing_id = None
+        if skip_if_set:
+            for key in ("_vast_instance_id", "VAST_ID"):
+                value = self.ctx.variables.get(key)
+                if value and value.isdigit() and int(value) > 0:
+                    existing_id = int(value)
+                    break
+
+        if existing_id:
+            self.recipe.hosts[host_name] = f"vast:{existing_id}"
+            self.ctx.variables["_vast_instance_id"] = str(existing_id)
+            self.ctx.variables["VAST_ID"] = str(existing_id)
+            return True, f"Using existing instance: {existing_id}"
+
+        try:
+            client = get_vast_client()
+            offers = client.search_offers(
+                gpu_name=gpu_name,
+                num_gpus=num_gpus,
+                min_gpu_ram=min_gpu_ram,
+                max_dph=max_dph,
+                limit=limit,
+            )
+
+            if not offers:
+                return False, "No Vast.ai offers found"
+
+            offers = sorted(offers, key=lambda o: o.dph_total or 0.0)
+
+            print("\nSelect a Vast.ai offer:")
+            print("-" * 78)
+            print(f"{'#':<4} {'ID':<10} {'GPU':<18} {'GPUs':<5} {'VRAM':<8} {'$/hr':<8} {'Rel':<6}")
+            print("-" * 78)
+            for idx, offer in enumerate(offers, 1):
+                gpu = offer.gpu_name or "N/A"
+                gpus = offer.num_gpus or 0
+                vram = offer.display_gpu_ram if hasattr(offer, "display_gpu_ram") else "N/A"
+                price = f"${offer.dph_total:.3f}" if offer.dph_total else "N/A"
+                rel = f"{offer.reliability2:.2f}" if offer.reliability2 else "N/A"
+                print(f"{idx:<4} {offer.id:<10} {gpu:<18} {gpus:<5} {vram:<8} {price:<8} {rel:<6}")
+            print("-" * 78)
+
+            try:
+                choice = input(f"Enter number (1-{len(offers)}) or offer ID: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return False, "Selection cancelled"
+
+            selected = None
+            if choice.isdigit():
+                num = int(choice)
+                if 1 <= num <= len(offers):
+                    selected = offers[num - 1]
+                else:
+                    for offer in offers:
+                        if offer.id == num:
+                            selected = offer
+                            break
+
+            if not selected:
+                return False, "Invalid selection"
+
+            instance_id = client.create_instance(
+                offer_id=selected.id,
+                image=image,
+                disk=disk,
+                label=label,
+                onstart=onstart,
+                direct=direct,
+            )
+
+            self.ctx.variables["_vast_instance_id"] = str(instance_id)
+            self.ctx.variables["VAST_ID"] = str(instance_id)
+            self.recipe.hosts[host_name] = f"vast:{instance_id}"
+
+            return True, f"Created instance {instance_id} from offer {selected.id}"
+
+        except (VastAPIError, RuntimeError) as e:
+            return False, str(e)
+
+    def _cmd_vast_wait(self, args: List[str]) -> tuple[bool, str]:
+        """Handle: > vast.wait <instance_id> timeout=10m poll=10s stop_on_fail=true"""
+        from ..services.vast_api import get_vast_client, VastAPIError
+
+        instance_id = None
+        timeout = 600
+        poll_interval = 10
+        stop_on_fail = True
+
+        for arg in args:
+            if "=" in arg:
+                key, _, value = arg.partition("=")
+                if key == "timeout":
+                    timeout = self._parse_duration(self._interpolate(value))
+                elif key in ("poll", "poll_interval"):
+                    poll_interval = self._parse_duration(self._interpolate(value))
+                elif key == "stop_on_fail":
+                    stop_on_fail = value.lower() in ("1", "true", "yes", "y")
+                continue
+            if instance_id is None:
+                instance_id = self._interpolate(arg)
+
+        if not instance_id:
+            instance_id = self.ctx.variables.get("_vast_instance_id")
+        if not instance_id:
+            instance_id = self.ctx.variables.get("VAST_ID")
+        if not instance_id:
+            return False, "No instance ID provided for vast.wait"
+
+        try:
+            inst_id = int(instance_id)
+        except ValueError:
+            return False, f"Invalid instance ID: {instance_id}"
+
+        self.ctx.variables["_vast_instance_id"] = str(inst_id)
+
+        try:
+            client = get_vast_client()
+            start_time = time.time()
+            last_status = "unknown"
+            while time.time() - start_time < timeout:
+                instance = client.get_instance(inst_id)
+                last_status = instance.actual_status or "unknown"
+                ssh_ready = bool(instance.ssh_host and instance.ssh_port)
+
+                if instance.is_running and ssh_ready:
+                    self.ctx.variables["_vast_ssh_host"] = instance.ssh_host or ""
+                    self.ctx.variables["_vast_ssh_port"] = str(instance.ssh_port or "")
+                    msg = f"Instance {inst_id} is ready ({last_status})"
+                    self.log(msg)
+                    return True, msg
+
+                self.log(f"Waiting for instance {inst_id}... ({last_status})")
+                time.sleep(poll_interval)
+
+            msg = f"Instance {inst_id} not ready after {_format_duration(timeout)} (status: {last_status})"
+            if stop_on_fail:
+                try:
+                    client.stop_instance(inst_id)
+                    msg += "; instance stopped"
+                except VastAPIError as e:
+                    msg += f"; failed to stop instance: {e}"
+            self.log(msg)
+            return False, msg
+
+        except (VastAPIError, RuntimeError) as e:
+            msg = f"Vast wait failed: {e}"
+            self.log(msg)
+            return False, msg
+
+    def _cmd_vast_cost(self, args: List[str]) -> tuple[bool, str]:
+        """Handle: > vast.cost <instance_id>"""
+        from ..services.vast_api import get_vast_client, VastAPIError
+        from ..services.pricing import load_pricing_settings, format_currency
+        from ..config import load_config
+
+        instance_id = None
+        if args:
+            instance_id = self._interpolate(args[0])
+        if not instance_id:
+            instance_id = self.ctx.variables.get("_vast_instance_id")
+        if not instance_id:
+            instance_id = self.ctx.variables.get("VAST_ID")
+        if not instance_id:
+            msg = "Vast cost skipped: no instance ID provided"
+            self.log(msg)
+            return True, msg
+
+        try:
+            inst_id = int(instance_id)
+        except ValueError:
+            msg = f"Vast cost skipped: invalid instance ID '{instance_id}'"
+            self.log(msg)
+            return True, msg
+
+        try:
+            client = get_vast_client()
+            inst = client.get_instance(inst_id)
+            hourly_usd = inst.dph_total or 0.0
+
+            if hourly_usd <= 0:
+                msg = f"Vast cost skipped: no pricing for instance {inst_id}"
+                self.log(msg)
+                return True, msg
+
+            start_time = self.ctx.start_time or datetime.now()
+            duration_secs = (datetime.now() - start_time).total_seconds()
+            cost_usd = hourly_usd * (duration_secs / 3600.0)
+
+            settings = load_pricing_settings()
+            config = load_config()
+            display_curr = config.get("ui", {}).get("currency", settings.display_currency)
+            rates = settings.exchange_rates
+
+            usage_str = _format_duration(duration_secs)
+            cost_line = f"${cost_usd:.4f}"
+            if display_curr != "USD":
+                converted = rates.convert(cost_usd, "USD", display_curr)
+                cost_line = f"${cost_usd:.4f} ({format_currency(converted, display_curr)})"
+
+            msg = (
+                f"Vast usage: {usage_str}, "
+                f"instance {inst_id}, "
+                f"{inst.gpu_name or 'GPU'} @ ${hourly_usd:.4f}/hr, "
+                f"total cost {cost_line}"
+            )
+            self.log(msg)
+            return True, msg
+
+        except (VastAPIError, RuntimeError) as e:
+            msg = f"Vast cost skipped: {e}"
+            self.log(msg)
+            return True, msg
 
     def _cmd_sleep(self, args: List[str]) -> tuple[bool, str]:
         """Handle: > sleep duration"""
@@ -512,8 +964,9 @@ class DSLExecutor:
                 )
                 return result.returncode == 0, result.stdout or result.stderr
             else:
+                ssh_args = _build_ssh_args(host, command=commands, tty=False)
                 result = subprocess.run(
-                    ["ssh", host, commands],
+                    ssh_args,
                     capture_output=True,
                     text=True,
                 )
@@ -532,9 +985,11 @@ class DSLExecutor:
         dst_endpoint = self._parse_endpoint(dest)
 
         engine = TransferEngine()
+        hosts = self._build_transfer_hosts()
         result = engine.transfer(
             source=src_endpoint,
             destination=dst_endpoint,
+            hosts=hosts,
         )
 
         if result.success:
@@ -571,8 +1026,13 @@ class DSLExecutor:
                 window = self.ctx.windows.get(target)
                 if window and window.host != "local":
                     # Remote file check
+                    ssh_args = _build_ssh_args(
+                        window.host,
+                        command=f"test -f {filepath} && echo exists",
+                        tty=False,
+                    )
                     result = subprocess.run(
-                        ["ssh", window.host, f"test -f {filepath} && echo exists"],
+                        ssh_args,
                         capture_output=True,
                         text=True,
                     )
@@ -588,7 +1048,9 @@ class DSLExecutor:
                 port = int(condition[5:])
                 # Check if port is open
                 window = self.ctx.windows.get(target)
-                host = window.host if window else "localhost"
+                host = "localhost"
+                if window and window.host != "local":
+                    host = _host_from_ssh_spec(window.host).hostname
                 result = subprocess.run(
                     ["nc", "-z", host, str(port)],
                     capture_output=True,
@@ -606,8 +1068,13 @@ class DSLExecutor:
         """Resolve @host reference to actual host."""
         if host_ref.startswith('@'):
             name = host_ref[1:]
-            return self.recipe.hosts.get(name, name)
-        return host_ref
+            host = self.recipe.hosts.get(name, name)
+        else:
+            host = host_ref
+
+        if host.startswith("vast:"):
+            return _resolve_vast_host(host[5:])
+        return host
 
     def _interpolate(self, text: str) -> str:
         """Interpolate variables and secrets."""
@@ -636,6 +1103,18 @@ class DSLExecutor:
         else:
             # Local path
             return TransferEndpoint(type="local", path=os.path.expanduser(spec))
+
+    def _build_transfer_hosts(self) -> Dict[str, Host]:
+        """Build host mapping for transfers from recipe host specs."""
+        hosts: Dict[str, Host] = {}
+        for spec in self.recipe.hosts.values():
+            if spec == "local":
+                continue
+            resolved_spec = spec
+            if spec.startswith("vast:"):
+                resolved_spec = _resolve_vast_host(spec[5:])
+            hosts[spec] = _host_from_ssh_spec(resolved_spec)
+        return hosts
 
     def _parse_duration(self, value: str) -> int:
         """Parse duration: 10s, 5m, 1h"""
@@ -677,7 +1156,9 @@ def run_recipe(
             # Handle vast:ID format
             if value.startswith("vast:"):
                 instance_id = value[5:]
-                recipe.hosts[name] = _resolve_vast_host(instance_id)
+                recipe.hosts[name] = f"vast:{instance_id}"
+                if not var_overrides or "VAST_ID" not in var_overrides:
+                    recipe.variables["VAST_ID"] = instance_id
             else:
                 recipe.hosts[name] = value
 

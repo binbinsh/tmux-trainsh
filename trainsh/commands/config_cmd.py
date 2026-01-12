@@ -4,17 +4,17 @@
 import sys
 from typing import Optional, List
 
+from ..cli_utils import prompt_input
+
 usage = '''[subcommand] [args...]
 
 Subcommands:
-  tui              - Launch interactive configuration TUI
   show             - Show current configuration
   get <key>        - Get a config value (e.g., vast.default_disk_gb)
   set <key> <val>  - Set a config value
   reset            - Reset to default configuration
 
 Examples:
-  kitty +kitten trainsh config tui
   kitty +kitten trainsh config get ui.currency
   kitty +kitten trainsh config set ui.currency CNY
   kitty +kitten trainsh config set defaults.ssh_key_path ~/.ssh/id_ed25519
@@ -89,16 +89,10 @@ def cmd_set(args: List[str]) -> None:
     print(f"Set {key} = {value}")
 
 
-def cmd_tui(args: List[str]) -> None:
-    """Launch interactive configuration TUI."""
-    from ..ui.handler import run_tui
-    run_tui(args)
-
-
 def cmd_reset(args: List[str]) -> None:
     """Reset to default configuration."""
-    confirm = input("Reset all settings to defaults? (y/N): ")
-    if confirm.lower() != "y":
+    confirm = prompt_input("Reset all settings to defaults? (y/N): ")
+    if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
 
@@ -121,7 +115,6 @@ def main(args: List[str]) -> Optional[str]:
         "show": cmd_show,
         "get": cmd_get,
         "set": cmd_set,
-        "tui": cmd_tui,
         "reset": cmd_reset,
     }
 

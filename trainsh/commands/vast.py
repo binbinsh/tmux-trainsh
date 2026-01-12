@@ -5,6 +5,8 @@ import sys
 import os
 from typing import Optional, List
 
+from ..cli_utils import prompt_input
+
 usage = '''[subcommand] [args...]
 
 Subcommands:
@@ -184,8 +186,8 @@ def cmd_destroy(args: List[str]) -> None:
 
     inst_id = int(args[0])
 
-    confirm = input(f"Destroy instance {inst_id}? This cannot be undone. (y/N): ")
-    if confirm.lower() != "y":
+    confirm = prompt_input(f"Destroy instance {inst_id}? This cannot be undone. (y/N): ")
+    if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
 
@@ -310,7 +312,6 @@ def main(args: List[str]) -> Optional[str]:
 
     commands = {
         "list": cmd_list,
-        "ls": cmd_list,
         "show": cmd_show,
         "ssh": cmd_ssh,
         "start": cmd_start,

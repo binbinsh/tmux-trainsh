@@ -13,11 +13,9 @@ Commands:
   recipe    - Execute automation recipes
   storage   - Storage backend management (R2, B2, S3, etc.)
   secrets   - Manage API keys and credentials
-  config    - Configuration, settings, and interactive TUI
+  config    - Configuration and settings
   colab     - Google Colab integration
   pricing   - Currency exchange rates and cost calculator
-
-Run "kitty +kitten trainsh config tui" for interactive mode.
 '''
 
 help_text = '''
@@ -26,16 +24,9 @@ kitten-trainsh: GPU training workflow automation in the terminal.
 Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends
 (Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.
 
-Interactive TUI:
-  kitty +kitten trainsh config tui              # Launch TUI
-
-The TUI provides a unified interface for managing hosts, Vast.ai instances,
-storage backends, recipes, secrets, and configuration settings.
-
 Use "kitty +kitten trainsh <command> --help" for command-specific help.
 
 Examples:
-  kitty +kitten trainsh config tui              # Launch interactive TUI
   kitty +kitten trainsh host add                # Add SSH/Colab host
   kitty +kitten trainsh vast list               # List Vast.ai instances
   kitty +kitten trainsh storage add             # Add storage backend (R2, B2, S3)

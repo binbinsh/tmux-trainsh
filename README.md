@@ -4,6 +4,8 @@ GPU training workflow automation as a kitty terminal kitten.
 
 Manage remote GPU hosts (Vast.ai, Google Colab, custom SSH), cloud storage (R2, B2, S3, Google Drive), and automate training workflows with recipes.
 
+CLI-only: all operations are available via CLI subcommands (no TUI required).
+
 ## Installation
 
 **From GitHub (recommended):**
@@ -25,117 +27,152 @@ bash install.sh
 - `--force`: Force overwrite existing files
 - `--no-deps`: Skip installing Python dependencies
 
+## Recommended
+
+Add a shell alias for shorter commands:
+
+<span style="color: red; font-weight: bold;"><code>alias trainsh='kitty +kitten trainsh'</code></span>
+
 ## Quick Start
 
 ```bash
-# Launch interactive TUI
-kitty +kitten trainsh config tui
+# Show help
+trainsh --help
 
 # Set up API keys
-kitty +kitten trainsh secrets set VAST_API_KEY
-kitty +kitten trainsh secrets set R2_ACCESS_KEY
-kitty +kitten trainsh secrets set B2_KEY_ID
+trainsh secrets set VAST_API_KEY
+trainsh secrets set R2_ACCESS_KEY
+trainsh secrets set B2_KEY_ID
 
 # Add a host
-kitty +kitten trainsh host add
+trainsh host add
 
 # Add a storage backend
-kitty +kitten trainsh storage add
+trainsh storage add
 
 # Transfer files
-kitty +kitten trainsh transfer ~/data host:myserver:/data
+trainsh transfer ~/data host:myserver:/data
+
+# Run a recipe
+trainsh recipe run train
 ```
 
-## Commands
+## Commands (by functionality)
 
-### Interactive TUI
+All commands are available via `trainsh ...`.
 
-```bash
-kitty +kitten trainsh config tui         # Launch TUI (manage hosts, storage, recipes)
-```
+Frequency tags:,,.
 
 ### Host Management
 
-Supports SSH hosts and Google Colab notebooks.
-
 ```bash
-kitty +kitten trainsh host list              # List configured hosts
-kitty +kitten trainsh host add               # Add new host (SSH/Colab)
-kitty +kitten trainsh host ssh <name>        # SSH into host
-kitty +kitten trainsh host browse <name>     # Browse files on host
-kitty +kitten trainsh host show <name>       # Show host details
-kitty +kitten trainsh host test <name>       # Test connection
-kitty +kitten trainsh host remove <name>     # Remove a host
-```
-
-### Vast.ai
-
-Manage GPU instances on Vast.ai marketplace.
-
-```bash
-kitty +kitten trainsh vast list              # List your instances
-kitty +kitten trainsh vast ssh <id>          # SSH into instance
-kitty +kitten trainsh vast show <id>         # Show instance details
-kitty +kitten trainsh vast start <id>        # Start instance
-kitty +kitten trainsh vast stop <id>         # Stop instance
-kitty +kitten trainsh vast destroy <id>      # Destroy instance
-kitty +kitten trainsh vast reboot <id>       # Reboot instance
-kitty +kitten trainsh vast search            # Search for GPU offers
-kitty +kitten trainsh vast keys              # List SSH keys
-kitty +kitten trainsh vast attach-key        # Attach local SSH key
-```
-
-### Google Colab
-
-```bash
-kitty +kitten trainsh colab connect          # Add Colab connection
-kitty +kitten trainsh colab ssh              # SSH into Colab
-kitty +kitten trainsh colab list             # List connections
-kitty +kitten trainsh colab run <cmd>        # Run command on Colab
-```
-
-Or add Colab as a host for unified management:
-```bash
-kitty +kitten trainsh host add   # Select "Google Colab" type
+trainsh host list              # List configured hosts
+trainsh host add               # Add new host (SSH/Colab)
+trainsh host show <name>       # Show host details
+trainsh host ssh <name>        # SSH into host
+trainsh host browse <name>     # Browse files on host
+trainsh host test <name>       # Test connection
+trainsh host remove <name>     # Remove a host
 ```
 
 ### Storage Backends
 
-Supports local, SSH/SFTP, Cloudflare R2, Backblaze B2, Amazon S3, Google Drive, GCS, and SMB.
-
 ```bash
-kitty +kitten trainsh storage list           # List storage backends
-kitty +kitten trainsh storage add            # Add storage backend
-kitty +kitten trainsh storage show <name>    # Show storage details
-kitty +kitten trainsh storage test <name>    # Test connection
-kitty +kitten trainsh storage remove <name>  # Remove storage
+trainsh storage list           # List storage backends
+trainsh storage add            # Add storage backend
+trainsh storage show <name>    # Show storage details
+trainsh storage test <name>    # Test connection
+trainsh storage remove <name>  # Remove storage
 ```
 
 ### File Transfer
 
 ```bash
-kitty +kitten trainsh transfer <src> <dst>   # Transfer files
-kitty +kitten trainsh transfer ~/data host:server:/data
-kitty +kitten trainsh transfer host:server:/out storage:r2:/backups
+trainsh transfer <src> <dst>   # Transfer files
+trainsh transfer <src> <dst> --delete        # Sync with deletions
+trainsh transfer <src> <dst> --exclude '*.ckpt' # Exclude patterns
+trainsh transfer <src> <dst> --dry-run       # Preview transfer
 ```
 
 ### Recipes (Automation Workflows)
 
 ```bash
-kitty +kitten trainsh recipe list            # List recipes
-kitty +kitten trainsh recipe run <name>      # Run a recipe
-kitty +kitten trainsh recipe new <name>      # Create new recipe
-kitty +kitten trainsh recipe edit <name>     # Edit recipe in editor
-kitty +kitten trainsh recipe status          # View running recipe sessions
-kitty +kitten trainsh recipe logs            # View execution logs
+trainsh recipe list            # List recipes
+trainsh recipe show <name>     # Show recipe details
+trainsh recipe run <name>      # Run a recipe
+trainsh recipe run <name> --no-visual        # Headless mode
+trainsh recipe run <name> --host gpu=vast:12345 # Override host
+trainsh recipe run <name> --var MODEL=llama-7b  # Override variable
+trainsh recipe run <name> --pick-host gpu    # Pick Vast.ai host
+trainsh recipe new <name>      # Create new recipe
+trainsh recipe edit <name>     # Edit recipe in editor
+trainsh recipe logs            # View execution logs
+trainsh recipe logs --last     # Show last execution
+trainsh recipe status          # View running sessions
+trainsh recipe status --all    # Include completed sessions
 ```
 
 ### Secrets
 
 ```bash
-kitty +kitten trainsh secrets list           # List stored secrets
-kitty +kitten trainsh secrets set <key>      # Set a secret
-kitty +kitten trainsh secrets get <key>      # Get a secret
+trainsh secrets list           # List stored secrets
+trainsh secrets set <key>      # Set a secret
+trainsh secrets get <key>      # Get a secret
+trainsh secrets delete <key>   # Delete a secret
+```
+
+### Configuration
+
+```bash
+trainsh config show            # Show configuration
+trainsh config get <key>       # Get config value
+trainsh config set <key> <val> # Set config value
+trainsh config reset           # Reset configuration
+```
+
+### Google Colab
+
+```bash
+trainsh colab list             # List Colab connections
+trainsh colab connect          # Add Colab connection
+trainsh colab ssh              # SSH into Colab
+trainsh colab run <cmd>        # Run command on Colab
+```
+
+### Vast.ai
+
+```bash
+trainsh vast list              # List your instances
+trainsh vast show <id>         # Show instance details
+trainsh vast ssh <id>          # SSH into instance
+trainsh vast start <id>        # Start instance
+trainsh vast stop <id>         # Stop instance
+trainsh vast destroy <id>      # Destroy instance
+trainsh vast reboot <id>       # Reboot instance
+trainsh vast search            # Search for GPU offers
+trainsh vast keys              # List SSH keys
+trainsh vast attach-key        # Attach local SSH key
+```
+
+### Pricing
+
+```bash
+trainsh pricing rates          # Show exchange rates
+trainsh pricing rates --refresh              # Refresh exchange rates
+trainsh pricing currency       # Show display currency
+trainsh pricing currency --set CNY           # Set display currency
+trainsh pricing colab          # Show Colab pricing
+trainsh pricing colab --subscription "Colab Pro:11.99:USD:100" # Set subscription
+trainsh pricing vast           # Show Vast.ai costs
+trainsh pricing convert 10 USD CNY           # Convert currency
+```
+
+### Help and Version
+
+```bash
+trainsh --help                 # Show top-level help
+trainsh --version              # Show version
+trainsh <command> --help       # Show command help
 ```
 
 Supported secret keys:
@@ -147,19 +184,9 @@ Supported secret keys:
 - `GITHUB_TOKEN` - GitHub token
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` - AI APIs
 
-### Configuration
-
+Or add Colab as a host for unified management:
 ```bash
-kitty +kitten trainsh config show            # Show configuration
-kitty +kitten trainsh config set <key> <val> # Set config value
-kitty +kitten trainsh config get <key>       # Get config value
-```
-
-### Pricing
-
-```bash
-kitty +kitten trainsh pricing rates          # Show exchange rates
-kitty +kitten trainsh pricing vast           # Show Vast.ai costs
+trainsh host add   # Select "Google Colab" type
 ```
 
 ## Configuration

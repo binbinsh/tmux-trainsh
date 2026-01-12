@@ -1,13 +1,17 @@
 # kitten-trainsh colab command
 # Google Colab integration
 
+import json
 import sys
 from typing import Optional, List
+
+from ..cli_utils import prompt_input
+from ..constants import CONFIG_DIR
 
 usage = '''[subcommand] [args...]
 
 Subcommands:
-  list, ls         - List connected Colab notebooks
+  list             - List connected Colab notebooks
   connect          - Connect to a Colab runtime
   run <cmd>        - Run command on Colab
   ssh              - SSH into Colab (requires ngrok/cloudflared)
@@ -23,26 +27,35 @@ Example Colab setup code:
   launch_ssh_cloudflared(password="your_password")
 '''
 
+COLAB_FILE = CONFIG_DIR / "colab.json"
+
+
+def _load_colab_data() -> dict:
+    if not COLAB_FILE.exists():
+        return {}
+    try:
+        with open(COLAB_FILE, "r") as f:
+            return json.load(f) or {}
+    except json.JSONDecodeError:
+        print(f"Error: Invalid JSON in {COLAB_FILE}")
+        raise SystemExit(1)
+
+
+def _save_colab_data(data: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(COLAB_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
 
 def cmd_list(args: List[str]) -> None:
     """List connected Colab instances."""
-    from ..constants import CONFIG_DIR
-    import yaml
-
-    colab_file = CONFIG_DIR / "colab.yaml"
-
-    if not colab_file.exists():
-        print("No Colab connections configured.")
-        print("Use 'kitty +kitten trainsh colab connect' to add one.")
-        return
-
-    with open(colab_file) as f:
-        data = yaml.safe_load(f) or {}
+    data = _load_colab_data()
 
     connections = data.get("connections", [])
 
     if not connections:
         print("No Colab connections configured.")
+        print("Use 'trainsh colab connect' to add one.")
         return
 
     print("Colab connections:")
@@ -58,9 +71,6 @@ def cmd_list(args: List[str]) -> None:
 
 def cmd_connect(args: List[str]) -> None:
     """Add a new Colab connection."""
-    from ..constants import CONFIG_DIR
-    import yaml
-
     print("Connect to Google Colab")
     print("-" * 40)
     print("\nIn your Colab notebook, run:")
@@ -69,7 +79,9 @@ def cmd_connect(args: List[str]) -> None:
     print("  launch_ssh_cloudflared(password='your_password')")
     print("\nThen copy the connection info here.\n")
 
-    name = input("Connection name: ").strip()
+    name = prompt_input("Connection name: ")
+    if name is None:
+        return
     if not name:
         print("Cancelled.")
         return
@@ -77,33 +89,37 @@ def cmd_connect(args: List[str]) -> None:
     print("\nTunnel type:")
     print("  1. Cloudflared (recommended)")
     print("  2. ngrok")
-    tunnel_choice = input("Choice [1]: ").strip() or "1"
+    tunnel_choice = prompt_input("Choice [1]: ", default="1")
+    if tunnel_choice is None:
+        return
     tunnel_type = "cloudflared" if tunnel_choice == "1" else "ngrok"
 
     if tunnel_type == "cloudflared":
-        hostname = input("Cloudflared hostname (e.g., xxx.trycloudflare.com): ").strip()
+        hostname = prompt_input("Cloudflared hostname (e.g., xxx.trycloudflare.com): ")
+        if hostname is None:
+            return
         if not hostname:
             print("Cancelled.")
             return
         config = {"hostname": hostname}
     else:
-        hostname = input("ngrok hostname (e.g., x.tcp.ngrok.io): ").strip()
-        port = input("ngrok port: ").strip()
+        hostname = prompt_input("ngrok hostname (e.g., x.tcp.ngrok.io): ")
+        if hostname is None:
+            return
+        port = prompt_input("ngrok port: ")
+        if port is None:
+            return
         if not hostname or not port:
             print("Cancelled.")
             return
         config = {"hostname": hostname, "port": int(port)}
 
-    password = input("SSH password: ").strip()
+    password = prompt_input("SSH password: ")
+    if password is None:
+        return
 
     # Save connection
-    colab_file = CONFIG_DIR / "colab.yaml"
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-    data = {}
-    if colab_file.exists():
-        with open(colab_file) as f:
-            data = yaml.safe_load(f) or {}
+    data = _load_colab_data()
 
     connections = data.get("connections", [])
     connections.append({
@@ -115,33 +131,22 @@ def cmd_connect(args: List[str]) -> None:
 
     data["connections"] = connections
 
-    with open(colab_file, "w") as f:
-        yaml.dump(data, f, default_flow_style=False)
+    _save_colab_data(data)
 
     print(f"\nAdded Colab connection: {name}")
-    print("Use 'kitty +kitten trainsh colab ssh' to connect.")
+    print("Use 'trainsh colab ssh' to connect.")
 
 
 def cmd_ssh(args: List[str]) -> None:
     """SSH into Colab."""
     import os
-    from ..constants import CONFIG_DIR
-    import yaml
-
-    colab_file = CONFIG_DIR / "colab.yaml"
-
-    if not colab_file.exists():
-        print("No Colab connections configured.")
-        print("Use 'kitty +kitten trainsh colab connect' first.")
-        sys.exit(1)
-
-    with open(colab_file) as f:
-        data = yaml.safe_load(f) or {}
+    data = _load_colab_data()
 
     connections = data.get("connections", [])
 
     if not connections:
         print("No Colab connections configured.")
+        print("Use 'trainsh colab connect' first.")
         sys.exit(1)
 
     # Select connection
@@ -156,7 +161,9 @@ def cmd_ssh(args: List[str]) -> None:
         print("Available connections:")
         for i, c in enumerate(connections, 1):
             print(f"  {i}. {c.get('name')}")
-        choice = input("Select connection: ").strip()
+        choice = prompt_input("Select connection: ")
+        if choice is None:
+            return
         try:
             conn = connections[int(choice) - 1]
         except (ValueError, IndexError):
@@ -182,23 +189,14 @@ def cmd_ssh(args: List[str]) -> None:
 def cmd_run(args: List[str]) -> None:
     """Run a command on Colab."""
     if not args:
-        print("Usage: kitty +kitten trainsh colab run <command>")
+        print("Usage: trainsh colab run <command>")
         sys.exit(1)
 
-    from ..constants import CONFIG_DIR
-    import yaml
     import subprocess
 
     command = " ".join(args)
 
-    colab_file = CONFIG_DIR / "colab.yaml"
-
-    if not colab_file.exists():
-        print("No Colab connections configured.")
-        sys.exit(1)
-
-    with open(colab_file) as f:
-        data = yaml.safe_load(f) or {}
+    data = _load_colab_data()
 
     connections = data.get("connections", [])
     if not connections:
@@ -232,7 +230,6 @@ def main(args: List[str]) -> Optional[str]:
 
     commands = {
         "list": cmd_list,
-        "ls": cmd_list,
         "connect": cmd_connect,
         "ssh": cmd_ssh,
         "run": cmd_run,

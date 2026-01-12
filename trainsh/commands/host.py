@@ -5,10 +5,12 @@ import sys
 import os
 from typing import Optional, List
 
+from ..cli_utils import prompt_input
+
 usage = '''[subcommand] [args...]
 
 Subcommands:
-  list, ls         - List configured hosts
+  list             - List configured hosts
   add              - Add a new host
   show <name>      - Show host details
   ssh <name>       - SSH into a host
@@ -111,7 +113,9 @@ def cmd_add(args: List[str]) -> None:
     print("Add new host")
     print("-" * 40)
 
-    name = input("Host name: ").strip()
+    name = prompt_input("Host name: ")
+    if name is None:
+        return
     if not name:
         print("Cancelled - name is required.")
         return
@@ -120,7 +124,9 @@ def cmd_add(args: List[str]) -> None:
     print("  1. SSH (standard)")
     print("  2. Google Colab (via cloudflared)")
     print("  3. Google Colab (via ngrok)")
-    type_choice = input("Choice [1]: ").strip() or "1"
+    type_choice = prompt_input("Choice [1]: ", default="1")
+    if type_choice is None:
+        return
 
     if type_choice == "2":
         # Colab via cloudflared
@@ -129,7 +135,9 @@ def cmd_add(args: List[str]) -> None:
         print("  from colab_ssh import launch_ssh_cloudflared")
         print("  launch_ssh_cloudflared(password='your_password')")
         print("")
-        hostname = input("Cloudflared hostname (e.g., xxx.trycloudflare.com): ").strip()
+        hostname = prompt_input("Cloudflared hostname (e.g., xxx.trycloudflare.com): ")
+        if hostname is None:
+            return
         if not hostname:
             print("Cancelled - hostname is required.")
             return
@@ -152,8 +160,12 @@ def cmd_add(args: List[str]) -> None:
         print("  from colab_ssh import launch_ssh")
         print("  launch_ssh(ngrokToken='YOUR_NGROK_TOKEN', password='your_password')")
         print("")
-        hostname = input("ngrok hostname (e.g., x.tcp.ngrok.io): ").strip()
-        port_str = input("ngrok port: ").strip()
+        hostname = prompt_input("ngrok hostname (e.g., x.tcp.ngrok.io): ")
+        if hostname is None:
+            return
+        port_str = prompt_input("ngrok port: ")
+        if port_str is None:
+            return
         if not hostname or not port_str:
             print("Cancelled - hostname and port are required.")
             return
@@ -171,21 +183,29 @@ def cmd_add(args: List[str]) -> None:
 
     else:
         # Standard SSH
-        hostname = input("Hostname/IP: ").strip()
+        hostname = prompt_input("Hostname/IP: ")
+        if hostname is None:
+            return
         if not hostname:
             print("Cancelled - hostname is required.")
             return
 
-        port_str = input("Port [22]: ").strip()
+        port_str = prompt_input("Port [22]: ", default="22")
+        if port_str is None:
+            return
         port = int(port_str) if port_str else 22
 
-        username = input("Username [root]: ").strip() or "root"
+        username = prompt_input("Username [root]: ", default="root")
+        if username is None:
+            return
 
         print("\nAuth method:")
         print("  1. SSH Key (default)")
         print("  2. SSH Agent")
         print("  3. Password")
-        auth_choice = input("Choice [1]: ").strip() or "1"
+        auth_choice = prompt_input("Choice [1]: ", default="1")
+        if auth_choice is None:
+            return
 
         auth_method = {
             "1": AuthMethod.KEY,
@@ -196,7 +216,9 @@ def cmd_add(args: List[str]) -> None:
         ssh_key_path = None
         if auth_method == AuthMethod.KEY:
             default_key = "~/.ssh/id_rsa"
-            ssh_key_path = input(f"SSH key path [{default_key}]: ").strip() or default_key
+            ssh_key_path = prompt_input(f"SSH key path [{default_key}]: ", default=default_key)
+            if ssh_key_path is None:
+                return
 
         host = Host(
             name=name,
@@ -329,20 +351,14 @@ def cmd_remove(args: List[str]) -> None:
         print(f"Host not found: {name}")
         sys.exit(1)
 
-    confirm = input(f"Remove host '{name}'? (y/N): ")
-    if confirm.lower() != "y":
+    confirm = prompt_input(f"Remove host '{name}'? (y/N): ")
+    if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
 
     del hosts[name]
     save_hosts(hosts)
     print(f"Removed host: {name}")
-
-
-def cmd_tui(args: List[str]) -> None:
-    """Launch interactive host management TUI."""
-    from ..ui.manage_tui import run_hosts_tui
-    run_hosts_tui()
 
 
 def cmd_browse(args: List[str]) -> None:
@@ -481,14 +497,12 @@ def main(args: List[str]) -> Optional[str]:
 
     commands = {
         "list": cmd_list,
-        "ls": cmd_list,
         "add": cmd_add,
         "show": cmd_show,
         "ssh": cmd_ssh,
         "browse": cmd_browse,
         "test": cmd_test,
         "remove": cmd_remove,
-        "tui": cmd_tui,
     }
 
     if subcommand not in commands:

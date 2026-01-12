@@ -5,10 +5,11 @@ import sys
 from typing import Optional, List
 import getpass
 
+from ..cli_utils import prompt_input
 usage = '''[subcommand] [args...]
 
 Subcommands:
-  list, ls         - List configured secrets
+  list             - List configured secrets
   set <key>        - Set a secret (prompts for value)
   get <key>        - Get a secret value
   delete <key>     - Delete a secret
@@ -118,8 +119,8 @@ def cmd_delete(args: List[str]) -> None:
     key = args[0].upper()
 
     # Confirm deletion
-    confirm = input(f"Delete {key}? (y/N): ")
-    if confirm.lower() != "y":
+    confirm = prompt_input(f"Delete {key}? (y/N): ")
+    if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
 
@@ -139,7 +140,6 @@ def main(args: List[str]) -> Optional[str]:
 
     commands = {
         "list": cmd_list,
-        "ls": cmd_list,
         "set": cmd_set,
         "get": cmd_get,
         "delete": cmd_delete,
