@@ -38,7 +38,7 @@ Examples:
 def option_text() -> str:
     return '''\
 --config
-default=~/.config/tmux-trainsh/config.yaml
+default=~/.config/tmux-trainsh/config.toml
 Path to configuration file.
 
 --verbose -v

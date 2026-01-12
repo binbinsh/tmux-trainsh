@@ -186,15 +186,24 @@ class DSLParser:
         ))
 
     def _parse_execute(self, line: str) -> None:
-        """Parse execute command: host: command"""
+        """Parse execute command: host [timeout=N]: command"""
         colon_idx = line.index(':')
-        host = line[:colon_idx].strip()
+        host_part = line[:colon_idx].strip()
         commands = line[colon_idx + 1:].strip()
 
         # Check for background execution
         background = commands.endswith('&')
         if background:
             commands = commands[:-1].strip()
+
+        # Parse host and optional timeout: "host timeout=168h" or just "host"
+        timeout = 0  # 0 means use default
+        host_tokens = host_part.split()
+        host = host_tokens[0]
+
+        for token in host_tokens[1:]:
+            if token.startswith('timeout='):
+                timeout = self._parse_duration(token[8:])
 
         # Resolve host reference
         if host.startswith('@'):
@@ -207,6 +216,7 @@ class DSLParser:
             host=host,
             commands=self._interpolate(commands),
             background=background,
+            timeout=timeout,
         ))
 
     def _parse_transfer(self, line: str) -> None:
@@ -260,6 +270,12 @@ class DSLParser:
                 condition = f"file:{value}"
             elif key == 'port':
                 condition = f"port:{value}"
+            elif key == 'idle' and value.lower() == 'true':
+                condition = "idle"
+
+        # Check for standalone 'idle' keyword (no =value)
+        if 'idle' in content and 'idle=' not in content:
+            condition = "idle"
 
         self.steps.append(DSLStep(
             type=StepType.WAIT,

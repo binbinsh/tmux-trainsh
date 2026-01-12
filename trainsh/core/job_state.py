@@ -48,9 +48,11 @@ class JobState:
     error: str = ""
 
     def __post_init__(self):
+        now = datetime.now().isoformat()
         if not self.created_at:
-            self.created_at = datetime.now().isoformat()
-        self.updated_at = datetime.now().isoformat()
+            self.created_at = now
+        if not self.updated_at:
+            self.updated_at = now
 
 
 class JobStateManager:
@@ -108,11 +110,16 @@ class JobStateManager:
         latest_time = ""
 
         for path in JOBS_DIR.glob("*.json"):
-            state = self.load(path.stem)
-            if state and state.recipe_path == recipe_path:
-                if state.updated_at > latest_time:
-                    latest = state
-                    latest_time = state.updated_at
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                state = JobState(**data)
+                if state.recipe_path == recipe_path:
+                    if state.updated_at > latest_time:
+                        latest = state
+                        latest_time = state.updated_at
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
 
         return latest
 
@@ -127,9 +134,13 @@ class JobStateManager:
         """List all job states, sorted by updated_at descending."""
         states = []
         for path in JOBS_DIR.glob("*.json"):
-            state = self.load(path.stem)
-            if state:
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                state = JobState(**data)
                 states.append(state)
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
 
         states.sort(key=lambda s: s.updated_at, reverse=True)
         return states[:limit]

@@ -1623,6 +1623,53 @@ class DSLExecutor:
                 except (subprocess.TimeoutExpired, OSError):
                     pass
 
+            # Check idle condition (no child processes in tmux pane)
+            if condition == "idle":
+                window = self.ctx.windows.get(target)
+                if window and window.host != "local" and window.remote_session:
+                    try:
+                        # Get the pane's shell PID
+                        pane_pid_cmd = f"tmux list-panes -t {window.remote_session} -F '#{{pane_pid}}'"
+                        ssh_args = _build_ssh_args(window.host, command=pane_pid_cmd, tty=False)
+                        result = subprocess.run(ssh_args, capture_output=True, text=True, timeout=10)
+
+                        if result.returncode == 0:
+                            pane_pid = result.stdout.strip().split('\n')[0]
+
+                            # Check if the shell has any child processes
+                            check_cmd = f"ps --ppid {pane_pid} --no-headers 2>/dev/null | wc -l"
+                            ssh_args = _build_ssh_args(window.host, command=check_cmd, tty=False)
+                            result = subprocess.run(ssh_args, capture_output=True, text=True, timeout=10)
+
+                            if result.returncode == 0:
+                                child_count = int(result.stdout.strip())
+                                if self.logger:
+                                    self.logger.log_detail("wait_idle_check", f"Pane {pane_pid} has {child_count} child processes", {
+                                        "pane_pid": pane_pid,
+                                        "child_count": child_count,
+                                    })
+
+                                if child_count == 0:
+                                    if self.logger:
+                                        self.logger.log_detail("wait_idle", f"Pane is idle (no child processes)", {"elapsed_sec": elapsed})
+                                    return True, f"Pane is idle (command completed)"
+
+                        ssh_failures = 0
+
+                    except (subprocess.TimeoutExpired, OSError) as e:
+                        ssh_failures += 1
+                        self.log(f"  SSH idle check failed ({ssh_failures}/{self.ssh_max_retries}): {e}")
+
+                        if ssh_failures >= self.ssh_max_retries:
+                            return False, f"Too many SSH failures: {e}"
+
+                        backoff = min(
+                            self.ssh_retry_base_interval * (2 ** (ssh_failures - 1)),
+                            self.ssh_retry_max_interval
+                        )
+                        time.sleep(backoff)
+                        continue
+
             # Format remaining time
             remaining_str = _format_duration(remaining)
             timeout_str = _format_duration(timeout)
@@ -1775,9 +1822,12 @@ def run_recipe(
         saved_state = state_manager.load(job_id)
         if saved_state:
             for name, host_spec in saved_state.hosts.items():
+                # Reconstruct remote_session name from job_id and window name
+                remote_session = f"train_{job_id[:8]}_{name}"
                 executor.ctx.windows[name] = WindowInfo(
                     name=name,
                     host=host_spec,
+                    remote_session=remote_session,
                 )
 
     return executor.execute(resume_from=resume_from)
