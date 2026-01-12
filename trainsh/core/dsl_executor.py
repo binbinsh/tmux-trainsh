@@ -1,5 +1,5 @@
-# kitten-trainsh DSL executor
-# Executes parsed DSL recipes using kitty kitten API
+# tmux-trainsh DSL executor
+# Executes parsed DSL recipes using remote tmux sessions for persistence
 
 import subprocess
 import time
@@ -14,15 +14,17 @@ from .dsl_parser import DSLRecipe, DSLStep, StepType, parse_recipe
 from .execution_log import ExecutionLogger
 from .secrets import get_secrets_manager
 from .models import Host, HostType
+from .job_state import (
+    JobState, JobStateManager, generate_job_id, get_tmux_session_name
+)
 
 
 @dataclass
 class WindowInfo:
-    """Tracks a kitty window/tab."""
+    """Tracks a remote tmux session."""
     name: str
     host: str
-    window_id: Optional[str] = None
-    tab_id: Optional[str] = None
+    remote_session: Optional[str] = None  # Remote tmux session name (for nohup-like behavior)
 
 
 @dataclass
@@ -32,6 +34,7 @@ class ExecutionContext:
     variables: Dict[str, str] = field(default_factory=dict)
     windows: Dict[str, WindowInfo] = field(default_factory=dict)
     exec_id: str = ""
+    job_id: str = ""  # Persistent job ID for resume
     start_time: Optional[datetime] = None
     log_callback: Optional[Callable[[str], None]] = None
 
@@ -74,16 +77,34 @@ def _split_ssh_spec(spec: str) -> Tuple[str, List[str]]:
     return host, options
 
 
-def _build_ssh_args(spec: str, command: Optional[str] = None, tty: bool = False) -> List[str]:
-    """Build SSH command args from a host spec and optional command."""
+def _build_ssh_args(spec: str, command: Optional[str] = None, tty: bool = False, set_term: bool = False) -> List[str]:
+    """Build SSH command args from a host spec and optional command.
+
+    Args:
+        spec: SSH host spec (e.g., "user@host -p 22")
+        command: Optional command to run on remote
+        tty: Request a TTY (-t flag)
+        set_term: Set TERM and LC_ALL for compatibility
+    """
     host, options = _split_ssh_spec(spec)
     args = ["ssh"]
     if tty:
         args.append("-t")
     args.extend(options)
     args.append(host)
-    if command:
+
+    # Environment prefix for remote compatibility
+    env_prefix = "TERM=xterm-256color LC_ALL=en_US.UTF-8"
+
+    if set_term:
+        # Wrap command to set env for compatibility with servers missing xterm-256color terminfo
+        if command:
+            args.append(f"{env_prefix} {command}")
+        else:
+            args.append(f"{env_prefix} exec bash -l")
+    elif command:
         args.append(command)
+
     return args
 
 
@@ -145,190 +166,28 @@ def _format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
-class KittyController:
-    """
-    Interface to kitty terminal via kitten @ commands.
-
-    Provides:
-    - launch: Open new tabs/windows with SSH
-    - send_text: Type text into a window
-    - send_key: Send key presses
-    - get_text: Read window contents
-    - focus: Focus a window
-    - close: Close a window
-    """
-
-    def __init__(self):
-        self._check_kitty()
-
-    def _check_kitty(self) -> bool:
-        """Check if running in kitty."""
-        return os.environ.get('TERM_PROGRAM') == 'kitty' or 'KITTY_PID' in os.environ
-
-    def _run(self, *args, timeout: int = 30) -> tuple[str, int]:
-        """Run kitten @ command."""
-        cmd = ['kitten', '@'] + list(args)
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            return result.stdout, result.returncode
-        except subprocess.TimeoutExpired:
-            return "", -1
-        except FileNotFoundError:
-            return "kitten command not found", -1
-
-    def launch(
-        self,
-        host: str,
-        title: str,
-        command: Optional[str] = None,
-        tab_type: str = "tab",
-        location: Optional[str] = None,
-    ) -> tuple[bool, str]:
-        """
-        Launch a new tab/window with SSH connection.
-
-        Args:
-            host: SSH host (user@hostname or host alias)
-            title: Window title
-            command: Optional command to run after connecting
-            tab_type: 'tab', 'window', or 'overlay'
-            location: Optional window location (e.g., 'vsplit', 'hsplit')
-
-        Returns:
-            (success, window_id or error message)
-        """
-        args = ['launch', '--type', tab_type, '--title', title]
-        if location:
-            args.extend(['--location', location])
-
-        # Add hold flag to keep window open
-        args.append('--hold')
-
-        # Build SSH command
-        if host != 'local':
-            ssh_cmd = _build_ssh_args(host, command=command, tty=True)
-            args.extend(ssh_cmd)
-        elif command:
-            args.extend(['bash', '-c', command])
-
-        stdout, code = self._run(*args)
-
-        if code == 0:
-            # Try to extract window ID from output
-            return True, stdout.strip() if stdout.strip() else title
-        return False, stdout
-
-    def send_text(
-        self,
-        target: str,
-        text: str,
-        match_type: str = "title",
-    ) -> bool:
-        """
-        Send text to a window (like typing).
-
-        Args:
-            target: Window title or ID to match
-            text: Text to send (use \\n for Enter)
-            match_type: 'title', 'id', or 'recent'
-        """
-        args = ['send-text', '--match', f'{match_type}:{target}']
-
-        # Process escape sequences
-        text = text.replace('\\n', '\n')
-
-        # Use stdin for the text
-        cmd = ['kitten', '@'] + args
-        try:
-            result = subprocess.run(
-                cmd,
-                input=text,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            return result.returncode == 0
-        except Exception:
-            return False
-
-    def send_key(self, target: str, *keys: str) -> bool:
-        """
-        Send key presses to a window.
-
-        Args:
-            target: Window title to match
-            keys: Keys to send (e.g., 'ctrl+c', 'enter')
-        """
-        args = ['send-key', '--match', f'title:{target}'] + list(keys)
-        _, code = self._run(*args)
-        return code == 0
-
-    def get_text(
-        self,
-        target: str,
-        extent: str = "screen",
-        ansi: bool = False,
-    ) -> str:
-        """
-        Get text content from a window.
-
-        Args:
-            target: Window title to match
-            extent: 'screen', 'all', or 'selection'
-            ansi: Include ANSI escape codes
-
-        Returns:
-            Window text content
-        """
-        args = ['get-text', '--match', f'title:{target}', '--extent', extent]
-        if ansi:
-            args.append('--ansi')
-
-        stdout, code = self._run(*args, timeout=5)
-        return stdout if code == 0 else ""
-
-    def focus(self, target: str) -> bool:
-        """Focus a window by title."""
-        _, code = self._run('focus-window', '--match', f'title:{target}')
-        return code == 0
-
-    def close(self, target: str) -> bool:
-        """Close a window by title."""
-        _, code = self._run('close-window', '--match', f'title:{target}')
-        return code == 0
-
-    def list_windows(self) -> List[Dict]:
-        """List all kitty windows."""
-        import json
-        stdout, code = self._run('ls')
-        if code == 0:
-            try:
-                return json.loads(stdout)
-            except json.JSONDecodeError:
-                pass
-        return []
-
 
 class DSLExecutor:
     """
     Executes DSL recipes step by step.
 
     Integrates with:
-    - KittyController for terminal automation
+    - Remote tmux sessions for persistent command execution
     - TransferEngine for file transfers
     - VastAPI for GPU instance management
+
+    Architecture:
+    - Commands run in remote tmux sessions (survive SSH disconnect)
+    - No local tmux needed - use Ghostty/terminal splits to view
+    - Manual attach: ssh host && tmux attach -t <session_name>
     """
 
     def __init__(
         self,
         recipe: DSLRecipe,
         log_callback: Optional[Callable[[str], None]] = None,
-        visual: bool = True,
+        job_id: Optional[str] = None,
+        recipe_path: Optional[str] = None,
     ):
         """
         Initialize executor.
@@ -336,23 +195,29 @@ class DSLExecutor:
         Args:
             recipe: Parsed DSL recipe
             log_callback: Optional callback for log messages
-            visual: Use kitty visual mode (open tabs)
+            job_id: Optional job ID for resume (if None, generates new one)
+            recipe_path: Optional path to recipe file (for state persistence)
         """
         self.recipe = recipe
         self.log_callback = log_callback or print
-        self.visual = visual
+        self.recipe_path = recipe_path
+
+        # Job state management
+        self.state_manager = JobStateManager()
+        self.job_state: Optional[JobState] = None
+
+        # Generate or use provided job ID
+        job_id = job_id or generate_job_id()
 
         # Runtime state
         self.ctx = ExecutionContext(
             recipe=recipe,
             variables=dict(recipe.variables),
             exec_id=self._generate_id(),
+            job_id=job_id,
             start_time=datetime.now(),
             log_callback=self.log_callback,
         )
-
-        # Kitty controller
-        self.kitty = KittyController()
 
         # Secrets manager
         self.secrets = get_secrets_manager()
@@ -360,41 +225,124 @@ class DSLExecutor:
         # Execution logger
         self.logger: Optional[ExecutionLogger] = None
 
+        # SSH retry settings
+        self.ssh_max_retries = 10
+        self.ssh_retry_base_interval = 30  # seconds
+        self.ssh_retry_max_interval = 300  # 5 minutes
+
     def _generate_id(self) -> str:
         """Generate unique execution ID."""
         import uuid
         return str(uuid.uuid4())[:8]
+
+    def _save_checkpoint(self, step_num: int, status: str = "running") -> None:
+        """Save current execution state for resume capability."""
+        if not self.recipe_path:
+            return
+
+        # Collect resolved hosts
+        hosts = {}
+        for name, window in self.ctx.windows.items():
+            if window.host and window.host != "local":
+                hosts[name] = window.host
+
+        # Get vast instance tracking info
+        vast_instance_id = self.ctx.variables.get("VAST_ID") or self.ctx.variables.get("_vast_instance_id")
+        vast_start_time = self.ctx.variables.get("_vast_start_time")
+
+        self.job_state = JobState(
+            job_id=self.ctx.job_id,
+            recipe_path=os.path.abspath(os.path.expanduser(self.recipe_path)),
+            recipe_name=self.recipe.name,
+            current_step=step_num,
+            total_steps=len(self.recipe.steps),
+            status=status,
+            variables=dict(self.ctx.variables),
+            hosts=hosts,
+            tmux_session=get_tmux_session_name(self.ctx.job_id),
+            vast_instance_id=vast_instance_id,
+            vast_start_time=vast_start_time,
+        )
+        self.state_manager.save(self.job_state)
+
+    def _load_checkpoint(self, job_id: str) -> Optional[JobState]:
+        """Load a saved checkpoint."""
+        return self.state_manager.load(job_id)
+
+    def _clear_checkpoint(self) -> None:
+        """Clear checkpoint after successful completion."""
+        if self.job_state:
+            self.job_state.status = "completed"
+            self.state_manager.save(self.job_state)
 
     def log(self, msg: str) -> None:
         """Log a message."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_callback(f"[{timestamp}] {msg}")
 
-    def execute(self) -> bool:
+    def execute(self, resume_from: int = 0) -> bool:
         """
         Execute all steps in the recipe.
+
+        Args:
+            resume_from: Step index to resume from (0 = start from beginning)
 
         Returns:
             True if all steps completed successfully
         """
         self.log(f"Starting recipe: {self.recipe.name}")
+        self.log(f"Job ID: {self.ctx.job_id}")
         self.log(f"Execution ID: {self.ctx.exec_id}")
 
-        # Initialize logger
+        if resume_from > 0:
+            self.log(f"Resuming from step {resume_from + 1}")
+
+        # Initialize logger with job_id
         self.logger = ExecutionLogger(
-            exec_id=self.ctx.exec_id,
-            recipe_id=self.recipe.name,
+            job_id=self.ctx.job_id,
+            recipe_name=self.recipe.name,
         )
-        self.logger.start(self.recipe.name, self.ctx.variables)
+        self.logger.start(
+            self.recipe.name,
+            self.ctx.variables,
+            self.recipe.hosts,
+            self.recipe_path or "",
+        )
 
         success = True
 
         for i, step in enumerate(self.recipe.steps):
-            step_name = f"Step {i + 1}: {step.raw[:50]}"
+            step_num = i + 1
+            # Skip already completed steps on resume
+            if i < resume_from:
+                self.log(f"⏭ Step {step_num}: Skipping (already completed)")
+                if self.logger:
+                    self.logger.log_detail("skip", f"Step {step_num} skipped (resume)", {"step_num": step_num})
+                continue
+
+            step_name = f"Step {step_num}: {step.raw[:50]}"
             self.log(f"→ {step_name}")
 
+            # Build step details for logging
+            step_details = {
+                "host": step.host,
+                "command": step.command,
+                "commands": step.commands,
+                "args": step.args,
+                "source": step.source,
+                "dest": step.dest,
+                "target": step.target,
+                "pattern": step.pattern,
+                "condition": step.condition,
+                "timeout": step.timeout,
+                "background": step.background,
+            }
+
             if self.logger:
-                self.logger.step_start(str(i + 1), step_name, step.type.value)
+                self.logger.step_start(step_num, step.raw, step.type.value, step_details)
+
+            # Save checkpoint before executing step
+            self._save_checkpoint(i)
 
             start = datetime.now()
 
@@ -404,29 +352,39 @@ class DSLExecutor:
 
                 if self.logger:
                     if output:
-                        self.logger.step_output(str(i + 1), output)
-                    self.logger.step_end(str(i + 1), ok, duration_ms, "" if ok else output)
+                        self.logger.step_output(step_num, output, "result")
+                    self.logger.step_end(step_num, ok, duration_ms, result=output if ok else "", error="" if ok else output)
 
                 if not ok:
                     self.log(f"  ✗ Failed: {output}")
+                    self._save_checkpoint(i, status="failed")
                     success = False
                     break
                 else:
                     self.log(f"  ✓ Done ({duration_ms}ms)")
 
             except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
                 self.log(f"  ✗ Error: {e}")
                 if self.logger:
-                    self.logger.step_end(str(i + 1), False, 0, str(e))
+                    self.logger.step_output(step_num, error_detail, "exception")
+                    self.logger.step_end(step_num, False, 0, error=str(e))
+                self._save_checkpoint(i, status="failed")
                 success = False
                 break
 
         # Finalize
         total_ms = int((datetime.now() - self.ctx.start_time).total_seconds() * 1000)
         if self.logger:
-            self.logger.end(success, total_ms)
+            self.logger.end(success, total_ms, dict(self.ctx.variables))
 
-        status = "completed" if success else "failed"
+        if success:
+            self._clear_checkpoint()
+            status = "completed"
+        else:
+            status = "failed"
+
         self.log(f"Recipe {status} in {total_ms}ms")
 
         return success
@@ -452,10 +410,10 @@ class DSLExecutor:
         args = step.args
 
         # Parse command
-        if cmd == "kitty.open":
-            return self._cmd_kitty_open(args)
-        elif cmd == "kitty.close":
-            return self._cmd_kitty_close(args)
+        if cmd == "tmux.open":
+            return self._cmd_tmux_open(args)
+        elif cmd == "tmux.close":
+            return self._cmd_tmux_close(args)
         elif cmd == "notify":
             return self._cmd_notify(args)
         elif cmd == "vast.start":
@@ -473,79 +431,132 @@ class DSLExecutor:
         else:
             return False, f"Unknown control command: {cmd}"
 
-    def _cmd_kitty_open(self, args: List[str]) -> tuple[bool, str]:
+    def _cmd_tmux_open(self, args: List[str]) -> tuple[bool, str]:
         """
-        Handle: > kitty.open @host as name [command] [type=window] [location=vsplit]
+        Handle: > tmux.open @host as name
+
+        Creates a remote tmux session via SSH for persistent command execution.
+        Commands survive SSH disconnect - attach manually with:
+            ssh host && tmux attach -t <session_name>
         """
         if len(args) < 3 or args[1] != "as":
-            return False, "Usage: kitty.open @host as name [command] [type=window] [location=vsplit]"
+            return False, "Usage: tmux.open @host as name"
 
         host_ref = args[0]
         window_name = args[2]
-        command = None
-        launch_type = "tab"
-        location = None
-
-        for arg in args[3:]:
-            if "=" in arg:
-                key, _, value = arg.partition("=")
-                if key == "type":
-                    launch_type = value
-                    continue
-                if key == "location":
-                    location = value
-                    continue
-            if command is None:
-                command = arg
-            else:
-                command = f"{command} {arg}"
 
         # Resolve host
         host = self._resolve_host(host_ref)
 
-        if self.visual:
-            ok, result = self.kitty.launch(
-                host=host,
-                title=window_name,
-                command=command,
-                tab_type=launch_type,
-                location=location,
-            )
+        # Generate remote session name (unique per job + window)
+        remote_session_name = f"train_{self.ctx.job_id[:8]}_{window_name}"
 
-            if ok:
-                self.ctx.windows[window_name] = WindowInfo(
-                    name=window_name,
-                    host=host,
-                    window_id=result,
-                )
-                # Give SSH time to connect
-                time.sleep(2)
-                return True, f"Opened window: {window_name}"
-            return False, result
-        else:
-            # Non-visual mode: just track the host
+        if self.logger:
+            self.logger.log_detail("tmux_open", f"Creating remote tmux session {window_name}", {
+                "host_ref": host_ref,
+                "resolved_host": host,
+                "window_name": window_name,
+                "remote_session": remote_session_name if host != "local" else None,
+            })
+
+        if host == "local":
+            # Local: no tmux session needed, commands run directly
             self.ctx.windows[window_name] = WindowInfo(
                 name=window_name,
                 host=host,
+                remote_session=None,
             )
-            return True, f"Registered window: {window_name} (non-visual)"
+            self.log(f"  Registered local window: {window_name}")
+            return True, f"Registered local window: {window_name}"
 
-    def _cmd_kitty_close(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > kitty.close name"""
+        # Remote: create tmux session on remote host via SSH
+        # Use 'tmux new-session -d -s name' to create detached session
+        create_cmd = f"tmux new-session -d -s {remote_session_name} 2>/dev/null || tmux has-session -t {remote_session_name}"
+        ssh_args = _build_ssh_args(host, command=create_cmd, tty=False)
+
+        try:
+            result = subprocess.run(
+                ssh_args,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                # Session might already exist, which is fine
+                if "already exists" not in result.stderr and "has-session" not in create_cmd:
+                    return False, f"Failed to create remote tmux session: {result.stderr}"
+
+            self.ctx.windows[window_name] = WindowInfo(
+                name=window_name,
+                host=host,
+                remote_session=remote_session_name,
+            )
+
+            self.log(f"  Remote tmux session: {remote_session_name}")
+            self.log(f"  Attach with: ssh {host} -t 'tmux attach -t {remote_session_name}'")
+
+            if self.logger:
+                self.logger.log_detail("window_registered", f"Window {window_name} registered", {
+                    "window_name": window_name,
+                    "host": host,
+                    "remote_session": remote_session_name,
+                })
+
+            return True, f"Created remote tmux session: {remote_session_name}"
+
+        except subprocess.TimeoutExpired:
+            return False, f"SSH timeout creating remote tmux session"
+        except Exception as e:
+            if self.logger:
+                self.logger.log_detail("tmux_error", f"Failed to create session: {e}", {})
+            return False, str(e)
+
+    def _cmd_tmux_close(self, args: List[str]) -> tuple[bool, str]:
+        """Handle: > tmux.close name
+
+        Kills the remote tmux session via SSH.
+        """
         if not args:
-            return False, "Usage: kitty.close name"
+            return False, "Usage: tmux.close name"
 
         window_name = args[0]
+        window = self.ctx.windows.get(window_name)
 
-        if self.visual:
-            ok = self.kitty.close(window_name)
-            if ok:
-                self.ctx.windows.pop(window_name, None)
-                return True, f"Closed window: {window_name}"
-            return False, f"Failed to close: {window_name}"
-        else:
+        if not window:
+            return False, f"Unknown window: {window_name}"
+
+        if window.host == "local" or not window.remote_session:
+            # Local window, just unregister
             self.ctx.windows.pop(window_name, None)
             return True, f"Unregistered window: {window_name}"
+
+        # Remote: kill the remote tmux session via SSH
+        kill_cmd = f"tmux kill-session -t {window.remote_session} 2>/dev/null || true"
+        ssh_args = _build_ssh_args(window.host, command=kill_cmd, tty=False)
+
+        try:
+            subprocess.run(
+                ssh_args,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if self.logger:
+                self.logger.log_detail("tmux_close", f"Killed remote session {window.remote_session}", {
+                    "window_name": window_name,
+                    "remote_session": window.remote_session,
+                })
+
+            self.ctx.windows.pop(window_name, None)
+            return True, f"Killed remote session: {window.remote_session}"
+
+        except subprocess.TimeoutExpired:
+            self.ctx.windows.pop(window_name, None)
+            return True, f"Timeout killing session (unregistered): {window_name}"
+        except Exception as e:
+            return False, str(e)
 
     def _cmd_notify(self, args: List[str]) -> tuple[bool, str]:
         """Handle: > notify "message" """
@@ -555,7 +566,7 @@ class DSLExecutor:
         # Try system notification
         try:
             subprocess.run(
-                ['osascript', '-e', f'display notification "{message}" with title "trainsh"'],
+                ['osascript', '-e', f'display notification "{message}" with title "train"'],
                 capture_output=True,
                 timeout=5,
             )
@@ -578,17 +589,59 @@ class DSLExecutor:
                 except ValueError:
                     return False, f"Invalid instance ID: {instance_id}"
 
+                if self.logger:
+                    self.logger.log_detail("vast_start", f"Getting instance {inst_id}", {"instance_id": inst_id})
+
                 instance = client.get_instance(inst_id)
+
+                # Log instance details
+                instance_info = {
+                    "id": instance.id,
+                    "status": instance.actual_status,
+                    "is_running": instance.is_running,
+                    "gpu_name": instance.gpu_name,
+                    "num_gpus": instance.num_gpus,
+                    "ssh_host": instance.ssh_host,
+                    "ssh_port": instance.ssh_port,
+                    "dph_total": instance.dph_total,
+                    "start_date": instance.start_date,
+                }
+                if self.logger:
+                    self.logger.log_vast("get_instance", inst_id, {"instance_id": inst_id}, instance_info, True)
+
                 if instance.is_running:
                     self.ctx.variables["_vast_instance_id"] = str(inst_id)
+                    # Record start time from API if available
+                    if instance.start_date:
+                        self.ctx.variables["_vast_start_time"] = datetime.fromtimestamp(instance.start_date).isoformat()
+                    else:
+                        self.ctx.variables["_vast_start_time"] = datetime.now().isoformat()
+
+                    if self.logger:
+                        self.logger.log_variable("_vast_instance_id", str(inst_id), "vast.start")
+                        self.logger.log_variable("_vast_start_time", self.ctx.variables["_vast_start_time"], "vast.start")
+
                     return True, f"Instance already running: {inst_id}"
 
                 try:
+                    if self.logger:
+                        self.logger.log_detail("vast_start", f"Starting instance {inst_id}", {"instance_id": inst_id})
+
                     client.start_instance(inst_id)
                     self.ctx.variables["_vast_instance_id"] = str(inst_id)
+                    # Record start time now
+                    self.ctx.variables["_vast_start_time"] = datetime.now().isoformat()
+
+                    if self.logger:
+                        self.logger.log_vast("start_instance", inst_id, {"instance_id": inst_id}, {"started": True}, True)
+                        self.logger.log_variable("_vast_instance_id", str(inst_id), "vast.start")
+                        self.logger.log_variable("_vast_start_time", self.ctx.variables["_vast_start_time"], "vast.start")
+
                     return True, f"Started instance: {inst_id}"
                 except VastAPIError as e:
                     msg = f"Failed to start instance {inst_id}: {e}"
+                    if self.logger:
+                        self.logger.log_vast("start_instance", inst_id, {"instance_id": inst_id}, {"error": str(e)}, False)
                     try:
                         client.stop_instance(inst_id)
                         msg += "; instance stopped"
@@ -608,9 +661,13 @@ class DSLExecutor:
             )
 
             self.ctx.variables["_vast_instance_id"] = str(instance_id)
+            if self.logger:
+                self.logger.log_vast("create_instance", instance_id, {"offer_id": offers[0].id}, {"created": True}, True)
             return True, f"Created instance: {instance_id}"
 
         except (VastAPIError, RuntimeError) as e:
+            if self.logger:
+                self.logger.log_vast("vast_start", None, {"args": args}, {"error": str(e)}, False)
             return False, str(e)
 
     def _cmd_vast_stop(self, args: List[str]) -> tuple[bool, str]:
@@ -628,7 +685,14 @@ class DSLExecutor:
             if not instance_id:
                 return False, "No instance to stop"
 
+            if self.logger:
+                self.logger.log_detail("vast_stop", f"Stopping instance {instance_id}", {"instance_id": instance_id})
+
             client.stop_instance(int(instance_id))
+
+            if self.logger:
+                self.logger.log_vast("stop_instance", int(instance_id), {"instance_id": instance_id}, {"stopped": True}, True)
+
             return True, f"Stopped instance: {instance_id}"
 
         except (VastAPIError, RuntimeError) as e:
@@ -689,6 +753,18 @@ class DSLExecutor:
         else:
             return False, "No host alias provided for vast.pick"
 
+        pick_filters = {
+            "host_name": host_name,
+            "gpu_name": gpu_name,
+            "num_gpus": num_gpus,
+            "min_gpu_ram": min_gpu_ram,
+            "max_dph": max_dph,
+            "limit": limit,
+            "skip_if_set": skip_if_set,
+        }
+        if self.logger:
+            self.logger.log_detail("vast_pick", "Picking Vast instance", pick_filters)
+
         existing_id = None
         if skip_if_set:
             for key in ("_vast_instance_id", "VAST_ID"):
@@ -701,6 +777,9 @@ class DSLExecutor:
             self.recipe.hosts[host_name] = f"vast:{existing_id}"
             self.ctx.variables["_vast_instance_id"] = str(existing_id)
             self.ctx.variables["VAST_ID"] = str(existing_id)
+            if self.logger:
+                self.logger.log_vast("pick_existing", existing_id, pick_filters, {"using_existing": True}, True)
+                self.logger.log_variable("VAST_ID", str(existing_id), "vast.pick")
             return True, f"Using existing instance: {existing_id}"
 
         try:
@@ -708,6 +787,21 @@ class DSLExecutor:
             instances = client.list_instances()
             if not instances:
                 return False, "No Vast.ai instances found"
+
+            # Log all instances for debugging
+            if self.logger:
+                instances_info = [
+                    {
+                        "id": i.id,
+                        "status": i.actual_status,
+                        "gpu_name": i.gpu_name,
+                        "num_gpus": i.num_gpus,
+                        "gpu_memory_gb": i.gpu_memory_gb,
+                        "dph_total": i.dph_total,
+                    }
+                    for i in instances
+                ]
+                self.logger.log_vast("list_instances", None, {}, {"instances": instances_info, "count": len(instances)}, True)
 
             def matches_filters(instance) -> bool:
                 if gpu_name and (instance.gpu_name or "").upper() != gpu_name.upper():
@@ -722,6 +816,8 @@ class DSLExecutor:
 
             instances = [i for i in instances if matches_filters(i)]
             if not instances:
+                if self.logger:
+                    self.logger.log_detail("vast_pick", "No instances match filters", pick_filters)
                 return False, "No Vast.ai instances match filters"
 
             if limit and limit > 0:
@@ -737,18 +833,33 @@ class DSLExecutor:
 
             instances = sorted(instances, key=lambda i: (status_rank(i), i.dph_total or 0.0))
 
+            # Log filtered instances
+            if self.logger:
+                filtered_info = [
+                    {
+                        "id": i.id,
+                        "status": i.actual_status,
+                        "gpu_name": i.gpu_name,
+                        "num_gpus": i.num_gpus,
+                        "dph_total": i.dph_total,
+                    }
+                    for i in instances
+                ]
+                self.logger.log_detail("vast_pick", f"Filtered to {len(instances)} instances", {"filtered_instances": filtered_info})
+
+            # Use unified formatter for instance table
+            from ..utils.vast_formatter import format_instance_header, format_instance_row, get_currency_settings
+            currency = get_currency_settings()
+            header, sep = format_instance_header(currency, show_index=True)
+
             print("\nSelect a Vast.ai instance:")
-            print("-" * 86)
-            print(f"{'#':<4} {'ID':<10} {'Status':<10} {'GPU':<18} {'GPUs':<5} {'VRAM':<8} {'$/hr':<8}")
-            print("-" * 86)
+            print(sep)
+            print(header)
+            print(sep)
             for idx, inst in enumerate(instances, 1):
-                gpu = inst.gpu_name or "N/A"
-                gpus = inst.num_gpus or 0
-                vram = f"{inst.gpu_memory_gb:.0f} GB" if inst.gpu_memory_gb else "N/A"
-                price = f"${inst.dph_total:.3f}" if inst.dph_total else "N/A"
-                status = inst.actual_status or "unknown"
-                print(f"{idx:<4} {inst.id:<10} {status:<10} {gpu:<18} {gpus:<5} {vram:<8} {price:<8}")
-            print("-" * 86)
+                row = format_instance_row(inst, currency, show_index=True, index=idx)
+                print(row)
+            print(sep)
 
             try:
                 choice = input(f"Enter number (1-{len(instances)}) or instance ID: ").strip()
@@ -773,14 +884,26 @@ class DSLExecutor:
             self.ctx.variables["VAST_ID"] = str(selected.id)
             self.recipe.hosts[host_name] = f"vast:{selected.id}"
 
+            if self.logger:
+                self.logger.log_vast("pick_selected", selected.id, pick_filters, {
+                    "selected_id": selected.id,
+                    "gpu_name": selected.gpu_name,
+                    "status": selected.actual_status,
+                }, True)
+                self.logger.log_variable("_vast_instance_id", str(selected.id), "vast.pick")
+                self.logger.log_variable("VAST_ID", str(selected.id), "vast.pick")
+
             return True, f"Selected instance {selected.id}"
 
         except (VastAPIError, RuntimeError) as e:
+            if self.logger:
+                self.logger.log_vast("pick_error", None, pick_filters, {"error": str(e)}, False)
             return False, str(e)
 
     def _cmd_vast_wait(self, args: List[str]) -> tuple[bool, str]:
         """Handle: > vast.wait <instance_id> timeout=10m poll=10s stop_on_fail=true"""
         from ..services.vast_api import get_vast_client, VastAPIError
+        from ..config import load_config
 
         instance_id = None
         timeout = 600
@@ -814,30 +937,173 @@ class DSLExecutor:
 
         self.ctx.variables["_vast_instance_id"] = str(inst_id)
 
+        wait_config = {
+            "instance_id": inst_id,
+            "timeout": timeout,
+            "poll_interval": poll_interval,
+            "stop_on_fail": stop_on_fail,
+        }
+        if self.logger:
+            self.logger.log_detail("vast_wait", f"Waiting for instance {inst_id}", wait_config)
+
         try:
             client = get_vast_client()
+
+            # Auto-attach SSH key if configured
+            config = load_config()
+            auto_attach = config.get("vast", {}).get("auto_attach_ssh_key", True)
+            ssh_key_path = config.get("defaults", {}).get("ssh_key_path", "~/.ssh/id_rsa")
+
+            if auto_attach and ssh_key_path:
+                self._ensure_ssh_key_attached(client, ssh_key_path)
+
             start_time = time.time()
             last_status = "unknown"
+            poll_count = 0
+
             while time.time() - start_time < timeout:
+                poll_count += 1
                 instance = client.get_instance(inst_id)
                 last_status = instance.actual_status or "unknown"
                 ssh_ready = bool(instance.ssh_host and instance.ssh_port)
+                elapsed = int(time.time() - start_time)
+                remaining = timeout - elapsed
+
+                # Log each poll
+                if self.logger:
+                    self.logger.log_wait(
+                        f"vast:{inst_id}",
+                        f"status={last_status},ssh_ready={ssh_ready}",
+                        elapsed,
+                        remaining,
+                        f"poll #{poll_count}: {last_status}"
+                    )
 
                 if instance.is_running and ssh_ready:
-                    self.ctx.variables["_vast_ssh_host"] = instance.ssh_host or ""
-                    self.ctx.variables["_vast_ssh_port"] = str(instance.ssh_port or "")
-                    msg = f"Instance {inst_id} is ready ({last_status})"
-                    self.log(msg)
-                    return True, msg
+                    # Print connection details
+                    self.log(f"  Connection details for instance {inst_id}:")
+                    proxy_cmd = instance.ssh_proxy_command
+                    direct_cmd = instance.ssh_direct_command
+                    if proxy_cmd:
+                        self.log(f"    Proxy SSH: {proxy_cmd}")
+                    if direct_cmd:
+                        self.log(f"    Direct SSH: {direct_cmd}")
+
+                    if self.logger:
+                        self.logger.log_detail("vast_connection", "SSH connection details", {
+                            "proxy_command": proxy_cmd,
+                            "direct_command": direct_cmd,
+                            "ssh_host": instance.ssh_host,
+                            "ssh_port": instance.ssh_port,
+                            "public_ipaddr": instance.public_ipaddr,
+                            "direct_port_start": instance.direct_port_start,
+                            "direct_port_end": instance.direct_port_end,
+                        })
+
+                    # Try both SSH connection methods
+                    ssh_connected = False
+                    working_ssh_spec = None
+
+                    # Try direct SSH first (usually faster if available)
+                    if direct_cmd and instance.public_ipaddr and instance.direct_port_start:
+                        direct_spec = f"root@{instance.public_ipaddr} -p {instance.direct_port_start}"
+                        self.log(f"  Trying direct SSH: {direct_cmd}")
+                        if self._verify_ssh_connection(direct_spec):
+                            ssh_connected = True
+                            working_ssh_spec = direct_spec
+                            self.log(f"  Direct SSH connected successfully")
+                        else:
+                            self.log(f"  Direct SSH failed, trying proxy...")
+
+                    # Try proxy SSH if direct failed or not available
+                    if not ssh_connected and proxy_cmd:
+                        proxy_spec = f"root@{instance.ssh_host} -p {instance.ssh_port}"
+                        self.log(f"  Trying proxy SSH: {proxy_cmd}")
+                        if self._verify_ssh_connection(proxy_spec):
+                            ssh_connected = True
+                            working_ssh_spec = proxy_spec
+                            self.log(f"  Proxy SSH connected successfully")
+                        else:
+                            self.log(f"  Proxy SSH failed")
+
+                    if ssh_connected and working_ssh_spec:
+                        # Save the working SSH spec to variables
+                        if instance.public_ipaddr and instance.direct_port_start and instance.public_ipaddr in working_ssh_spec:
+                            self.ctx.variables["_vast_ssh_host"] = instance.public_ipaddr
+                            self.ctx.variables["_vast_ssh_port"] = str(instance.direct_port_start)
+                        else:
+                            self.ctx.variables["_vast_ssh_host"] = instance.ssh_host or ""
+                            self.ctx.variables["_vast_ssh_port"] = str(instance.ssh_port or "")
+
+                        # IMPORTANT: Update recipe.hosts with the working SSH spec
+                        # This ensures subsequent steps (tmux.open, transfer) use the correct connection
+                        for host_name, host_value in list(self.recipe.hosts.items()):
+                            if host_value == f"vast:{inst_id}":
+                                self.recipe.hosts[host_name] = working_ssh_spec
+                                self.log(f"  Updated @{host_name} to use: {working_ssh_spec}")
+                                if self.logger:
+                                    self.logger.log_detail("vast_host_update", f"Updated host {host_name}", {
+                                        "host_name": host_name,
+                                        "old_value": f"vast:{inst_id}",
+                                        "new_value": working_ssh_spec,
+                                    })
+
+                        # Disable Vast.ai auto-tmux so we can control our own tmux session
+                        disable_cmd = "touch ~/.no_auto_tmux"
+                        ssh_args = _build_ssh_args(working_ssh_spec, command=disable_cmd, tty=False)
+                        try:
+                            subprocess.run(ssh_args, capture_output=True, text=True, timeout=10)
+                            if self.logger:
+                                self.logger.log_detail("vast_config", "Disabled auto-tmux", {"command": disable_cmd})
+                        except Exception:
+                            pass  # Best effort, ignore errors
+
+                        msg = f"Instance {inst_id} is ready ({last_status})"
+                        self.log(msg)
+
+                        if self.logger:
+                            self.logger.log_vast("wait_ready", inst_id, wait_config, {
+                                "status": last_status,
+                                "ssh_host": self.ctx.variables["_vast_ssh_host"],
+                                "ssh_port": self.ctx.variables["_vast_ssh_port"],
+                                "connection_method": "direct" if instance.public_ipaddr in working_ssh_spec else "proxy",
+                                "elapsed_sec": elapsed,
+                                "poll_count": poll_count,
+                            }, True)
+                            self.logger.log_variable("_vast_ssh_host", self.ctx.variables["_vast_ssh_host"], "vast.wait")
+                            self.logger.log_variable("_vast_ssh_port", self.ctx.variables["_vast_ssh_port"], "vast.wait")
+
+                        return True, msg
+                    else:
+                        # SSH not ready yet, keep waiting
+                        self.log(f"Instance {inst_id} running but SSH not accessible yet...")
+                        if self.logger:
+                            self.logger.log_detail("vast_wait", "SSH not accessible yet", {
+                                "proxy_command": proxy_cmd,
+                                "direct_command": direct_cmd,
+                                "ssh_host": instance.ssh_host,
+                                "ssh_port": instance.ssh_port,
+                                "public_ipaddr": instance.public_ipaddr,
+                                "direct_port_start": instance.direct_port_start,
+                            })
 
                 self.log(f"Waiting for instance {inst_id}... ({last_status})")
                 time.sleep(poll_interval)
 
             msg = f"Instance {inst_id} not ready after {_format_duration(timeout)} (status: {last_status})"
+            if self.logger:
+                self.logger.log_vast("wait_timeout", inst_id, wait_config, {
+                    "status": last_status,
+                    "elapsed_sec": int(time.time() - start_time),
+                    "poll_count": poll_count,
+                }, False)
+
             if stop_on_fail:
                 try:
                     client.stop_instance(inst_id)
                     msg += "; instance stopped"
+                    if self.logger:
+                        self.logger.log_vast("stop_instance", inst_id, {"reason": "wait_timeout"}, {"stopped": True}, True)
                 except VastAPIError as e:
                     msg += f"; failed to stop instance: {e}"
             self.log(msg)
@@ -845,8 +1111,130 @@ class DSLExecutor:
 
         except (VastAPIError, RuntimeError) as e:
             msg = f"Vast wait failed: {e}"
+            if self.logger:
+                self.logger.log_vast("wait_error", inst_id, wait_config, {"error": str(e)}, False)
             self.log(msg)
             return False, msg
+
+    def _verify_ssh_connection(self, ssh_spec: str, timeout: int = 10) -> bool:
+        """Verify that SSH connection to a host is working."""
+        try:
+            ssh_args = _build_ssh_args(ssh_spec, command="echo ok", tty=False)
+            # Add connection timeout and batch mode
+            ssh_args.insert(1, "-o")
+            ssh_args.insert(2, f"ConnectTimeout={timeout}")
+            ssh_args.insert(3, "-o")
+            ssh_args.insert(4, "BatchMode=yes")
+            ssh_args.insert(5, "-o")
+            ssh_args.insert(6, "StrictHostKeyChecking=no")
+
+            result = subprocess.run(
+                ssh_args,
+                capture_output=True,
+                text=True,
+                timeout=timeout + 5,
+            )
+
+            if self.logger:
+                self.logger.log_ssh(
+                    ssh_spec, "echo ok",
+                    result.returncode,
+                    result.stdout,
+                    result.stderr,
+                    0
+                )
+
+            return result.returncode == 0 and "ok" in result.stdout
+        except (subprocess.TimeoutExpired, Exception) as e:
+            if self.logger:
+                self.logger.log_detail("ssh_verify_failed", f"SSH verify failed: {e}", {"ssh_spec": ssh_spec})
+            return False
+
+    def _ensure_ssh_key_attached(self, client, ssh_key_path: str) -> None:
+        """Ensure the local SSH public key is attached to Vast.ai account."""
+        import os
+
+        # Get public key path
+        pub_key_path = os.path.expanduser(ssh_key_path)
+        if not pub_key_path.endswith(".pub"):
+            pub_key_path = pub_key_path + ".pub"
+
+        if not os.path.exists(pub_key_path):
+            self.log(f"SSH public key not found: {pub_key_path}")
+            if self.logger:
+                self.logger.log_detail("ssh_key", f"Public key not found: {pub_key_path}", {})
+            return
+
+        # Read public key content
+        with open(pub_key_path, "r") as f:
+            pub_key_content = f.read().strip()
+
+        if not pub_key_content:
+            self.log(f"SSH public key is empty: {pub_key_path}")
+            return
+
+        # Extract key fingerprint or key content for comparison
+        # SSH public key format: type base64content comment
+        key_parts = pub_key_content.split()
+        if len(key_parts) < 2:
+            self.log(f"Invalid SSH public key format: {pub_key_path}")
+            return
+
+        key_type = key_parts[0]
+        key_data = key_parts[1]
+
+        try:
+            # List existing keys on Vast.ai
+            existing_keys = client.list_ssh_keys()
+
+            if self.logger:
+                self.logger.log_detail("ssh_key", f"Found {len(existing_keys)} existing keys on Vast.ai", {
+                    "existing_count": len(existing_keys)
+                })
+
+            # Check if our key is already registered
+            key_exists = False
+            for existing_key in existing_keys:
+                # Compare the key data portion
+                existing_content = existing_key.get("ssh_key", "")
+                existing_parts = existing_content.split()
+                if len(existing_parts) >= 2 and existing_parts[1] == key_data:
+                    key_exists = True
+                    if self.logger:
+                        self.logger.log_detail("ssh_key", "SSH key already registered on Vast.ai", {
+                            "key_id": existing_key.get("id"),
+                            "label": existing_key.get("label"),
+                        })
+                    break
+
+            if not key_exists:
+                # Add the key
+                self.log(f"Adding SSH key to Vast.ai account...")
+                try:
+                    client.add_ssh_key(pub_key_content, label="tmux-trainsh")
+                    self.log(f"SSH key added successfully")
+                    if self.logger:
+                        self.logger.log_detail("ssh_key", "SSH key added to Vast.ai", {
+                            "key_type": key_type,
+                            "key_path": pub_key_path,
+                        })
+                except Exception as add_err:
+                    # Ignore "already exists" errors - the key is registered, that's fine
+                    err_str = str(add_err).lower()
+                    if "already exists" in err_str or "duplicate" in err_str:
+                        self.log(f"SSH key already exists on Vast.ai")
+                        if self.logger:
+                            self.logger.log_detail("ssh_key", "SSH key already exists (ignored)", {
+                                "key_type": key_type,
+                            })
+                    else:
+                        raise add_err
+
+        except Exception as e:
+            # Don't fail the wait operation for SSH key errors
+            self.log(f"Warning: Failed to manage SSH keys: {e}")
+            if self.logger:
+                self.logger.log_detail("ssh_key_warning", f"Failed to manage SSH keys: {e}", {})
 
     def _cmd_vast_cost(self, args: List[str]) -> tuple[bool, str]:
         """Handle: > vast.cost <instance_id>"""
@@ -873,6 +1261,13 @@ class DSLExecutor:
             self.log(msg)
             return True, msg
 
+        # Get start time from job state
+        vast_start_time = self.ctx.variables.get("_vast_start_time")
+        if not vast_start_time:
+            msg = "Vast cost skipped: no start time recorded in job state"
+            self.log(msg)
+            return True, msg
+
         try:
             client = get_vast_client()
             inst = client.get_instance(inst_id)
@@ -883,8 +1278,9 @@ class DSLExecutor:
                 self.log(msg)
                 return True, msg
 
-            start_time = self.ctx.start_time or datetime.now()
-            duration_secs = (datetime.now() - start_time).total_seconds()
+            # Calculate duration from saved start time
+            saved_start = datetime.fromisoformat(vast_start_time)
+            duration_secs = (datetime.now() - saved_start).total_seconds()
             cost_usd = hourly_usd * (duration_secs / 3600.0)
 
             settings = load_pricing_settings()
@@ -924,45 +1320,123 @@ class DSLExecutor:
         return True, f"Slept for {duration}s"
 
     def _exec_execute(self, step: DSLStep) -> tuple[bool, str]:
-        """Execute remote command: host: command"""
+        """Execute command: host: command
+
+        Commands run in remote tmux sessions via SSH (survives SSH disconnect).
+        For local hosts, commands run directly.
+        """
         window_name = step.host
         commands = self._interpolate(step.commands)
 
-        if self.visual:
-            # Send text to kitty window
-            text = commands + "\n"
-            ok = self.kitty.send_text(window_name, text)
+        if self.logger:
+            self.logger.log_detail("execute", f"Executing command on {window_name}", {
+                "window_name": window_name,
+                "commands": commands,
+                "background": step.background,
+            })
 
-            if step.background:
-                # Don't wait for completion
-                return ok, "Command sent (background)"
-            else:
-                # Wait a bit for command to start
-                time.sleep(1)
-                return ok, "Command sent"
-        else:
-            # Non-visual mode: use SSH directly
-            window = self.ctx.windows.get(window_name)
-            if not window:
-                return False, f"Unknown window: {window_name}"
+        window = self.ctx.windows.get(window_name)
+        if not window:
+            return False, f"Unknown window: {window_name}"
 
-            host = window.host
-            if host == "local":
+        timeout = step.timeout or 600  # Default 10 min timeout
+        start_time = time.time()
+        host = window.host
+        remote_session = window.remote_session
+
+        if host == "local":
+            # Local: run command directly
+            try:
                 result = subprocess.run(
                     commands,
                     shell=True,
                     capture_output=True,
                     text=True,
+                    timeout=timeout,
                 )
+                duration_ms = int((time.time() - start_time) * 1000)
+                if self.logger:
+                    self.logger.log_ssh("local", commands, result.returncode, result.stdout, result.stderr, duration_ms)
                 return result.returncode == 0, result.stdout or result.stderr
+            except subprocess.TimeoutExpired:
+                return False, f"Command timed out after {timeout}s"
+
+        # Remote: use SSH with remote tmux session for persistence
+        if remote_session:
+            if step.background:
+                # Background: send command to remote tmux and return immediately
+                tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(commands)} Enter"
+                ssh_args = _build_ssh_args(host, command=tmux_cmd, tty=False)
+
+                try:
+                    result = subprocess.run(
+                        ssh_args,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if self.logger:
+                        self.logger.log_detail("send_keys", f"Sent to {window_name}", {
+                            "commands": commands,
+                            "remote_session": remote_session,
+                            "success": result.returncode == 0,
+                        })
+                    return result.returncode == 0, "Command sent (background)"
+                except subprocess.TimeoutExpired:
+                    return False, "SSH timeout sending command"
             else:
-                ssh_args = _build_ssh_args(host, command=commands, tty=False)
+                # Foreground: send command with wait-for signal
+                import uuid
+                signal = f"done_{uuid.uuid4().hex[:8]}"
+
+                # Wrap command: run command, then signal completion
+                wrapped = f"( {commands} ); tmux wait-for -S {signal}"
+                send_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(wrapped)} Enter"
+                ssh_args = _build_ssh_args(host, command=send_cmd, tty=False)
+
+                try:
+                    subprocess.run(ssh_args, capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    return False, "SSH timeout sending command"
+
+                # Wait for signal using tmux wait-for (blocks until signal received)
+                wait_cmd = f"tmux wait-for {signal}"
+                ssh_args = _build_ssh_args(host, command=wait_cmd, tty=False)
+
+                try:
+                    result = subprocess.run(
+                        ssh_args,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+                    elapsed = int(time.time() - start_time)
+
+                    if self.logger:
+                        self.logger.log_detail("execute_complete", f"Command completed on {window_name}", {
+                            "elapsed_sec": elapsed,
+                            "remote_session": remote_session,
+                        })
+
+                    return result.returncode == 0, f"Command completed ({elapsed}s)"
+                except subprocess.TimeoutExpired:
+                    return False, f"Command timed out after {timeout}s"
+        else:
+            # No remote session: direct SSH execution (shouldn't happen for remote hosts)
+            ssh_args = _build_ssh_args(host, command=commands, tty=False)
+            try:
                 result = subprocess.run(
                     ssh_args,
                     capture_output=True,
                     text=True,
+                    timeout=timeout,
                 )
+                duration_ms = int((time.time() - start_time) * 1000)
+                if self.logger:
+                    self.logger.log_ssh(host, commands, result.returncode, result.stdout, result.stderr, duration_ms)
                 return result.returncode == 0, result.stdout or result.stderr
+            except subprocess.TimeoutExpired:
+                return False, f"Command timed out after {timeout}s"
 
     def _exec_transfer(self, step: DSLStep) -> tuple[bool, str]:
         """Execute file transfer: source -> dest"""
@@ -972,10 +1446,18 @@ class DSLExecutor:
         source = self._interpolate(step.source)
         dest = self._interpolate(step.dest)
 
+        transfer_info = {
+            "source": source,
+            "dest": dest,
+        }
+        if self.logger:
+            self.logger.log_detail("transfer", f"Transferring {source} -> {dest}", transfer_info)
+
         # Parse endpoints
         src_endpoint = self._parse_endpoint(source)
         dst_endpoint = self._parse_endpoint(dest)
 
+        start_time = time.time()
         engine = TransferEngine()
         hosts = self._build_transfer_hosts()
         result = engine.transfer(
@@ -983,31 +1465,78 @@ class DSLExecutor:
             destination=dst_endpoint,
             hosts=hosts,
         )
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        if self.logger:
+            self.logger.log_transfer(
+                source, dest, "rsync",
+                result.bytes_transferred,
+                duration_ms,
+                result.success,
+                result.message
+            )
 
         if result.success:
             return True, f"Transferred {result.bytes_transferred} bytes"
         return False, result.message
 
     def _exec_wait(self, step: DSLStep) -> tuple[bool, str]:
-        """Execute wait condition."""
+        """Execute wait condition with SSH retry logic."""
         target = step.target
         pattern = step.pattern
         condition = step.condition
         timeout = step.timeout or 300
 
+        wait_config = {
+            "target": target,
+            "pattern": pattern,
+            "condition": condition,
+            "timeout": timeout,
+        }
+        if self.logger:
+            self.logger.log_detail("wait_start", f"Starting wait for {target}", wait_config)
+
         start = time.time()
-        poll_interval = 5
+        poll_interval = 30  # Check every 30 seconds
+        ssh_failures = 0
+        poll_count = 0
+
+        # For long waits, log a reminder
+        if timeout > 3600:
+            self.log(f"  Long wait ({_format_duration(timeout)})")
+            self.log(f"  If you disconnect, run 'recipe resume' to continue later")
 
         while time.time() - start < timeout:
+            poll_count += 1
+            elapsed = int(time.time() - start)
+            remaining = timeout - elapsed
+
+            # Log each poll
+            if self.logger:
+                self.logger.log_wait(target or "", condition or pattern or "", elapsed, remaining, f"poll #{poll_count}")
+
             # Check pattern match in terminal output
             if pattern and target:
-                if self.visual:
-                    text = self.kitty.get_text(target)
+                if self.visual and self.tmux:
+                    # Get window info for pane-based capture
+                    window = self.ctx.windows.get(target)
+                    pane_id = window.pane_id if window else None
+
+                    # Capture pane content
+                    target_pane = pane_id or target
+                    text = self.tmux.capture(target_pane, start=-100)
+
+                    if self.logger:
+                        self.logger.log_detail("wait_pattern_check", f"Checking pattern in {target}", {
+                            "pattern": pattern,
+                            "text_length": len(text),
+                            "text_preview": text[:500] if text else "",
+                            "pane_id": pane_id,
+                        })
                     if re.search(pattern, text):
+                        if self.logger:
+                            self.logger.log_detail("wait_matched", f"Pattern matched: {pattern}", {"elapsed_sec": elapsed})
                         return True, f"Pattern matched: {pattern}"
-                else:
-                    # Non-visual: can't read terminal
-                    pass
 
             # Check file condition
             if condition and condition.startswith("file:"):
@@ -1017,44 +1546,97 @@ class DSLExecutor:
                 # Resolve host from target
                 window = self.ctx.windows.get(target)
                 if window and window.host != "local":
-                    # Remote file check
-                    ssh_args = _build_ssh_args(
-                        window.host,
-                        command=f"test -f {filepath} && echo exists",
-                        tty=False,
-                    )
-                    result = subprocess.run(
-                        ssh_args,
-                        capture_output=True,
-                        text=True,
-                    )
-                    if "exists" in result.stdout:
-                        return True, f"File found: {filepath}"
+                    # Remote file check with retry logic
+                    try:
+                        check_cmd = f"test -f {filepath} && echo exists"
+                        ssh_args = _build_ssh_args(
+                            window.host,
+                            command=check_cmd,
+                            tty=False,
+                        )
+                        ssh_start = time.time()
+                        result = subprocess.run(
+                            ssh_args,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        ssh_duration = int((time.time() - ssh_start) * 1000)
+
+                        if self.logger:
+                            self.logger.log_ssh(window.host, check_cmd, result.returncode, result.stdout, result.stderr, ssh_duration)
+
+                        if "exists" in result.stdout:
+                            if self.logger:
+                                self.logger.log_detail("wait_file_found", f"File found: {filepath}", {"elapsed_sec": elapsed})
+                            return True, f"File found: {filepath}"
+
+                        # SSH succeeded, reset failure counter
+                        ssh_failures = 0
+
+                    except (subprocess.TimeoutExpired, OSError) as e:
+                        ssh_failures += 1
+                        self.log(f"  SSH check failed ({ssh_failures}/{self.ssh_max_retries}): {e}")
+
+                        if self.logger:
+                            self.logger.log_detail("wait_ssh_failure", f"SSH check failed", {
+                                "failure_count": ssh_failures,
+                                "max_retries": self.ssh_max_retries,
+                                "error": str(e),
+                            })
+
+                        if ssh_failures >= self.ssh_max_retries:
+                            return False, f"Too many SSH failures: {e}"
+
+                        # Exponential backoff
+                        backoff = min(
+                            self.ssh_retry_base_interval * (2 ** (ssh_failures - 1)),
+                            self.ssh_retry_max_interval
+                        )
+                        self.log(f"  Retrying in {backoff}s...")
+                        time.sleep(backoff)
+                        continue
                 else:
                     # Local file check
                     if os.path.exists(os.path.expanduser(filepath)):
+                        if self.logger:
+                            self.logger.log_detail("wait_file_found", f"Local file found: {filepath}", {"elapsed_sec": elapsed})
                         return True, f"File found: {filepath}"
 
             # Check port condition
             if condition and condition.startswith("port:"):
                 port = int(condition[5:])
-                # Check if port is open
                 window = self.ctx.windows.get(target)
                 host = "localhost"
                 if window and window.host != "local":
                     host = _host_from_ssh_spec(window.host).hostname
-                result = subprocess.run(
-                    ["nc", "-z", host, str(port)],
-                    capture_output=True,
-                    timeout=5,
-                )
-                if result.returncode == 0:
-                    return True, f"Port {port} is open"
+                try:
+                    result = subprocess.run(
+                        ["nc", "-z", host, str(port)],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        if self.logger:
+                            self.logger.log_detail("wait_port_open", f"Port {port} is open on {host}", {"elapsed_sec": elapsed})
+                        return True, f"Port {port} is open"
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
 
-            self.log(f"  Waiting... ({int(time.time() - start)}s / {timeout}s)")
+            # Format remaining time
+            remaining_str = _format_duration(remaining)
+            timeout_str = _format_duration(timeout)
+            self.log(f"  Waiting... ({remaining_str} remaining of {timeout_str})")
+
             time.sleep(poll_interval)
 
-        return False, f"Timeout after {timeout}s"
+        if self.logger:
+            self.logger.log_detail("wait_timeout", f"Wait timed out after {_format_duration(timeout)}", {
+                "poll_count": poll_count,
+                "ssh_failures": ssh_failures,
+            })
+
+        return False, f"Timeout after {_format_duration(timeout)}"
 
     def _resolve_host(self, host_ref: str) -> str:
         """Resolve @host reference to actual host."""
@@ -1122,25 +1704,47 @@ class DSLExecutor:
 
 def run_recipe(
     path: str,
-    visual: bool = True,
     log_callback: Optional[Callable[[str], None]] = None,
     host_overrides: Optional[Dict[str, str]] = None,
     var_overrides: Optional[Dict[str, str]] = None,
+    resume: bool = False,
 ) -> bool:
     """
     Load and execute a DSL recipe file.
 
     Args:
         path: Path to .recipe file
-        visual: Use kitty visual mode
         log_callback: Optional log callback
         host_overrides: Override hosts (e.g., {"gpu": "vast:12345"})
         var_overrides: Override variables (e.g., {"MODEL": "mistral"})
+        resume: If True, try to resume from saved checkpoint
 
     Returns:
         True if successful
     """
+    path = os.path.abspath(os.path.expanduser(path))
     recipe = parse_recipe(path)
+
+    # Check for resumable state
+    resume_from = 0
+    job_id = None
+    state_manager = JobStateManager()
+
+    if resume:
+        saved_state = state_manager.find_resumable(path)
+        if saved_state:
+            job_id = saved_state.job_id
+            resume_from = saved_state.current_step
+            # Restore variables from saved state
+            recipe.variables.update(saved_state.variables)
+            # Restore host mappings
+            for name, host_spec in saved_state.hosts.items():
+                recipe.hosts[name] = host_spec
+            if log_callback:
+                log_callback(f"Found saved state: job {job_id}, step {resume_from + 1}/{saved_state.total_steps}")
+        else:
+            if log_callback:
+                log_callback("No resumable state found, starting fresh")
 
     # Apply host overrides
     if host_overrides:
@@ -1159,20 +1763,46 @@ def run_recipe(
         for name, value in var_overrides.items():
             recipe.variables[name] = value
 
-    executor = DSLExecutor(recipe, log_callback=log_callback, visual=visual)
-    return executor.execute()
+    executor = DSLExecutor(
+        recipe,
+        log_callback=log_callback,
+        job_id=job_id,
+        recipe_path=path,
+    )
+
+    # Restore windows info if resuming
+    if resume and job_id:
+        saved_state = state_manager.load(job_id)
+        if saved_state:
+            for name, host_spec in saved_state.hosts.items():
+                executor.ctx.windows[name] = WindowInfo(
+                    name=name,
+                    host=host_spec,
+                )
+
+    return executor.execute(resume_from=resume_from)
 
 
 def _resolve_vast_host(instance_id: str) -> str:
-    """Resolve vast.ai instance ID to SSH host spec."""
+    """Resolve vast.ai instance ID to SSH host spec.
+
+    Prefers direct SSH connection if available (usually faster),
+    falls back to proxy SSH.
+    """
     from ..services.vast_api import get_vast_client
 
     try:
         client = get_vast_client()
         instance = client.get_instance(int(instance_id))
 
+        # Prefer direct SSH if available (usually faster)
+        if instance.public_ipaddr and instance.direct_port_start:
+            return f"root@{instance.public_ipaddr} -p {instance.direct_port_start}"
+
+        # Fall back to proxy SSH
         if instance.ssh_host and instance.ssh_port:
             return f"root@{instance.ssh_host} -p {instance.ssh_port}"
+
         return f"vast-{instance_id}"
 
     except Exception:

@@ -1,1 +1,1 @@
-# Services module for kitten-trainsh
+# Services module for tmux-trainsh

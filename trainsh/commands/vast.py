@@ -1,4 +1,4 @@
-# kitten-trainsh vast command
+# tmux-trainsh vast command
 # Vast.ai instance management
 
 import sys
@@ -22,66 +22,30 @@ Subcommands:
   attach-key [path] - Attach local SSH key (default: ~/.ssh/id_rsa.pub)
 
 Examples:
-  kitty +kitten trainsh vast list
-  kitty +kitten trainsh vast ssh 12345
-  kitty +kitten trainsh vast start 12345
+  train vast list
+  train vast ssh 12345
+  train vast start 12345
 '''
 
 
 def cmd_list(args: List[str]) -> None:
     """List Vast.ai instances."""
     from ..services.vast_api import get_vast_client
-    from ..services.pricing import load_pricing_settings, format_currency
-    from ..config import load_config
+    from ..utils.vast_formatter import print_instance_table
 
     client = get_vast_client()
     instances = client.list_instances()
-
-    if not instances:
-        print("No instances found.")
-        return
-
-    # Load currency settings
-    settings = load_pricing_settings()
-    config = load_config()
-    display_curr = config.get("ui", {}).get("currency", settings.display_currency)
-    rates = settings.exchange_rates
-
-    # Header with optional converted currency column
-    if display_curr != "USD":
-        print(f"{'ID':<10} {'Status':<12} {'GPU':<20} {'$/hr':<10} {display_curr + '/hr':<12}")
-        print("-" * 70)
-    else:
-        print(f"{'ID':<10} {'Status':<12} {'GPU':<20} {'$/hr':<10}")
-        print("-" * 55)
-
-    for inst in instances:
-        status = inst.actual_status or "unknown"
-        gpu = inst.gpu_name or "N/A"
-        usd_price = inst.dph_total or 0
-
-        if display_curr != "USD":
-            converted = rates.convert(usd_price, "USD", display_curr)
-            price_str = f"${usd_price:.3f}" if usd_price else "N/A"
-            converted_str = format_currency(converted, display_curr) if usd_price else "N/A"
-            print(f"{inst.id:<10} {status:<12} {gpu:<20} {price_str:<10} {converted_str:<12}")
-        else:
-            price_str = f"${usd_price:.3f}" if usd_price else "N/A"
-            print(f"{inst.id:<10} {status:<12} {gpu:<20} {price_str:<10}")
-
-    print("-" * (70 if display_curr != "USD" else 55))
-    print(f"Total: {len(instances)} instances")
+    print_instance_table(instances)
 
 
 def cmd_show(args: List[str]) -> None:
     """Show instance details."""
     if not args:
-        print("Usage: kitty +kitten trainsh vast show <instance_id>")
+        print("Usage: train vast show <instance_id>")
         sys.exit(1)
 
     from ..services.vast_api import get_vast_client
-    from ..services.pricing import load_pricing_settings, format_currency
-    from ..config import load_config
+    from ..utils.vast_formatter import print_instance_detail
 
     inst_id = int(args[0])
     client = get_vast_client()
@@ -91,32 +55,13 @@ def cmd_show(args: List[str]) -> None:
         print(f"Instance not found: {inst_id}")
         sys.exit(1)
 
-    # Load currency settings
-    settings = load_pricing_settings()
-    config = load_config()
-    display_curr = config.get("ui", {}).get("currency", settings.display_currency)
-    rates = settings.exchange_rates
-
-    print(f"Instance: {inst.id}")
-    print(f"  Status: {inst.actual_status}")
-    print(f"  GPU: {inst.gpu_name}")
-    if inst.dph_total:
-        usd_price = inst.dph_total
-        if display_curr != "USD":
-            converted = rates.convert(usd_price, "USD", display_curr)
-            print(f"  Price: ${usd_price:.3f}/hr ({format_currency(converted, display_curr)}/hr)")
-        else:
-            print(f"  Price: ${usd_price:.3f}/hr")
-    if inst.ssh_host:
-        print(f"  SSH: {inst.ssh_host}:{inst.ssh_port}")
-    if inst.public_ipaddr:
-        print(f"  Public IP: {inst.public_ipaddr}")
+    print_instance_detail(inst)
 
 
 def cmd_ssh(args: List[str]) -> None:
     """SSH into instance."""
     if not args:
-        print("Usage: kitty +kitten trainsh vast ssh <instance_id>")
+        print("Usage: train vast ssh <instance_id>")
         sys.exit(1)
 
     from ..services.vast_api import get_vast_client
@@ -149,7 +94,7 @@ def cmd_ssh(args: List[str]) -> None:
 def cmd_start(args: List[str]) -> None:
     """Start instance."""
     if not args:
-        print("Usage: kitty +kitten trainsh vast start <instance_id>")
+        print("Usage: train vast start <instance_id>")
         sys.exit(1)
 
     from ..services.vast_api import get_vast_client
@@ -165,7 +110,7 @@ def cmd_start(args: List[str]) -> None:
 def cmd_stop(args: List[str]) -> None:
     """Stop instance."""
     if not args:
-        print("Usage: kitty +kitten trainsh vast stop <instance_id>")
+        print("Usage: train vast stop <instance_id>")
         sys.exit(1)
 
     from ..services.vast_api import get_vast_client
@@ -181,7 +126,7 @@ def cmd_stop(args: List[str]) -> None:
 def cmd_destroy(args: List[str]) -> None:
     """Destroy instance."""
     if not args:
-        print("Usage: kitty +kitten trainsh vast destroy <instance_id>")
+        print("Usage: train vast destroy <instance_id>")
         sys.exit(1)
 
     inst_id = int(args[0])
@@ -202,7 +147,7 @@ def cmd_destroy(args: List[str]) -> None:
 def cmd_reboot(args: List[str]) -> None:
     """Reboot instance."""
     if not args:
-        print("Usage: kitty +kitten trainsh vast reboot <instance_id>")
+        print("Usage: train vast reboot <instance_id>")
         sys.exit(1)
 
     from ..services.vast_api import get_vast_client
@@ -218,8 +163,8 @@ def cmd_reboot(args: List[str]) -> None:
 def cmd_search(args: List[str]) -> None:
     """Search for GPU offers."""
     from ..services.vast_api import get_vast_client
-    from ..services.pricing import load_pricing_settings, format_currency
-    from ..config import load_config
+    from ..services.pricing import format_currency
+    from ..utils.vast_formatter import get_currency_settings
 
     print("Searching for GPU offers...")
     client = get_vast_client()
@@ -229,30 +174,27 @@ def cmd_search(args: List[str]) -> None:
         print("No offers found.")
         return
 
-    # Load currency settings
-    settings = load_pricing_settings()
-    config = load_config()
-    display_curr = config.get("ui", {}).get("currency", settings.display_currency)
-    rates = settings.exchange_rates
+    currency = get_currency_settings()
 
-    if display_curr != "USD":
-        print(f"{'ID':<10} {'GPU':<20} {'$/hr':<10} {display_curr + '/hr':<12} {'VRAM':<8}")
-        print("-" * 65)
+    if currency.display_currency != "USD":
+        print(f"{'ID':<10} {'GPU':<20} {'GPUs':<5} {'VRAM':<8} {'$/hr':<10} {currency.display_currency + '/hr':<12}")
+        print("-" * 75)
     else:
-        print(f"{'ID':<10} {'GPU':<20} {'$/hr':<10} {'VRAM':<8}")
-        print("-" * 50)
+        print(f"{'ID':<10} {'GPU':<20} {'GPUs':<5} {'VRAM':<8} {'$/hr':<10}")
+        print("-" * 60)
 
     for offer in offers[:20]:
-        gpu = offer.get("gpu_name", "N/A")
-        usd_price = offer.get("dph_total", 0)
-        vram = offer.get("gpu_ram", 0)
+        gpu = offer.gpu_name or "N/A"
+        gpus = offer.num_gpus or 1
+        usd_price = offer.dph_total or 0
+        vram = offer.gpu_ram / 1024 if offer.gpu_ram else 0  # MB to GB
 
-        if display_curr != "USD":
-            converted = rates.convert(usd_price, "USD", display_curr)
-            converted_str = format_currency(converted, display_curr)
-            print(f"{offer.get('id', 'N/A'):<10} {gpu:<20} ${usd_price:<9.3f} {converted_str:<12} {vram}GB")
+        if currency.display_currency != "USD":
+            converted = currency.rates.convert(usd_price, "USD", currency.display_currency)
+            converted_str = format_currency(converted, currency.display_currency)
+            print(f"{offer.id:<10} {gpu:<20} {gpus:<5} {vram:.0f}GB{'':<4} ${usd_price:<9.3f} {converted_str:<12}")
         else:
-            print(f"{offer.get('id', 'N/A'):<10} {gpu:<20} ${usd_price:<9.3f} {vram}GB")
+            print(f"{offer.id:<10} {gpu:<20} {gpus:<5} {vram:.0f}GB{'':<4} ${usd_price:<9.3f}")
 
     if len(offers) > 20:
         print(f"... and {len(offers) - 20} more offers")
@@ -334,7 +276,7 @@ def main(args: List[str]) -> Optional[str]:
         if "VAST_API_KEY" in str(e) or "API key" in str(e).lower():
             print(f"Error: {e}")
             print("\nMake sure VAST_API_KEY is set:")
-            print("  kitty +kitten trainsh secrets set VAST_API_KEY")
+            print("  trainsh secrets set VAST_API_KEY")
         else:
             raise
 

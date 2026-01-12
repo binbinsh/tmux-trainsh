@@ -1,4 +1,4 @@
-# kitten-trainsh host command
+# tmux-trainsh host command
 # Host management
 
 import sys
@@ -22,9 +22,9 @@ Host types:
   - SSH            Standard SSH host
   - Colab          Google Colab notebook (via cloudflared/ngrok)
 
-For Vast.ai instances, use: kitty +kitten trainsh vast
+For Vast.ai instances, use: train vast
 
-Hosts are stored in: ~/.config/kitten-trainsh/hosts.toml
+Hosts are stored in: ~/.config/tmux-trainsh/hosts.toml
 '''
 
 
@@ -87,7 +87,7 @@ def cmd_list(args: List[str]) -> None:
 
     if not hosts:
         print("No hosts configured.")
-        print("Use 'kitty +kitten trainsh host add' to add a host.")
+        print("Use 'trainsh host add' to add a host.")
         return
 
     print("Configured hosts:")
@@ -237,7 +237,7 @@ def cmd_add(args: List[str]) -> None:
 
     print(f"\nAdded host: {name}")
     if host.type == HostType.COLAB:
-        print("Use 'kitty +kitten trainsh host ssh' to connect.")
+        print("Use 'trainsh host ssh' to connect.")
     else:
         print(f"SSH command: ssh -p {host.port} {host.username}@{host.hostname}")
 
@@ -247,7 +247,7 @@ def cmd_show(args: List[str]) -> None:
     from ..core.models import HostType
 
     if not args:
-        print("Usage: kitty +kitten trainsh host show <name>")
+        print("Usage: train host show <name>")
         sys.exit(1)
 
     name = args[0]
@@ -283,7 +283,7 @@ def cmd_ssh(args: List[str]) -> None:
     from ..core.models import HostType
 
     if not args:
-        print("Usage: kitty +kitten trainsh host ssh <name>")
+        print("Usage: train host ssh <name>")
         sys.exit(1)
 
     name = args[0]
@@ -315,7 +315,7 @@ def cmd_ssh(args: List[str]) -> None:
 def cmd_test(args: List[str]) -> None:
     """Test connection to a host."""
     if not args:
-        print("Usage: kitty +kitten trainsh host test <name>")
+        print("Usage: train host test <name>")
         sys.exit(1)
 
     name = args[0]
@@ -341,7 +341,7 @@ def cmd_test(args: List[str]) -> None:
 def cmd_remove(args: List[str]) -> None:
     """Remove a host."""
     if not args:
-        print("Usage: kitty +kitten trainsh host remove <name>")
+        print("Usage: train host remove <name>")
         sys.exit(1)
 
     name = args[0]
@@ -364,7 +364,7 @@ def cmd_remove(args: List[str]) -> None:
 def cmd_browse(args: List[str]) -> None:
     """Browse files on a remote host."""
     if not args:
-        print("Usage: kitty +kitten trainsh host browse <name> [path]")
+        print("Usage: train host browse <name> [path]")
         sys.exit(1)
 
     name = args[0]

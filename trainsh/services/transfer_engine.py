@@ -1,4 +1,4 @@
-# kitten-trainsh transfer engine
+# tmux-trainsh transfer engine
 # File transfer using rsync and rclone
 
 import subprocess
@@ -81,7 +81,7 @@ class TransferEngine:
         Returns:
             TransferResult with status
         """
-        args = ["rsync", "-avz", "--progress"]
+        args = ["rsync", "-avz", "--progress", "--mkpath"]
 
         if delete:
             args.append("--delete")
@@ -436,39 +436,64 @@ class TransferEngine:
         src_host: Host,
         dst_host: Host,
     ) -> TransferResult:
-        """Transfer using scp -3 through local relay."""
-        src_spec = self._build_scp_spec(src_host, source.path)
-        dst_spec = self._build_scp_spec(dst_host, destination.path)
+        """Transfer using ssh + tar pipe (streaming, no local storage).
 
-        args = ["scp", "-3", "-r", "-o", "StrictHostKeyChecking=no"]
+        Data flows: src_host -> local memory buffer -> dst_host
+        No files are written to local disk.
 
-        # Handle non-standard ports
-        if src_host.port != 22 or dst_host.port != 22:
-            # scp -3 doesn't support different ports directly
-            # Need to use SSH config or ProxyJump
-            # For simplicity, use -o options
-            if src_host.port != 22:
-                args.extend(["-o", f"Port={src_host.port}"])
+        Command: ssh src 'tar cf - path' | ssh dst 'tar xf - -C dest'
+        """
+        src_ssh = self._build_ssh_args(src_host)
+        dst_ssh = self._build_ssh_args(dst_host)
 
-        # Add SSH key if available
-        if src_host.ssh_key_path:
-            key_path = os.path.expanduser(src_host.ssh_key_path)
-            if os.path.exists(key_path):
-                args.extend(["-i", key_path])
+        src_path = source.path.rstrip('/')
+        dst_path = destination.path.rstrip('/')
 
-        args.extend([src_spec, dst_spec])
+        # Build tar commands based on path structure
+        src_parent = os.path.dirname(src_path)
+        src_basename = os.path.basename(src_path)
+
+        if destination.path.endswith('/'):
+            # Copy into directory: /src/foo -> /dst/bar/ means /dst/bar/foo
+            tar_create = f"tar cf - -C '{src_parent}' '{src_basename}'"
+            tar_extract = f"tar xf - -C '{dst_path}'"
+        else:
+            # Direct path: extract to parent, basename should match
+            dst_parent = os.path.dirname(dst_path)
+            tar_create = f"tar cf - -C '{src_parent}' '{src_basename}'"
+            tar_extract = f"mkdir -p '{dst_parent}' && tar xf - -C '{dst_parent}'"
+
+        # Build pipeline: ssh src 'tar c' | ssh dst 'tar x'
+        src_cmd = src_ssh + [tar_create]
+        dst_cmd = dst_ssh + [tar_extract]
+
+        # Quote args properly for shell
+        def shell_quote(args):
+            return ' '.join(f"'{a}'" if ' ' in a or "'" not in a else f'"{a}"' for a in args)
+
+        full_cmd = f"{shell_quote(src_cmd)} | {shell_quote(dst_cmd)}"
 
         try:
             result = subprocess.run(
-                args,
+                full_cmd,
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=3600,
             )
+
+            if result.returncode != 0:
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                return TransferResult(
+                    success=False,
+                    exit_code=result.returncode,
+                    message=f"Pipe transfer failed: {error_msg}",
+                )
+
             return TransferResult(
-                success=result.returncode == 0,
-                exit_code=result.returncode,
-                message=result.stderr if result.returncode != 0 else "Transfer complete",
+                success=True,
+                exit_code=0,
+                message="Transfer complete (streaming)",
             )
         except subprocess.TimeoutExpired:
             return TransferResult(

@@ -1,4 +1,4 @@
-# kitten-trainsh transfer command
+# tmux-trainsh transfer command
 # File transfer between hosts and storage
 
 import sys
@@ -9,9 +9,9 @@ usage = '''<source> <destination> [options]
 Transfer files between local, remote hosts, and cloud storage.
 
 Examples:
-  kitty +kitten trainsh transfer ~/data host:myserver:/data
-  kitty +kitten trainsh transfer host:myserver:/models ~/models
-  kitty +kitten trainsh transfer ~/data storage:gdrive:/backups
+  trainsh transfer ~/data host:myserver:/data
+  trainsh transfer host:myserver:/models ~/models
+  trainsh transfer ~/data storage:gdrive:/backups
 
 Options:
   --host, -H <name>     Remote host name or ID
@@ -141,7 +141,7 @@ def main(args: List[str]) -> Optional[str]:
         # Host transfers - need to load host config
         # For now, just provide guidance
         print("Note: For host transfers, ensure the host is configured.")
-        print("Use 'kitty +kitten trainsh host list' to see configured hosts.")
+        print("Use 'trainsh host list' to see configured hosts.")
         result = engine.transfer(
             source=src_endpoint,
             destination=dst_endpoint,

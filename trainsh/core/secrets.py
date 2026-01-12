@@ -1,4 +1,4 @@
-# kitten-trainsh secrets management
+# tmux-trainsh secrets management
 # Uses keyring CLI for cross-platform secret storage
 
 import os

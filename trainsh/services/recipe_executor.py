@@ -1,4 +1,4 @@
-# kitten-trainsh recipe executor
+# tmux-trainsh recipe executor
 # DAG-based recipe step execution
 
 import asyncio
@@ -540,7 +540,7 @@ class RecipeExecutor:
 
     async def _op_notify(self, params: Dict[str, Any]) -> tuple[str, Optional[str]]:
         """Send a notification."""
-        title = params.get("title", "kitten-trainsh")
+        title = params.get("title", "tmux-trainsh")
         message = params.get("message", "")
         level = params.get("level", "info")
 

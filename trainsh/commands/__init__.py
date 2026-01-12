@@ -1,1 +1,1 @@
-# Commands module for kitten-trainsh
+# Commands module for tmux-trainsh

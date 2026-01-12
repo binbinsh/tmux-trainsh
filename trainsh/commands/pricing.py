@@ -1,4 +1,4 @@
-# Pricing command for kitten-trainsh
+# Pricing command for tmux-trainsh
 # Manage exchange rates and cost calculations
 
 import argparse
@@ -134,9 +134,9 @@ def cmd_vast(args: argparse.Namespace) -> None:
         return
 
     print(f"Vast.ai Instance Costs (in {display_curr})")
-    print("-" * 70)
-    print(f"{'ID':>10}  {'GPU':>15}  {'$/hr':>10}  {display_curr + '/hr':>10}  {display_curr + '/day':>12}")
-    print("-" * 70)
+    print("-" * 85)
+    print(f"{'ID':<10} {'Status':<10} {'GPU':<18} {'GPUs':<5} {'$/hr':<10} {display_curr + '/hr':<10} {display_curr + '/day':<12}")
+    print("-" * 85)
 
     total_per_hour = 0.0
     for inst in instances:
@@ -152,12 +152,16 @@ def cmd_vast(args: argparse.Namespace) -> None:
             hr_conv = rates.convert(cost.total_per_hour_usd, "USD", display_curr)
             day_conv = rates.convert(cost.total_per_day_usd, "USD", display_curr)
 
-            print(f"{inst.id:>10}  {(inst.gpu_name or 'N/A'):>15}  "
-                  f"${cost.total_per_hour_usd:>9.4f}  "
-                  f"{format_currency(hr_conv, display_curr):>10}  "
-                  f"{format_currency(day_conv, display_curr):>12}")
+            status = inst.actual_status or "unknown"
+            gpu = inst.gpu_name or "N/A"
+            gpus = inst.num_gpus or 1
 
-    print("-" * 70)
+            print(f"{inst.id:<10} {status:<10} {gpu:<18} {gpus:<5} "
+                  f"${cost.total_per_hour_usd:<9.4f} "
+                  f"{format_currency(hr_conv, display_curr):<10} "
+                  f"{format_currency(day_conv, display_curr):<12}")
+
+    print("-" * 85)
     total_day = total_per_hour * 24
     total_month = total_day * 30
     total_hr_conv = rates.convert(total_per_hour, "USD", display_curr)
@@ -190,7 +194,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
 def main(args: list) -> Optional[str]:
     """Main entry point for pricing command."""
     parser = argparse.ArgumentParser(
-        prog="kitty +kitten trainsh pricing",
+        prog="trainsh pricing",
         description="Manage pricing and currency conversion",
     )
     subparsers = parser.add_subparsers(dest="command", help="Pricing commands")

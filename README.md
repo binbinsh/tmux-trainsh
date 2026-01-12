@@ -1,179 +1,176 @@
-# kitten-trainsh
+# tmux-train
 
-GPU training workflow automation as a kitty terminal kitten.
+GPU training workflow automation using tmux for terminal management.
 
 Manage remote GPU hosts (Vast.ai, Google Colab, custom SSH), cloud storage (R2, B2, S3, Google Drive), and automate training workflows with recipes.
 
 CLI-only: all operations are available via CLI subcommands (no TUI required).
 
+## Features
+
+- **Pure tmux-based**: No kitty dependency, works with any terminal
+- **Visual mode**: Watch command execution in tmux panes/windows
+- **Headless mode**: Run recipes without visual output
+- **Resume support**: Resume interrupted recipes from last checkpoint
+
 ## Installation
 
-**From GitHub (recommended):**
-
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/binbinsh/kitten-trainsh/main/install.sh) --github
+# Clone the repository
+git clone https://github.com/binbinsh/tmux-train.git
+cd tmux-train
+
+# Install with uv (recommended)
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+
+# Or install globally
+pip install -e .
 ```
-
-**From local directory (for development):**
-
-```bash
-git clone https://github.com/binbinsh/kitten-trainsh.git
-cd kitten-trainsh
-bash install.sh
-```
-
-**Options:**
-- `--github`: Clone from GitHub instead of using local directory
-- `--force`: Force overwrite existing files
-- `--no-deps`: Skip installing Python dependencies
-
-## Recommended
-
-Add a shell alias for shorter commands:
-
-<span style="color: red; font-weight: bold;"><code>alias trainsh='kitty +kitten trainsh'</code></span>
 
 ## Quick Start
 
 ```bash
 # Show help
-trainsh --help
+train --help
 
 # Set up API keys
-trainsh secrets set VAST_API_KEY
-trainsh secrets set R2_ACCESS_KEY
-trainsh secrets set B2_KEY_ID
+train secrets set VAST_API_KEY
+train secrets set R2_ACCESS_KEY
+train secrets set B2_KEY_ID
 
 # Add a host
-trainsh host add
+train host add
 
 # Add a storage backend
-trainsh storage add
+train storage add
 
 # Transfer files
-trainsh transfer ~/data host:myserver:/data
+train transfer ~/data host:myserver:/data
 
 # Run a recipe
-trainsh recipe run train
+train recipe run train
 ```
 
 ## Commands (by functionality)
 
-All commands are available via `trainsh ...`.
-
-Frequency tags:,,.
+All commands are available via `train ...`.
 
 ### Host Management
 
 ```bash
-trainsh host list              # List configured hosts
-trainsh host add               # Add new host (SSH/Colab)
-trainsh host show <name>       # Show host details
-trainsh host ssh <name>        # SSH into host
-trainsh host browse <name>     # Browse files on host
-trainsh host test <name>       # Test connection
-trainsh host remove <name>     # Remove a host
+train host list              # List configured hosts
+train host add               # Add new host (SSH/Colab)
+train host show <name>       # Show host details
+train host ssh <name>        # SSH into host
+train host browse <name>     # Browse files on host
+train host test <name>       # Test connection
+train host remove <name>     # Remove a host
 ```
 
 ### Storage Backends
 
 ```bash
-trainsh storage list           # List storage backends
-trainsh storage add            # Add storage backend
-trainsh storage show <name>    # Show storage details
-trainsh storage test <name>    # Test connection
-trainsh storage remove <name>  # Remove storage
+train storage list           # List storage backends
+train storage add            # Add storage backend
+train storage show <name>    # Show storage details
+train storage test <name>    # Test connection
+train storage remove <name>  # Remove storage
 ```
 
 ### File Transfer
 
 ```bash
-trainsh transfer <src> <dst>   # Transfer files
-trainsh transfer <src> <dst> --delete        # Sync with deletions
-trainsh transfer <src> <dst> --exclude '*.ckpt' # Exclude patterns
-trainsh transfer <src> <dst> --dry-run       # Preview transfer
+train transfer <src> <dst>   # Transfer files
+train transfer <src> <dst> --delete        # Sync with deletions
+train transfer <src> <dst> --exclude '*.ckpt' # Exclude patterns
+train transfer <src> <dst> --dry-run       # Preview transfer
 ```
 
 ### Recipes (Automation Workflows)
 
 ```bash
-trainsh recipe list            # List recipes
-trainsh recipe show <name>     # Show recipe details
-trainsh recipe run <name>      # Run a recipe
-trainsh recipe run <name> --no-visual        # Headless mode
-trainsh recipe run <name> --host gpu=vast:12345 # Override host
-trainsh recipe run <name> --var MODEL=llama-7b  # Override variable
-trainsh recipe run <name> --pick-host gpu    # Pick Vast.ai host
-trainsh recipe new <name>      # Create new recipe
-trainsh recipe edit <name>     # Edit recipe in editor
-trainsh recipe logs            # View execution logs
-trainsh recipe logs --last     # Show last execution
-trainsh recipe status          # View running sessions
-trainsh recipe status --all    # Include completed sessions
+train recipe list            # List recipes
+train recipe show <name>     # Show recipe details
+train recipe run <name>      # Run a recipe (visual mode)
+train recipe run <name> --no-visual        # Headless mode
+train recipe run <name> --host gpu=vast:12345 # Override host
+train recipe run <name> --var MODEL=llama-7b  # Override variable
+train recipe run <name> --pick-host gpu    # Pick Vast.ai host
+train recipe new <name>      # Create new recipe
+train recipe edit <name>     # Edit recipe in editor
+train recipe logs            # View execution logs
+train recipe logs --last     # Show last execution
+train recipe status          # View running sessions
+train recipe status --all    # Include completed sessions
+train recipe resume          # Resume last interrupted recipe
 ```
 
 ### Secrets
 
 ```bash
-trainsh secrets list           # List stored secrets
-trainsh secrets set <key>      # Set a secret
-trainsh secrets get <key>      # Get a secret
-trainsh secrets delete <key>   # Delete a secret
+train secrets list           # List stored secrets
+train secrets set <key>      # Set a secret
+train secrets get <key>      # Get a secret
+train secrets delete <key>   # Delete a secret
 ```
 
 ### Configuration
 
 ```bash
-trainsh config show            # Show configuration
-trainsh config get <key>       # Get config value
-trainsh config set <key> <val> # Set config value
-trainsh config reset           # Reset configuration
+train config show            # Show configuration
+train config get <key>       # Get config value
+train config set <key> <val> # Set config value
+train config reset           # Reset configuration
 ```
 
 ### Google Colab
 
 ```bash
-trainsh colab list             # List Colab connections
-trainsh colab connect          # Add Colab connection
-trainsh colab ssh              # SSH into Colab
-trainsh colab run <cmd>        # Run command on Colab
+train colab list             # List Colab connections
+train colab connect          # Add Colab connection
+train colab ssh              # SSH into Colab
+train colab run <cmd>        # Run command on Colab
 ```
 
 ### Vast.ai
 
 ```bash
-trainsh vast list              # List your instances
-trainsh vast show <id>         # Show instance details
-trainsh vast ssh <id>          # SSH into instance
-trainsh vast start <id>        # Start instance
-trainsh vast stop <id>         # Stop instance
-trainsh vast destroy <id>      # Destroy instance
-trainsh vast reboot <id>       # Reboot instance
-trainsh vast search            # Search for GPU offers
-trainsh vast keys              # List SSH keys
-trainsh vast attach-key        # Attach local SSH key
+train vast list              # List your instances
+train vast show <id>         # Show instance details
+train vast ssh <id>          # SSH into instance
+train vast start <id>        # Start instance
+train vast stop <id>         # Stop instance
+train vast destroy <id>      # Destroy instance
+train vast reboot <id>       # Reboot instance
+train vast search            # Search for GPU offers
+train vast keys              # List SSH keys
+train vast attach-key        # Attach local SSH key
 ```
 
 ### Pricing
 
 ```bash
-trainsh pricing rates          # Show exchange rates
-trainsh pricing rates --refresh              # Refresh exchange rates
-trainsh pricing currency       # Show display currency
-trainsh pricing currency --set CNY           # Set display currency
-trainsh pricing colab          # Show Colab pricing
-trainsh pricing colab --subscription "Colab Pro:11.99:USD:100" # Set subscription
-trainsh pricing vast           # Show Vast.ai costs
-trainsh pricing convert 10 USD CNY           # Convert currency
+train pricing rates          # Show exchange rates
+train pricing rates --refresh              # Refresh exchange rates
+train pricing currency       # Show display currency
+train pricing currency --set CNY           # Set display currency
+train pricing colab          # Show Colab pricing
+train pricing colab --subscription "Colab Pro:11.99:USD:100" # Set subscription
+train pricing vast           # Show Vast.ai costs
+train pricing convert 10 USD CNY           # Convert currency
 ```
 
 ### Help and Version
 
 ```bash
-trainsh --help                 # Show top-level help
-trainsh --version              # Show version
-trainsh <command> --help       # Show command help
+train --help                 # Show top-level help
+train --version              # Show version
+train <command> --help       # Show command help
 ```
+
+## Secrets
 
 Supported secret keys:
 - `VAST_API_KEY` - Vast.ai API key
@@ -184,21 +181,16 @@ Supported secret keys:
 - `GITHUB_TOKEN` - GitHub token
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` - AI APIs
 
-Or add Colab as a host for unified management:
-```bash
-trainsh host add   # Select "Google Colab" type
-```
-
 ## Configuration
 
-Config files are stored in `~/.config/kitten-trainsh/`:
+Config files are stored in `~/.config/tmux-train/`:
 
 ```
-~/.config/kitten-trainsh/
+~/.config/tmux-train/
 ├── config.toml        # Main settings
 ├── hosts.toml         # SSH hosts (including Colab)
 ├── storages.toml      # Storage backends
-├── logs/              # Execution logs
+├── jobs/              # Job state and execution logs
 └── recipes/           # Recipe files
 ```
 
@@ -213,6 +205,9 @@ EPOCHS = 3
 @gpu = root@vastai-instance -p 22022
 @storage = r2:models
 
+# Open a tmux pane connected to GPU host
+> tmux.open @gpu as gpu
+
 # Setup
 gpu: cd /workspace && git clone https://github.com/user/repo
 gpu: pip install -r requirements.txt
@@ -221,15 +216,43 @@ gpu: pip install -r requirements.txt
 gpu: python train.py --model ${MODEL} --epochs ${EPOCHS}
 
 # Wait for completion
-? gpu : "Training complete"
+? gpu : "Training complete" timeout=2h
 
 # Upload results to R2
 gpu:/workspace/output -> storage:/${MODEL}/
+
+# Close the pane
+> tmux.close gpu
 ```
+
+## How It Works
+
+### Visual Mode (default)
+
+When running recipes in visual mode, train:
+1. Creates a master tmux session (`train-ui`)
+2. Opens new windows/panes for each `tmux.open` command
+3. SSHs into remote hosts within those panes
+4. Sends commands via `tmux send-keys`
+5. Waits for completion using `tmux wait-for` signals
+
+To observe execution:
+```bash
+tmux attach -t train-ui
+```
+
+### Headless Mode
+
+Run recipes without visual output:
+```bash
+train recipe run <name> --no-visual
+```
+
+Commands execute directly via SSH without tmux UI.
 
 ## Requirements
 
-- kitty terminal
+- tmux (any version with `wait-for` support)
 - Python 3.11+
 - Optional: `rsync`, `rclone`, `cloudflared`
 

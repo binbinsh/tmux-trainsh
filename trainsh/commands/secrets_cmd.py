@@ -1,4 +1,4 @@
-# kitten-trainsh secrets command
+# tmux-trainsh secrets command
 # Manage API keys and credentials
 
 import sys
@@ -57,8 +57,8 @@ def cmd_list(args: List[str]) -> None:
 def cmd_set(args: List[str]) -> None:
     """Set a secret value."""
     if not args:
-        print("Usage: kitty +kitten trainsh secrets set <key>")
-        print("\nExample: kitty +kitten trainsh secrets set VAST_API_KEY")
+        print("Usage: train secrets set <key>")
+        print("\nExample: trainsh secrets set VAST_API_KEY")
         sys.exit(1)
 
     from ..core.secrets import get_secrets_manager
@@ -88,7 +88,7 @@ def cmd_set(args: List[str]) -> None:
 def cmd_get(args: List[str]) -> None:
     """Get a secret value."""
     if not args:
-        print("Usage: kitty +kitten trainsh secrets get <key>")
+        print("Usage: train secrets get <key>")
         sys.exit(1)
 
     from ..core.secrets import get_secrets_manager
@@ -111,7 +111,7 @@ def cmd_get(args: List[str]) -> None:
 def cmd_delete(args: List[str]) -> None:
     """Delete a secret."""
     if not args:
-        print("Usage: kitty +kitten trainsh secrets delete <key>")
+        print("Usage: train secrets delete <key>")
         sys.exit(1)
 
     from ..core.secrets import get_secrets_manager

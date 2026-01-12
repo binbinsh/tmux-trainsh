@@ -1,13 +1,13 @@
-# kitten-trainsh constants and defaults
+# tmux-trainsh constants and defaults
 
 import os
 from pathlib import Path
 
 # Application name
-APP_NAME = "kitten-trainsh"
+APP_NAME = "tmux-trainsh"
 
 # Config directory
-CONFIG_DIR = Path(os.path.expanduser("~/.config/kitten-trainsh"))
+CONFIG_DIR = Path(os.path.expanduser("~/.config/tmux-trainsh"))
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 HOSTS_FILE = CONFIG_DIR / "hosts.toml"
 STORAGES_FILE = CONFIG_DIR / "storages.toml"
@@ -15,7 +15,7 @@ RECIPES_DIR = CONFIG_DIR / "recipes"
 LOGS_DIR = CONFIG_DIR / "logs"
 
 # Keyring service name
-KEYRING_SERVICE = "kitten-trainsh"
+KEYRING_SERVICE = "tmux-trainsh"
 
 # Vast.ai API
 VAST_API_BASE = "https://console.vast.ai/api/v0"

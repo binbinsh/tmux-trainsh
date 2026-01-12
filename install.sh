@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install kitten-trainsh to kitty config directory
+# Install tmux-trainsh CLI tool via uv
 
 set -e
 
@@ -7,12 +7,12 @@ usage() {
     echo "Usage: bash install.sh [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --github      Install from GitHub (clone to ~/.config/kitty/)"
-    echo "  --force       Force overwrite existing files"
-    echo "  --no-deps     Skip installing Python dependencies"
+    echo "  --github      Install from GitHub"
+    echo "  --force       Force reinstall"
+    echo "  --no-deps     Skip installing system dependencies"
     echo "  --help        Show this help message"
     echo ""
-    echo "Default: Create symlinks from current directory"
+    echo "Default: Install from current directory using uv tool install"
 }
 
 # Parse arguments
@@ -46,59 +46,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-KITTY_CONFIG="$HOME/.config/kitty"
-DST_PKG="$KITTY_CONFIG/trainsh"
-DST_PY="$KITTY_CONFIG/trainsh.py"
-
-# Create kitty config directory if it doesn't exist
-mkdir -p "$KITTY_CONFIG"
-
-# Remove existing symlinks
-[ -L "$DST_PKG" ] && rm "$DST_PKG"
-[ -L "$DST_PY" ] && rm "$DST_PY"
-
-# Check for conflicts
-if [ -e "$DST_PKG" ] && [ ! -L "$DST_PKG" ]; then
-    if [ "$FORCE" = true ]; then
-        echo "Removing existing $DST_PKG"
-        rm -rf "$DST_PKG"
-    else
-        echo "Error: $DST_PKG exists and is not a symlink"
-        echo "Use --force to replace it"
-        exit 1
-    fi
+# Ensure uv is installed
+if ! command -v uv &> /dev/null; then
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
 fi
 
-if [ -e "$DST_PY" ] && [ ! -L "$DST_PY" ]; then
-    if [ "$FORCE" = true ]; then
-        echo "Removing existing $DST_PY"
-        rm -f "$DST_PY"
-    else
-        echo "Error: $DST_PY exists and is not a symlink"
-        echo "Use --force to replace it"
-        exit 1
-    fi
-fi
-
-# Install Python dependencies
+# Install system dependencies
 install_deps() {
     echo ""
-    echo "Installing dependencies..."
-
-    # Install uv if not found
-    if ! command -v uv &> /dev/null; then
-        echo "Installing uv..."
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        # Add to PATH for current session
-        export PATH="$HOME/.local/bin:$PATH"
-    fi
+    echo "Checking system dependencies..."
 
     # Install keyring CLI tool
     echo "Installing keyring..."
     uv tool install keyring 2>/dev/null || echo "keyring already installed"
 
-    # Check for rsync and rclone
-    echo ""
+    # Check for rsync
     if ! command -v rsync &> /dev/null; then
         echo "Installing rsync..."
         if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -110,6 +74,7 @@ install_deps() {
         echo "rsync: installed"
     fi
 
+    # Check for rclone
     if ! command -v rclone &> /dev/null; then
         echo "Installing rclone..."
         if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -120,70 +85,28 @@ install_deps() {
     else
         echo "rclone: installed"
     fi
+
+    # Note: tmux is only needed on REMOTE machines (Vast.ai, etc.)
+    # Local tmux is NOT required - all tmux commands run via SSH
 }
 
+# Uninstall existing version if force
+if [ "$FORCE" = true ]; then
+    echo "Removing existing installation..."
+    uv tool uninstall tmux-trainsh 2>/dev/null || true
+fi
+
+# Install via uv tool
 if [ "$FROM_GITHUB" = true ]; then
-    # GitHub mode: download from GitHub
-    REPO="binbinsh/kitten-trainsh"
-    BRANCH="main"
-    INSTALL_DIR="$KITTY_CONFIG/kitten-trainsh"
-
-    echo "Installing kitten-trainsh from GitHub..."
-    echo "  Repository: https://github.com/$REPO"
-    echo "  Destination: $INSTALL_DIR"
-
-    # Update or clone
-    if [ -d "$INSTALL_DIR" ]; then
-        if [ "$FORCE" = true ]; then
-            echo "Removing existing installation..."
-            rm -rf "$INSTALL_DIR"
-            git clone --depth 1 -b "$BRANCH" "https://github.com/$REPO.git" "$INSTALL_DIR"
-        else
-            echo "Updating existing installation..."
-            cd "$INSTALL_DIR"
-            git pull origin "$BRANCH" || true
-            cd - > /dev/null
-        fi
-    else
-        git clone --depth 1 -b "$BRANCH" "https://github.com/$REPO.git" "$INSTALL_DIR"
-    fi
-
-    # Create symlinks
-    ln -s "$INSTALL_DIR/trainsh" "$DST_PKG"
-    ln -s "$INSTALL_DIR/trainsh.py" "$DST_PY"
-
-    echo ""
-    echo "Created symlinks:"
-    echo "  $DST_PKG -> $INSTALL_DIR/trainsh"
-    echo "  $DST_PY -> $INSTALL_DIR/trainsh.py"
+    REPO="git+https://github.com/binbinsh/tmux-trainsh"
+    echo "Installing tmux-trainsh from GitHub..."
+    echo "  Source: $REPO"
+    uv tool install "$REPO" --force
 else
-    # Default: symlink from current directory
     PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    TRAINSH_PKG="$PROJECT_DIR/trainsh"
-    TRAINSH_PY="$PROJECT_DIR/trainsh.py"
-
-    if [ ! -d "$TRAINSH_PKG" ]; then
-        echo "Error: trainsh/ directory not found in $PROJECT_DIR"
-        echo "Use --github to install from GitHub instead."
-        exit 1
-    fi
-
-    if [ ! -f "$TRAINSH_PY" ]; then
-        echo "Error: trainsh.py not found in $PROJECT_DIR"
-        echo "Use --github to install from GitHub instead."
-        exit 1
-    fi
-
-    echo "Installing from local directory..."
+    echo "Installing tmux-trainsh from local directory..."
     echo "  Source: $PROJECT_DIR"
-
-    ln -s "$TRAINSH_PKG" "$DST_PKG"
-    ln -s "$TRAINSH_PY" "$DST_PY"
-
-    echo ""
-    echo "Created symlinks:"
-    echo "  $DST_PKG -> $TRAINSH_PKG"
-    echo "  $DST_PY -> $TRAINSH_PY"
+    uv tool install "$PROJECT_DIR" --force
 fi
 
 # Install dependencies if requested
@@ -195,11 +118,17 @@ echo ""
 echo "Installation complete!"
 echo ""
 echo "Usage:"
-echo "  kitty +kitten trainsh --help"
-echo "  kitty +kitten trainsh host list"
-echo "  kitty +kitten trainsh vast list"
+echo "  train --help"
+echo "  train host list"
+echo "  train vast list"
+echo "  train recipe run <recipe>"
 echo ""
-printf "\033[1;31mTip: Add an alias for shorter commands:\033[0m\n"
-echo ""
-printf "  \033[1;31m# Add this to ~/.zshrc or ~/.bashrc:\033[0m\n"
-printf "  \033[1;31malias trainsh='kitty +kitten trainsh'\033[0m\n"
+
+# Check if uv tools bin is in PATH
+UV_BIN="$HOME/.local/bin"
+if [[ ":$PATH:" != *":$UV_BIN:"* ]]; then
+    printf "\033[1;33mNote: Add ~/.local/bin to your PATH:\033[0m\n"
+    echo ""
+    printf "  \033[1;33m# Add this to ~/.zshrc or ~/.bashrc:\033[0m\n"
+    printf "  \033[1;33mexport PATH=\"\$HOME/.local/bin:\$PATH\"\033[0m\n"
+fi

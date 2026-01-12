@@ -1,4 +1,4 @@
-# kitten-trainsh config command
+# tmux-trainsh config command
 # Configuration management
 
 import sys
@@ -15,9 +15,9 @@ Subcommands:
   reset            - Reset to default configuration
 
 Examples:
-  kitty +kitten trainsh config get ui.currency
-  kitty +kitten trainsh config set ui.currency CNY
-  kitty +kitten trainsh config set defaults.ssh_key_path ~/.ssh/id_ed25519
+  train config get ui.currency
+  train config set ui.currency CNY
+  train config set defaults.ssh_key_path ~/.ssh/id_ed25519
 '''
 
 
@@ -44,8 +44,8 @@ def cmd_show(args: List[str]) -> None:
 def cmd_get(args: List[str]) -> None:
     """Get a config value."""
     if not args:
-        print("Usage: kitty +kitten trainsh config get <key>")
-        print("Example: kitty +kitten trainsh config get ui.currency")
+        print("Usage: train config get <key>")
+        print("Example: trainsh config get ui.currency")
         sys.exit(1)
 
     from ..config import get_config_value
@@ -63,8 +63,8 @@ def cmd_get(args: List[str]) -> None:
 def cmd_set(args: List[str]) -> None:
     """Set a config value."""
     if len(args) < 2:
-        print("Usage: kitty +kitten trainsh config set <key> <value>")
-        print("Example: kitty +kitten trainsh config set ui.currency CNY")
+        print("Usage: train config set <key> <value>")
+        print("Example: trainsh config set ui.currency CNY")
         sys.exit(1)
 
     from ..config import set_config_value

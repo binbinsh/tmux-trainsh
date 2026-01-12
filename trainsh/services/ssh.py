@@ -1,4 +1,4 @@
-# kitten-trainsh SSH service
+# tmux-trainsh SSH service
 # SSH connection management
 
 import subprocess

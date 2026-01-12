@@ -1,4 +1,4 @@
-# kitten-trainsh Vast.ai API client
+# tmux-trainsh Vast.ai API client
 # REST API client for Vast.ai GPU marketplace
 
 import json
@@ -319,7 +319,7 @@ class VastAPIClient:
         """
         from datetime import datetime
 
-        key_label = label or f"kitten-trainsh-{datetime.now().timestamp():.0f}"
+        key_label = label or f"tmux-trainsh-{datetime.now().timestamp():.0f}"
         self._request(
             "ssh",
             method="POST",
@@ -378,6 +378,8 @@ class VastAPIClient:
             ssh_host=data.get("ssh_host"),
             ssh_port=data.get("ssh_port"),
             public_ipaddr=data.get("public_ipaddr"),
+            direct_port_start=data.get("direct_port_start"),
+            direct_port_end=data.get("direct_port_end"),
             label=data.get("label"),
             template_name=data.get("template_name"),
             image_uuid=data.get("image_uuid"),
@@ -428,7 +430,7 @@ def get_vast_client() -> VastAPIClient:
     if not api_key:
         raise RuntimeError(
             "Vast.ai API key not configured. "
-            "Run: kitty +kitten trainsh secrets set VAST_API_KEY"
+            "Run: trainsh secrets set VAST_API_KEY"
         )
 
     return VastAPIClient(api_key)

@@ -1,4 +1,4 @@
-# kitten-trainsh SFTP browser service
+# tmux-trainsh SFTP browser service
 # Remote file browsing via SSH
 
 import shlex

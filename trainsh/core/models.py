@@ -1,4 +1,4 @@
-# kitten-trainsh data models
+# tmux-trainsh data models
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -580,6 +580,8 @@ class VastInstance:
     ssh_host: Optional[str] = None
     ssh_port: Optional[int] = None
     public_ipaddr: Optional[str] = None
+    direct_port_start: Optional[int] = None
+    direct_port_end: Optional[int] = None
     label: Optional[str] = None
     template_name: Optional[str] = None
     image_uuid: Optional[str] = None
@@ -604,6 +606,20 @@ class VastInstance:
     def display_name(self) -> str:
         """Get display name for the instance."""
         return f"Vast.ai #{self.id}"
+
+    @property
+    def ssh_proxy_command(self) -> Optional[str]:
+        """Get proxy SSH command."""
+        if self.ssh_host and self.ssh_port:
+            return f"ssh -p {self.ssh_port} root@{self.ssh_host}"
+        return None
+
+    @property
+    def ssh_direct_command(self) -> Optional[str]:
+        """Get direct SSH command (if available)."""
+        if self.public_ipaddr and self.direct_port_start:
+            return f"ssh -p {self.direct_port_start} root@{self.public_ipaddr}"
+        return None
 
     @property
     def hourly_rate(self) -> float:

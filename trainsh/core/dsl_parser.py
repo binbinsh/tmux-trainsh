@@ -1,4 +1,4 @@
-# kitten-trainsh DSL parser
+# tmux-trainsh DSL parser
 # Parses .recipe files into Recipe objects
 
 import re

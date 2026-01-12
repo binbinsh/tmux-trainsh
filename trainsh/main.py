@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# kitty +kitten trainsh - GPU training workflow automation
+# train - GPU training workflow automation
 # License: MIT
 
 import sys
@@ -19,26 +19,26 @@ Commands:
 '''
 
 help_text = '''
-kitten-trainsh: GPU training workflow automation in the terminal.
+tmux-trainsh: GPU training workflow automation in the terminal.
 
 Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends
 (Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.
 
-Use "kitty +kitten trainsh <command> --help" for command-specific help.
+Use "train <command> --help" for command-specific help.
 
 Examples:
-  kitty +kitten trainsh host add                # Add SSH/Colab host
-  kitty +kitten trainsh vast list               # List Vast.ai instances
-  kitty +kitten trainsh storage add             # Add storage backend (R2, B2, S3)
-  kitty +kitten trainsh transfer src dst        # Transfer files
-  kitty +kitten trainsh recipe run train        # Run a recipe
+  train host add                # Add SSH/Colab host
+  train vast list               # List Vast.ai instances
+  train storage add             # Add storage backend (R2, B2, S3)
+  train transfer src dst        # Transfer files
+  train recipe run train        # Run a recipe
 '''
 
 
 def option_text() -> str:
     return '''\
 --config
-default=~/.config/kitten-trainsh/config.yaml
+default=~/.config/tmux-trainsh/config.yaml
 Path to configuration file.
 
 --verbose -v
@@ -52,7 +52,7 @@ Show version and exit.
 
 
 def main(args: list[str]) -> Optional[str]:
-    """Main entry point for kitty +kitten trainsh."""
+    """Main entry point for train."""
     from .constants import CONFIG_DIR, RECIPES_DIR
 
     # Ensure config directories exist
@@ -68,7 +68,7 @@ def main(args: list[str]) -> Optional[str]:
     # Check for --version
     if "--version" in args or "-V" in args:
         from . import __version__
-        print(f"kitten-trainsh {__version__}")
+        print(f"tmux-trainsh {__version__}")
         raise SystemExit(0)
 
     # No subcommand - show usage
@@ -116,8 +116,15 @@ def main(args: list[str]) -> Optional[str]:
         raise SystemExit(1)
 
 
+def cli() -> None:
+    """CLI entry point (called by uv/pip installed command)."""
+    result = main(sys.argv)
+    if result:
+        print(result)
+
+
 if __name__ == "__main__":
-    main(sys.argv)
+    cli()
 elif __name__ == "__doc__":
     cd = sys.cli_docs  # type: ignore
     cd["usage"] = usage

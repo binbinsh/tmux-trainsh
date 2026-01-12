@@ -1,4 +1,4 @@
-# kitten-trainsh configuration loading
+# tmux-trainsh configuration loading
 
 import os
 from typing import Any, Dict
@@ -92,24 +92,12 @@ def get_default_config() -> Dict[str, Any]:
         "version": 1,
         "defaults": {
             "ssh_key_path": "~/.ssh/id_rsa",
-            "transfer_method": "rsync",
-            "compress": True,
         },
         "vast": {
-            "default_image": "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime",
-            "default_disk_gb": 50,
             "auto_attach_ssh_key": True,
         },
-        "notifications": {
-            "enabled": True,
-            "on_transfer_complete": True,
-            "on_recipe_complete": True,
-            "on_instance_ready": True,
-        },
         "ui": {
-            "theme": "dark",
-            "show_costs": True,
-            "refresh_interval": 30,
+            "currency": "USD",
         },
     }
 

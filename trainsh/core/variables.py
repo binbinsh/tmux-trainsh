@@ -1,4 +1,4 @@
-# kitten-trainsh variable interpolation
+# tmux-trainsh variable interpolation
 # Supports ${var} and ${secret:key} syntax
 
 import re

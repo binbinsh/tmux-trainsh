@@ -1,1 +1,1 @@
-# Core module for kitten-trainsh
+# Core module for tmux-trainsh

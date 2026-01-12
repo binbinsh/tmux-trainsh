@@ -1,4 +1,4 @@
-# Pricing module for kitten-trainsh
+# Pricing module for tmux-trainsh
 # Provides currency exchange rates and cost calculations
 
 import os

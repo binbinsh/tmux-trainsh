@@ -1,4 +1,4 @@
-# kitten-trainsh storage command
+# tmux-trainsh storage command
 # Storage backend management
 
 import sys
@@ -25,7 +25,7 @@ Supported storage types:
   - gcs            Google Cloud Storage
   - smb            SMB/CIFS
 
-Storages are stored in: ~/.config/kitten-trainsh/storages.toml
+Storages are stored in: ~/.config/tmux-trainsh/storages.toml
 '''
 
 
@@ -106,7 +106,7 @@ def cmd_list(args: List[str]) -> None:
 
     if not storages:
         print("No storage backends configured.")
-        print("Use 'kitty +kitten trainsh storage add' to add one.")
+        print("Use 'trainsh storage add' to add one.")
         return
 
     print("Configured storage backends:")
@@ -197,7 +197,7 @@ def cmd_add(args: List[str]) -> None:
         if bucket is None:
             return
         print("\nAccess keys will be stored in secrets.")
-        print("Run 'kitty +kitten trainsh secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
+        print("Run 'trainsh secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
         config["account_id"] = account_id
         config["bucket"] = bucket
         config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
@@ -207,7 +207,7 @@ def cmd_add(args: List[str]) -> None:
         if bucket is None:
             return
         print("\nApplication keys will be stored in secrets.")
-        print("Run 'kitty +kitten trainsh secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
+        print("Run 'trainsh secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
         config["bucket"] = bucket
 
     elif storage_type == StorageType.S3:
@@ -221,7 +221,7 @@ def cmd_add(args: List[str]) -> None:
         if endpoint is None:
             return
         print("\nAWS credentials will be stored in secrets.")
-        print("Run 'kitty +kitten trainsh secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
+        print("Run 'trainsh secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
         config["bucket"] = bucket
         config["region"] = region
         if endpoint:
@@ -275,7 +275,7 @@ def cmd_add(args: List[str]) -> None:
 def cmd_show(args: List[str]) -> None:
     """Show storage details."""
     if not args:
-        print("Usage: kitty +kitten trainsh storage show <name>")
+        print("Usage: train storage show <name>")
         sys.exit(1)
 
     name = args[0]
@@ -297,7 +297,7 @@ def cmd_show(args: List[str]) -> None:
 def cmd_remove(args: List[str]) -> None:
     """Remove a storage backend."""
     if not args:
-        print("Usage: kitty +kitten trainsh storage remove <name>")
+        print("Usage: train storage remove <name>")
         sys.exit(1)
 
     name = args[0]
@@ -320,7 +320,7 @@ def cmd_remove(args: List[str]) -> None:
 def cmd_test(args: List[str]) -> None:
     """Test connection to storage."""
     if not args:
-        print("Usage: kitty +kitten trainsh storage test <name>")
+        print("Usage: train storage test <name>")
         sys.exit(1)
 
     name = args[0]

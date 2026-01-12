@@ -1,4 +1,4 @@
-# kitten-trainsh recipe command
+# tmux-trainsh recipe command
 # Recipe execution
 
 import sys
@@ -10,13 +10,15 @@ usage = '''[subcommand] [args...]
 Subcommands:
   list             - List available recipes
   run <name>       - Execute a recipe
+  resume <name>    - Resume a failed/interrupted recipe
   show <name>      - Show recipe details
   new <name>       - Create a new recipe from template
   edit <name>      - Open recipe in editor
   logs [exec-id]   - View execution logs
   status [id]      - View running recipe sessions
+  jobs             - List all job states
 
-Recipes are stored in: ~/.config/kitten-trainsh/recipes/
+Recipes are stored in: ~/.config/tmux-trainsh/recipes/
 '''
 
 
@@ -62,7 +64,7 @@ def cmd_list(args: List[str]) -> None:
 def cmd_show(args: List[str]) -> None:
     """Show recipe details."""
     if not args:
-        print("Usage: kitty +kitten trainsh recipe show <name>")
+        print("Usage: train recipe show <name>")
         sys.exit(1)
 
     name = args[0]
@@ -116,10 +118,9 @@ def cmd_show(args: List[str]) -> None:
 def cmd_run(args: List[str]) -> None:
     """Execute a recipe."""
     if not args:
-        print("Usage: kitty +kitten trainsh recipe run <name> [options]")
+        print("Usage: train recipe run <name> [options]")
         print()
         print("Options:")
-        print("  --no-visual       Run in headless mode")
         print("  --host NAME=HOST  Override host (e.g., --host gpu=vast:12345)")
         print("  --var NAME=VALUE  Override variable")
         print("  --pick-host NAME  Interactively select host from vast.ai")
@@ -129,7 +130,6 @@ def cmd_run(args: List[str]) -> None:
     rest_args = args[1:]
 
     # Parse options
-    visual = True
     host_overrides = {}
     var_overrides = {}
     pick_hosts = []
@@ -137,9 +137,7 @@ def cmd_run(args: List[str]) -> None:
     i = 0
     while i < len(rest_args):
         arg = rest_args[i]
-        if arg == "--no-visual":
-            visual = False
-        elif arg == "--host" and i + 1 < len(rest_args):
+        if arg == "--host" and i + 1 < len(rest_args):
             i += 1
             key, _, value = rest_args[i].partition("=")
             host_overrides[key] = value
@@ -184,10 +182,7 @@ def cmd_run(args: List[str]) -> None:
     from ..core.dsl_executor import run_recipe
 
     print(f"Running recipe: {os.path.basename(recipe_path)}")
-    if visual:
-        print("Mode: visual (kitty tabs)")
-    else:
-        print("Mode: headless")
+    print("Commands run in remote tmux sessions (survive SSH disconnect)")
 
     if host_overrides:
         print("Host overrides:")
@@ -203,7 +198,6 @@ def cmd_run(args: List[str]) -> None:
 
     success = run_recipe(
         recipe_path,
-        visual=visual,
         host_overrides=host_overrides,
         var_overrides=var_overrides,
     )
@@ -219,6 +213,7 @@ def cmd_run(args: List[str]) -> None:
 def _pick_vast_host(host_name: str) -> Optional[str]:
     """Interactively pick a vast.ai instance."""
     from ..services.vast_api import get_vast_client
+    from ..utils.vast_formatter import format_instance_header, format_instance_row, get_currency_settings
 
     try:
         client = get_vast_client()
@@ -228,22 +223,24 @@ def _pick_vast_host(host_name: str) -> Optional[str]:
             print("No vast.ai instances available.")
             return None
 
-        print(f"\nSelect host for @{host_name}:")
-        print("-" * 60)
-        print(f"{'#':<4} {'ID':<10} {'Status':<10} {'GPU':<20} {'$/hr':<8}")
-        print("-" * 60)
-
         running = [i for i in instances if i.is_running]
-        for idx, inst in enumerate(running, 1):
-            gpu = inst.gpu_name or "N/A"
-            price = f"${inst.dph_total:.3f}" if inst.dph_total else "N/A"
-            print(f"{idx:<4} {inst.id:<10} {'running':<10} {gpu:<20} {price:<8}")
-
         if not running:
             print("No running instances.")
             return None
 
-        print("-" * 60)
+        currency = get_currency_settings()
+        header, sep = format_instance_header(currency, show_index=True)
+
+        print(f"\nSelect host for @{host_name}:")
+        print(sep)
+        print(header)
+        print(sep)
+
+        for idx, inst in enumerate(running, 1):
+            row = format_instance_row(inst, currency, show_index=True, index=idx)
+            print(row)
+
+        print(sep)
 
         try:
             choice = input(f"Enter number (1-{len(running)}) or instance ID: ").strip()
@@ -273,7 +270,7 @@ def _pick_vast_host(host_name: str) -> Optional[str]:
 def cmd_new(args: List[str]) -> None:
     """Create a new recipe from template."""
     if not args:
-        print("Usage: kitty +kitten trainsh recipe new <name>")
+        print("Usage: train recipe new <name>")
         sys.exit(1)
 
     name = args[0]
@@ -287,7 +284,7 @@ def cmd_new(args: List[str]) -> None:
         sys.exit(1)
 
     template = '''# {name}
-# Created with kitty +kitten trainsh
+# Created with tmux-train
 
 ---
 HOST = your-server
@@ -298,7 +295,7 @@ MODEL = llama-7b
 @gpu = ${{HOST}}
 
 # Open terminal
-> kitty.open @gpu as main
+> tmux.open @gpu as main
 
 # Run commands
 main: echo "Hello from ${{MODEL}}"
@@ -326,7 +323,7 @@ main: uv --version
 def cmd_edit(args: List[str]) -> None:
     """Open recipe in editor."""
     if not args:
-        print("Usage: kitty +kitten trainsh recipe edit <name>")
+        print("Usage: train recipe edit <name>")
         sys.exit(1)
 
     name = args[0]
@@ -345,7 +342,7 @@ def cmd_edit(args: List[str]) -> None:
 
     if not recipe_path:
         print(f"Recipe not found: {name}")
-        print("Use 'kitty +kitten trainsh recipe new' to create one.")
+        print("Use 'train recipe new' to create one.")
         sys.exit(1)
 
     editor = os.environ.get("EDITOR", "vim")
@@ -367,12 +364,12 @@ def cmd_logs(args: List[str]) -> None:
             return
 
         print("Recent executions:")
-        print("-" * 80)
-        print(f"{'ID':<12} {'Recipe':<20} {'Started':<24} {'Status':<10} {'Duration'}")
-        print("-" * 80)
+        print("-" * 90)
+        print(f"{'Job ID':<12} {'Recipe':<20} {'Started':<24} {'Status':<10} {'Duration'}")
+        print("-" * 90)
 
         for ex in executions:
-            exec_id = ex.get("exec_id", "")[:10]
+            job_id = ex.get("job_id", "")[:10]
             recipe = ex.get("recipe", "")[:18]
             started = ex.get("started", "")[:22]
             success = ex.get("success")
@@ -386,11 +383,11 @@ def cmd_logs(args: List[str]) -> None:
                 status = "failed"
 
             duration_str = f"{duration_ms}ms" if duration_ms else "-"
-            print(f"{exec_id:<12} {recipe:<20} {started:<24} {status:<10} {duration_str}")
+            print(f"{job_id:<12} {recipe:<20} {started:<24} {status:<10} {duration_str}")
 
-        print("-" * 80)
+        print("-" * 90)
         print(f"Total: {len(executions)} executions")
-        print("\nUse 'kitty +kitten trainsh recipe logs <exec-id>' to view details.")
+        print("\nUse 'train recipe logs <job-id>' to view details.")
 
     elif args[0] == "--last":
         # Show last execution
@@ -398,25 +395,26 @@ def cmd_logs(args: List[str]) -> None:
         if not executions:
             print("No execution logs found.")
             return
-        _show_execution_details(reader, executions[0]["exec_id"])
+        _show_execution_details(reader, executions[0]["job_id"])
 
     else:
         # Show specific execution
-        exec_id = args[0]
-        _show_execution_details(reader, exec_id)
+        job_id = args[0]
+        _show_execution_details(reader, job_id)
 
 
-def _show_execution_details(reader, exec_id: str) -> None:
+def _show_execution_details(reader, job_id: str) -> None:
     """Show details of a specific execution."""
     from ..core.execution_log import ExecutionLogReader
 
-    summary = reader.get_execution_summary(exec_id)
+    summary = reader.get_execution_summary(job_id)
     if not summary:
-        print(f"Execution not found: {exec_id}")
+        print(f"Execution not found: {job_id}")
         sys.exit(1)
 
-    print(f"Execution: {summary['exec_id']}")
+    print(f"Job ID: {summary['job_id']}")
     print(f"Recipe: {summary['recipe']}")
+    print(f"Recipe Path: {summary.get('recipe_path', 'N/A')}")
     print(f"Started: {summary['started']}")
     print(f"Ended: {summary['ended'] or 'N/A'}")
 
@@ -433,105 +431,317 @@ def _show_execution_details(reader, exec_id: str) -> None:
     if duration_ms:
         print(f"Duration: {duration_ms}ms ({duration_ms / 1000:.2f}s)")
 
+    # Show variables
+    variables = summary.get("variables", {})
+    if variables:
+        print(f"\nVariables ({len(variables)}):")
+        for k, v in list(variables.items())[:10]:
+            print(f"  {k} = {v[:50] if len(str(v)) > 50 else v}")
+        if len(variables) > 10:
+            print(f"  ... and {len(variables) - 10} more")
+
+    # Show hosts
+    hosts = summary.get("hosts", {})
+    if hosts:
+        print(f"\nHosts ({len(hosts)}):")
+        for k, v in hosts.items():
+            print(f"  @{k} = {v}")
+
     steps = summary.get("steps", [])
     if steps:
         print(f"\nSteps ({len(steps)}):")
-        print("-" * 60)
-        for i, step in enumerate(steps, 1):
-            step_status = "OK" if step.get("ok") else "FAIL"
+        print("-" * 70)
+        for step in steps:
+            step_status = "OK" if step.get("success") else "FAIL"
             step_duration = step.get("duration_ms", 0)
+            step_num = step.get("step_num", "?")
             error = step.get("error", "")
+            result = step.get("result", "")
 
-            line = f"  {i}. [{step_status}] {step.get('step_id', 'unknown')}"
+            line = f"  {step_num}. [{step_status}]"
             if step_duration:
                 line += f" ({step_duration}ms)"
+            if result and len(result) < 50:
+                line += f" -> {result}"
             print(line)
 
             if error:
                 print(f"      Error: {error}")
-        print("-" * 60)
+        print("-" * 70)
+
+    # Show log file location
+    from ..core.execution_log import get_jobs_dir
+    jobs_dir = get_jobs_dir()
+    # Find log file with timestamp prefix
+    log_files = list(jobs_dir.glob(f"*_{job_id}.jsonl.gz")) + list(jobs_dir.glob(f"*_{job_id}.jsonl"))
+    if not log_files:
+        # Try old format without timestamp
+        log_files = list(jobs_dir.glob(f"{job_id}.jsonl.gz")) + list(jobs_dir.glob(f"{job_id}.jsonl"))
+    if log_files:
+        print(f"\nLog file: {log_files[0]}")
 
 
 def cmd_status(args: List[str]) -> None:
     """View running recipe sessions."""
-    from ..core.session_registry import SessionRegistry
+    from ..core.job_state import JobStateManager
+    from ..core.tmux_session import session_exists
 
-    registry = SessionRegistry()
+    state_manager = JobStateManager()
 
     if args and args[0] not in ("--list", "-l", "--all", "-a"):
-        # Show specific session
-        session_id = args[0]
-        session = registry.get(session_id)
+        # Show specific job
+        job_id = args[0]
+        job = state_manager.load(job_id)
 
-        if not session:
+        if not job:
             # Try to find by partial match
-            for s in registry.list_all():
-                if s.session_id.startswith(session_id):
-                    session = s
+            for j in state_manager.list_all():
+                if j.job_id.startswith(job_id):
+                    job = j
                     break
 
-        if not session:
-            print(f"Session not found: {session_id}")
-            print("Use 'kitty +kitten trainsh recipe status' to list sessions.")
+        if not job:
+            print(f"Job not found: {job_id}")
+            print("Use 'train recipe status' to list jobs.")
             sys.exit(1)
 
-        _show_session_details(session)
+        _show_job_details(job)
     else:
-        # List all sessions
-        all_sessions = "--all" in args or "-a" in args
-        sessions = registry.list_all() if all_sessions else registry.list_running()
+        # List all jobs
+        all_jobs = "--all" in args or "-a" in args
+        jobs = state_manager.list_all() if all_jobs else state_manager.list_running()
 
-        if not sessions:
-            print("No running recipe sessions.")
-            print("Run a recipe with 'kitty +kitten trainsh recipe run <name>'")
+        if not jobs:
+            print("No running recipe jobs.")
+            print("Run a recipe with 'train recipe run <name>'")
             return
 
-        print("Recipe Sessions:")
+        print("Recipe Jobs:")
         print("-" * 80)
-        print(f"{'ID':<14} {'Recipe':<20} {'Host':<15} {'Status':<10} {'Started':<20}")
+        print(f"{'ID':<10} {'Recipe':<20} {'Status':<12} {'Step':<10} {'Updated':<25}")
         print("-" * 80)
 
-        for session in sessions:
-            session_id = session.session_id[:12]
-            recipe = session.recipe_name[:18]
-            host = (session.host_id or "local")[:13]
-            status = session.status[:8]
-            started = session.started_at[:18] if session.started_at else "N/A"
+        for job in jobs:
+            job_id = job.job_id[:8]
+            recipe = job.recipe_name[:18]
+            status = job.status[:10]
+            step = f"{job.current_step + 1}/{job.total_steps}"
+            updated = job.updated_at[:23]
 
-            print(f"{session_id:<14} {recipe:<20} {host:<15} {status:<10} {started:<20}")
+            print(f"{job_id:<10} {recipe:<20} {status:<12} {step:<10} {updated:<25}")
 
         print("-" * 80)
-        print(f"Total: {len(sessions)} sessions")
+        print(f"Total: {len(jobs)} jobs")
 
-        if not all_sessions:
-            print("\nUse '--all' to show completed/failed sessions.")
+        if not all_jobs:
+            print("\nUse '--all' to show completed/failed jobs.")
 
 
-def _show_session_details(session) -> None:
-    """Show details of a specific session."""
-    from ..services.tmux import TmuxManager
+def _show_job_details(job) -> None:
+    """Show details of a specific job."""
+    from ..core.job_state import get_tmux_session_name
+    from ..core.tmux_session import TmuxSession, session_exists
 
-    print(f"Session: {session.session_id}")
-    print(f"Recipe: {session.recipe_name}")
-    print(f"Host: {session.host_id or 'local'}")
-    print(f"Status: {session.status}")
-    print(f"Started: {session.started_at}")
-    print(f"Tmux Session: {session.tmux_session}")
-    print(f"Kitty Window: {session.kitty_window_id or 'N/A'}")
+    print(f"Job ID: {job.job_id}")
+    print(f"Recipe: {job.recipe_name}")
+    print(f"Recipe Path: {job.recipe_path}")
+    print(f"Status: {job.status}")
+    print(f"Progress: Step {job.current_step + 1}/{job.total_steps}")
+    print(f"Created: {job.created_at}")
+    print(f"Updated: {job.updated_at}")
+
+    tmux_session_name = get_tmux_session_name(job.job_id)
+    print(f"Tmux Session: {tmux_session_name}")
+
+    if job.hosts:
+        print("\nHosts:")
+        for name, spec in job.hosts.items():
+            print(f"  @{name} = {spec}")
+
+    if job.vast_instance_id:
+        print(f"\nVast.ai Instance: {job.vast_instance_id}")
+        if job.vast_start_time:
+            print(f"  Started: {job.vast_start_time}")
+
     print("-" * 60)
 
     # Try to get live output from tmux
-    if session.status == "running":
-        tmux = TmuxManager()
-        if tmux.session_exists(session.tmux_session):
-            print("\nLive Output (last 20 lines):")
-            output = tmux.capture_pane(session.tmux_session, lines=20)
-            for line in output.split("\n"):
-                print(f"  {line}")
-        else:
-            print("\n(Tmux session no longer exists)")
+    if job.status == "running" and session_exists(tmux_session_name):
+        try:
+            tmux = TmuxSession(tmux_session_name, create=False)
+            panes = tmux.list_panes()
+            if panes:
+                print("\nActive Panes:")
+                for pane in panes:
+                    print(f"  {pane.pane_id}: {pane.window_name} ({pane.current_command})")
+
+                # Capture output from first pane
+                print("\nLive Output (last 20 lines):")
+                output = tmux.capture(panes[0].pane_id, start=-20)
+                for line in output.split("\n"):
+                    print(f"  {line}")
+        except Exception as e:
+            print(f"\n(Could not capture output: {e})")
+    elif job.status == "running":
+        print("\n(Tmux session no longer exists)")
     else:
-        print(f"\n(Session {session.status})")
+        print(f"\n(Job {job.status})")
+
+
+def cmd_resume(args: List[str]) -> None:
+    """Resume a failed/interrupted recipe."""
+    if not args:
+        print("Usage: train recipe resume <name>")
+        print()
+        print("Options:")
+        print("  --check           Only check remote status, don't resume")
+        sys.exit(1)
+
+    name = args[0]
+    rest_args = args[1:]
+
+    # Parse options
+    check_only = False
+    for arg in rest_args:
+        if arg == "--check":
+            check_only = True
+
+    # Find recipe file
+    recipe_path = None
+    if os.path.exists(name):
+        recipe_path = name
+    else:
+        recipes_dir = get_recipes_dir()
+        for ext in [".recipe", ""]:
+            test_path = os.path.join(recipes_dir, name + ext)
+            if os.path.exists(test_path):
+                recipe_path = test_path
+                break
+
+    if not recipe_path:
+        print(f"Recipe not found: {name}")
+        sys.exit(1)
+
+    from ..core.dsl_executor import run_recipe
+    from ..core.dsl_parser import parse_recipe
+    from ..core.job_state import JobStateManager, check_remote_condition
+
+    # Check for resumable state
+    state_manager = JobStateManager()
+    saved_state = state_manager.find_resumable(os.path.abspath(recipe_path))
+
+    if not saved_state:
+        print(f"No resumable state found for: {name}")
+        print("Use 'recipe run' to start a fresh execution.")
+        sys.exit(1)
+
+    print(f"Job ID: {saved_state.job_id}")
+    print(f"Recipe: {os.path.basename(recipe_path)}")
+    print(f"Status: {saved_state.status}")
+    print(f"Progress: Step {saved_state.current_step + 1}/{saved_state.total_steps}")
+    print(f"Last updated: {saved_state.updated_at}")
+
+    if saved_state.hosts:
+        print("Saved hosts:")
+        for k, v in saved_state.hosts.items():
+            print(f"  @{k} = {v}")
+
+    # Check if current step is a wait step with file condition
+    recipe = parse_recipe(recipe_path)
+    current_step_idx = saved_state.current_step
+
+    if current_step_idx < len(recipe.steps):
+        current_step = recipe.steps[current_step_idx]
+
+        # Check if it's a wait step with a file condition
+        if current_step.condition and current_step.condition.startswith("file:"):
+            target = current_step.target
+            host_spec = saved_state.hosts.get(target)
+
+            if host_spec:
+                print(f"\nChecking remote condition...")
+
+                # Interpolate the condition with saved variables
+                condition = current_step.condition
+                for var_name, var_value in saved_state.variables.items():
+                    condition = condition.replace(f"${{{var_name}}}", var_value)
+
+                met, msg = check_remote_condition(host_spec, condition)
+
+                if met:
+                    print(f"  {msg}")
+                    print(f"  Training appears to be COMPLETE!")
+                    print(f"  The wait condition at step {current_step_idx + 1} is already satisfied.")
+
+                    if check_only:
+                        print("\nRun without --check to resume and complete remaining steps.")
+                        return
+
+                    # Update state to skip the wait step
+                    saved_state.current_step = current_step_idx + 1
+                    state_manager.save(saved_state)
+                    print(f"  Advancing to step {current_step_idx + 2}")
+                else:
+                    print(f"  {msg}")
+                    print(f"  Training is still in progress (or failed).")
+
+                    if check_only:
+                        return
+
+    if check_only:
+        print("\nRun without --check to resume execution.")
+        return
+
+    print("-" * 40)
+
+    success = run_recipe(
+        recipe_path,
+        resume=True,
+    )
+
+    print("-" * 40)
+    if success:
+        print("Recipe completed successfully!")
+    else:
+        print("Recipe execution failed.")
+        print(f"Run 'recipe resume {name}' to retry from the failed step.")
+        sys.exit(1)
+
+
+def cmd_jobs(args: List[str]) -> None:
+    """List all job states."""
+    from ..core.job_state import JobStateManager
+
+    state_manager = JobStateManager()
+
+    show_all = "--all" in args or "-a" in args
+    limit = 100 if show_all else 20
+
+    jobs = state_manager.list_all(limit=limit)
+
+    if not jobs:
+        print("No job states found.")
+        return
+
+    print("Recipe Jobs:")
+    print("-" * 90)
+    print(f"{'ID':<10} {'Recipe':<25} {'Status':<12} {'Step':<10} {'Updated':<25}")
+    print("-" * 90)
+
+    for job in jobs:
+        job_id = job.job_id[:8]
+        recipe = job.recipe_name[:23]
+        status = job.status[:10]
+        step = f"{job.current_step + 1}/{job.total_steps}"
+        updated = job.updated_at[:23]
+
+        print(f"{job_id:<10} {recipe:<25} {status:<12} {step:<10} {updated:<25}")
+
+    print("-" * 90)
+    print(f"Total: {len(jobs)} jobs")
+
+    if not show_all and len(jobs) >= 20:
+        print("\nUse '--all' to show all jobs.")
 
 
 def main(args: List[str]) -> Optional[str]:
@@ -547,10 +757,12 @@ def main(args: List[str]) -> Optional[str]:
         "list": cmd_list,
         "show": cmd_show,
         "run": cmd_run,
+        "resume": cmd_resume,
         "new": cmd_new,
         "edit": cmd_edit,
         "logs": cmd_logs,
         "status": cmd_status,
+        "jobs": cmd_jobs,
     }
 
     if subcommand not in commands:

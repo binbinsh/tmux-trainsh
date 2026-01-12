@@ -1,4 +1,4 @@
-# kitten-trainsh colab command
+# tmux-trainsh colab command
 # Google Colab integration
 
 import json
@@ -189,7 +189,7 @@ def cmd_ssh(args: List[str]) -> None:
 def cmd_run(args: List[str]) -> None:
     """Run a command on Colab."""
     if not args:
-        print("Usage: trainsh colab run <command>")
+        print("Usage: train colab run <command>")
         sys.exit(1)
 
     import subprocess
