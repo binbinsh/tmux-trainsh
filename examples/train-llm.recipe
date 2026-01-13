@@ -1,0 +1,37 @@
+# train-llm.recipe
+# Fine-tune LLM on remote GPU with live monitoring
+
+var MODEL = llama-7b
+var EPOCHS = 3
+var GPU = vast-4090
+var LOCAL_DATA = ~/datasets/alpaca
+
+host gpu = placeholder
+
+# Pick and wait for GPU instance
+vast.pick @gpu
+vast.wait timeout=5m
+
+# Open tmux session
+tmux.open @gpu
+
+# Clone repo and setup
+@gpu > git clone https://github.com/me/train /workspace
+@gpu > cd /workspace && uv sync
+
+# Upload training data
+$LOCAL_DATA -> @gpu:/workspace/data
+
+# Start training in background
+@gpu > cd /workspace && python train.py --model $MODEL --epochs $EPOCHS &
+
+# Wait for completion
+wait @gpu "Training complete" timeout=2h
+
+# Download results
+@gpu:/workspace/output -> ~/models/$MODEL-ft
+
+# Notify and cleanup
+notify "Training complete!"
+vast.stop
+tmux.close @gpu

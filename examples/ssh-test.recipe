@@ -1,0 +1,26 @@
+# ssh-test.recipe
+# Test SSH connection to a remote host
+# Usage: train recipe run ssh-test --host server=your-server
+
+var WORKDIR = /tmp/trainsh-test
+
+host server = localhost
+
+# Open tmux session
+tmux.open @server
+
+# Create test directory and file
+@server > mkdir -p $WORKDIR
+@server > cd $WORKDIR && echo "Test file created at $(date)" > test.txt
+@server > cat $WORKDIR/test.txt
+
+# Show system info
+@server > uname -a
+@server > df -h | head -5
+
+# Cleanup
+@server > rm -rf $WORKDIR
+@server > echo "Test completed!"
+
+notify "SSH test done!"
+tmux.close @server

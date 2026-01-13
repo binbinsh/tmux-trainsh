@@ -1460,10 +1460,12 @@ class DSLExecutor:
         start_time = time.time()
         engine = TransferEngine()
         hosts = self._build_transfer_hosts()
+        storages = self._build_transfer_storages()
         result = engine.transfer(
             source=src_endpoint,
             destination=dst_endpoint,
             hosts=hosts,
+            storages=storages,
         )
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -1709,17 +1711,25 @@ class DSLExecutor:
         return re.sub(r'\$\{([^}]+)\}', replace, text)
 
     def _parse_endpoint(self, spec: str) -> 'TransferEndpoint':
-        """Parse transfer endpoint: @host:/path or /local/path"""
+        """Parse transfer endpoint: @host:/path, @storage:/path, or /local/path"""
         from ..core.models import TransferEndpoint
 
         if spec.startswith('@'):
-            # Remote: @host:/path
+            # Remote: @name:/path - could be host or storage
             if ':' in spec:
-                host_part, path = spec.split(':', 1)
-                host_name = host_part[1:]
-                host = self.recipe.hosts.get(host_name, host_name)
+                name_part, path = spec.split(':', 1)
+                name = name_part[1:]
+
+                # Check if it's a storage reference
+                if name in self.recipe.storages:
+                    storage_spec = self.recipe.storages[name]
+                    return TransferEndpoint(type="storage", path=path, storage_id=name)
+
+                # Otherwise it's a host reference
+                host = self.recipe.hosts.get(name, name)
                 return TransferEndpoint(type="host", path=path, host_id=host)
             else:
+                # Just @name without path - use as host with root path
                 return TransferEndpoint(type="host", path="/", host_id=spec[1:])
         else:
             # Local path
@@ -1736,6 +1746,40 @@ class DSLExecutor:
                 resolved_spec = _resolve_vast_host(spec[5:])
             hosts[spec] = _host_from_ssh_spec(resolved_spec)
         return hosts
+
+    def _build_transfer_storages(self) -> Dict[str, 'Storage']:
+        """Build storage mapping for transfers from recipe storage specs."""
+        from ..commands.storage import load_storages
+        from ..core.models import Storage, StorageType
+
+        # Load global storages from config
+        global_storages = load_storages()
+
+        # Build mapping for recipe storages
+        storages: Dict[str, 'Storage'] = {}
+        for name, spec in self.recipe.storages.items():
+            # Check if it's a reference to a global storage
+            if spec in global_storages:
+                storages[name] = global_storages[spec]
+            elif spec != "placeholder":
+                # Parse inline storage spec like "r2:bucket-name"
+                if ":" in spec:
+                    provider, bucket = spec.split(":", 1)
+                    storage_type = StorageType.R2
+                    if provider == "b2":
+                        storage_type = StorageType.B2
+                    elif provider == "s3":
+                        storage_type = StorageType.S3
+                    elif provider == "gdrive":
+                        storage_type = StorageType.GDRIVE
+
+                    storages[name] = Storage(
+                        id=name,
+                        name=name,
+                        type=storage_type,
+                        bucket=bucket,
+                    )
+        return storages
 
     def _parse_duration(self, value: str) -> int:
         """Parse duration: 10s, 5m, 1h"""

@@ -10,51 +10,52 @@
 # Training time: ~15-30 minutes for character-level model
 #
 # Usage:
-#   trainsh recipe run nanogpt-train
+#   train recipe run nanogpt-train
 
----
-REPO_URL = https://github.com/karpathy/nanoGPT.git
-WORKDIR = /workspace/nanoGPT
-MODEL_OUT = out-shakespeare
-MAX_ITERS = 5000
-BLOCK_SIZE = 256
-BATCH_SIZE = 64
-N_LAYER = 6
-N_HEAD = 6
-N_EMBD = 384
-LOCAL_OUTPUT = ./nanogpt-output
----
+var REPO_URL = https://github.com/karpathy/nanoGPT.git
+var WORKDIR = /workspace/nanoGPT
+var MODEL_OUT = out-shakespeare
+var MAX_ITERS = 5000
+var BLOCK_SIZE = 256
+var BATCH_SIZE = 64
+var N_LAYER = 6
+var N_HEAD = 6
+var N_EMBD = 384
+var LOCAL_OUTPUT = ./nanogpt-output
 
-# Define GPU host - vast.pick will select from available instances
-@gpu = vast
+host gpu = placeholder
 
 # Select a GPU instance from available Vast.ai machines
-> vast.pick @gpu num_gpus=1 min_gpu_ram=16
+vast.pick @gpu num_gpus=1 min_gpu_ram=16
 
 # Wait for instance to be ready
-> vast.wait timeout=5m
+vast.wait timeout=5m
+
+# Open tmux session
+tmux.open @gpu
 
 # Clone the nanoGPT repository
-gpu: git clone ${REPO_URL} ${WORKDIR} 2>/dev/null || (cd ${WORKDIR} && git pull)
+@gpu > git clone $REPO_URL $WORKDIR 2>/dev/null || (cd $WORKDIR && git pull)
 
 # Install dependencies
-gpu: pip install torch numpy transformers datasets tiktoken wandb tqdm
+@gpu > pip install torch numpy transformers datasets tiktoken wandb tqdm
 
 # Prepare Shakespeare dataset
-gpu: cd ${WORKDIR}/data/shakespeare_char && python prepare.py
+@gpu > cd $WORKDIR/data/shakespeare_char && python prepare.py
 
-# Start training in background (will continue if terminal disconnects)
-gpu: cd ${WORKDIR} && nohup python train.py config/train_shakespeare_char.py --block_size=${BLOCK_SIZE} --batch_size=${BATCH_SIZE} --n_layer=${N_LAYER} --n_head=${N_HEAD} --n_embd=${N_EMBD} --max_iters=${MAX_ITERS} --out_dir=${MODEL_OUT} > train.log 2>&1 &
+# Start training in background
+@gpu > cd $WORKDIR && python train.py config/train_shakespeare_char.py --block_size=$BLOCK_SIZE --batch_size=$BATCH_SIZE --n_layer=$N_LAYER --n_head=$N_HEAD --n_embd=$N_EMBD --max_iters=$MAX_ITERS --out_dir=$MODEL_OUT &
 
-# Poll for training completion
-? gpu: "step ${MAX_ITERS}:" timeout=2h
+# Wait for training completion
+wait @gpu "step $MAX_ITERS:" timeout=2h
 
 # Test the trained model with sample generation
-gpu: cd ${WORKDIR} && python sample.py --out_dir=${MODEL_OUT} --num_samples=1 --max_new_tokens=200
+@gpu > cd $WORKDIR && python sample.py --out_dir=$MODEL_OUT --num_samples=1 --max_new_tokens=200
 
 # Download results
-gpu:${WORKDIR}/${MODEL_OUT} -> ${LOCAL_OUTPUT}/model
-gpu:${WORKDIR}/train.log -> ${LOCAL_OUTPUT}/train.log
+@gpu:$WORKDIR/$MODEL_OUT -> $LOCAL_OUTPUT/model
+@gpu:$WORKDIR/train.log -> $LOCAL_OUTPUT/train.log
 
 # Stop the instance to save costs
-> vast.stop
+vast.stop
+tmux.close @gpu

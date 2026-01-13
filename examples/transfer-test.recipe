@@ -1,0 +1,25 @@
+# transfer-test.recipe
+# Test file transfer functionality
+
+var TEST_FILE = /tmp/trainsh-transfer-test.txt
+
+host local = local
+
+tmux.open @local
+
+# Create a test file
+@local > echo "Transfer test - $(date)" > $TEST_FILE
+@local > cat $TEST_FILE
+
+# Test local-to-local transfer (for testing without remote)
+$TEST_FILE -> /tmp/trainsh-transfer-copy.txt
+
+@local > echo "Copied file:"
+@local > cat /tmp/trainsh-transfer-copy.txt
+
+# Cleanup
+@local > rm -f $TEST_FILE /tmp/trainsh-transfer-copy.txt
+@local > echo "Transfer test completed!"
+
+notify "Transfer test done!"
+tmux.close @local

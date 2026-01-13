@@ -2,17 +2,25 @@
 # Parses .recipe files into Recipe objects
 
 import re
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Set
 from dataclasses import dataclass, field
 from enum import Enum
 
 
 class StepType(Enum):
     """Type of DSL step."""
-    CONTROL = "control"      # > command
-    EXECUTE = "execute"      # host: command
-    TRANSFER = "transfer"    # path -> path
-    WAIT = "wait"            # ? condition
+    CONTROL = "control"      # command args (e.g., vast.pick, tmux.open)
+    EXECUTE = "execute"      # @host > command
+    TRANSFER = "transfer"    # @src:path -> @dst:path
+    WAIT = "wait"            # wait @host condition
+
+
+# Control commands that are recognized
+CONTROL_COMMANDS = {
+    "tmux.open", "tmux.close",
+    "vast.pick", "vast.start", "vast.stop", "vast.wait", "vast.cost",
+    "notify", "sleep",
+}
 
 
 @dataclass
@@ -30,6 +38,7 @@ class DSLStep:
     host: str = ""
     commands: str = ""
     background: bool = False
+    timeout: int = 0
 
     # For TRANSFER steps
     source: str = ""
@@ -39,7 +48,6 @@ class DSLStep:
     target: str = ""
     pattern: str = ""
     condition: str = ""
-    timeout: int = 0
 
 
 @dataclass
@@ -48,37 +56,68 @@ class DSLRecipe:
     name: str = ""
     variables: Dict[str, str] = field(default_factory=dict)
     hosts: Dict[str, str] = field(default_factory=dict)
+    storages: Dict[str, str] = field(default_factory=dict)
     steps: List[DSLStep] = field(default_factory=list)
+
+
+class DSLParseError(Exception):
+    """Error during DSL parsing."""
+    def __init__(self, message: str, line_num: int = 0, line: str = ""):
+        self.line_num = line_num
+        self.line = line
+        super().__init__(f"Line {line_num}: {message}")
 
 
 class DSLParser:
     """
     Parser for .recipe DSL files.
 
-    Syntax:
-        ---
-        VAR = value
-        ---
+    New Syntax:
+        # Variables (reference with $NAME or ${NAME})
+        var NAME = value
 
-        @host = reference
+        # Hosts (reference with @NAME)
+        host NAME = spec
 
-        > control.command args
-        host: shell command
-        source -> dest
-        ? host: "pattern" timeout=300
+        # Storage (reference with @NAME)
+        storage NAME = spec
+
+        # Control commands
+        vast.pick @host options
+        tmux.open @host
+        notify "message"
+
+        # Execute commands
+        @host > command
+        @host > command &
+        @host timeout=2h > command
+
+        # Wait commands
+        wait @host "pattern" timeout=2h
+        wait @host file=path timeout=1h
+        wait @host idle timeout=30m
+
+        # Transfer commands
+        @src:path -> @dst:path
+        ./local -> @host:remote
     """
 
     def __init__(self):
         self.variables: Dict[str, str] = {}
-        self.hosts: Dict[str, str] = {"local": "local"}
+        self.hosts: Dict[str, str] = {}
+        self.storages: Dict[str, str] = {}
+        self.defined_names: Set[str] = set()  # Track all defined names
         self.steps: List[DSLStep] = []
         self.line_num = 0
+        # For backward compatibility with --- blocks
         self.in_var_block = False
 
     def parse(self, content: str, name: str = "") -> DSLRecipe:
         """Parse DSL content into a recipe."""
         self.variables = {}
-        self.hosts = {"local": "local"}
+        self.hosts = {}
+        self.storages = {}
+        self.defined_names = set()
         self.steps = []
         self.line_num = 0
         self.in_var_block = False
@@ -93,6 +132,7 @@ class DSLParser:
             name=name,
             variables=self.variables,
             hosts=self.hosts,
+            storages=self.storages,
             steps=self.steps,
         )
 
@@ -104,6 +144,15 @@ class DSLParser:
         name = os.path.basename(path).rsplit('.', 1)[0]
         return self.parse(content, name)
 
+    def _check_duplicate_name(self, name: str, kind: str) -> None:
+        """Check if a name is already defined."""
+        if name in self.defined_names:
+            raise DSLParseError(
+                f"Duplicate definition: '{name}' is already defined",
+                self.line_num
+            )
+        self.defined_names.add(name)
+
     def _parse_line(self, line: str) -> None:
         """Parse a single line."""
         # Strip and skip empty/comment lines
@@ -111,29 +160,44 @@ class DSLParser:
         if not stripped or stripped.startswith('#'):
             return
 
-        # Variable block delimiter
+        # Backward compatibility: variable block delimiter
         if stripped == '---':
             self.in_var_block = not self.in_var_block
             return
 
-        # Inside variable block
+        # Inside variable block (backward compatibility)
         if self.in_var_block:
-            self._parse_variable(stripped)
+            self._parse_legacy_variable(stripped)
             return
 
-        # Host definition: @name = value
-        if stripped.startswith('@') and '=' in stripped:
+        # New syntax: var NAME = value
+        if stripped.startswith('var '):
+            self._parse_var_def(stripped)
+            return
+
+        # New syntax: host NAME = spec
+        if stripped.startswith('host '):
             self._parse_host_def(stripped)
             return
 
-        # Control command: > command
-        if stripped.startswith('>'):
-            self._parse_control(stripped)
+        # New syntax: storage NAME = spec
+        if stripped.startswith('storage '):
+            self._parse_storage_def(stripped)
             return
 
-        # Wait/check: ? condition
-        if stripped.startswith('?'):
+        # Backward compatibility: @name = value (old host definition)
+        if stripped.startswith('@') and ' = ' in stripped and ' > ' not in stripped:
+            self._parse_legacy_host_def(stripped)
+            return
+
+        # New syntax: wait @host condition
+        if stripped.startswith('wait '):
             self._parse_wait(stripped)
+            return
+
+        # Backward compatibility: ? host: condition
+        if stripped.startswith('?'):
+            self._parse_legacy_wait(stripped)
             return
 
         # Transfer: source -> dest or source <- dest
@@ -141,33 +205,99 @@ class DSLParser:
             self._parse_transfer(stripped)
             return
 
-        # Execute: host: command
-        if ':' in stripped and not stripped.startswith('/'):
-            # Check if it looks like host:command (not a URL or path)
-            parts = stripped.split(':', 1)
-            if parts[0].strip() and not parts[0].strip().startswith('http'):
-                self._parse_execute(stripped)
-                return
+        # New syntax: @host > command (execute)
+        if ' > ' in stripped and stripped.startswith('@'):
+            self._parse_execute(stripped)
+            return
 
-        # Unknown line - treat as comment for now
+        # Backward compatibility: host: command (old execute syntax)
+        # Check for old execute syntax: host: command
+        if ':' in stripped and not stripped.startswith('/') and ' > ' not in stripped:
+            parts = stripped.split(':', 1)
+            host_part = parts[0].strip()
+            # Must look like a host reference, not a URL
+            if host_part and not host_part.startswith('http') and not host_part.startswith('@'):
+                # Check if it could be a host: command pattern
+                if not any(stripped.startswith(cmd) for cmd in CONTROL_COMMANDS):
+                    self._parse_legacy_execute(stripped)
+                    return
+
+        # Control command: command args (e.g., vast.pick @gpu, tmux.open @host)
+        # Check if line starts with a known control command
+        first_word = stripped.split()[0] if stripped.split() else ""
+        if first_word in CONTROL_COMMANDS:
+            self._parse_control(stripped)
+            return
+
+        # Backward compatibility: > command (old control syntax)
+        if stripped.startswith('>'):
+            self._parse_legacy_control(stripped)
+            return
+
+        # Unknown line - ignore silently for forward compatibility
         pass
 
-    def _parse_variable(self, line: str) -> None:
-        """Parse variable definition: VAR = value"""
-        match = re.match(r'^(\w+)\s*=\s*(.+)$', line)
+    def _parse_var_def(self, line: str) -> None:
+        """Parse variable definition: var NAME = value"""
+        match = re.match(r'^var\s+(\w+)\s*=\s*(.+)$', line)
         if match:
             name, value = match.groups()
+            self._check_duplicate_name(name, "variable")
             self.variables[name] = value.strip()
 
     def _parse_host_def(self, line: str) -> None:
-        """Parse host definition: @name = value"""
+        """Parse host definition: host NAME = spec"""
+        match = re.match(r'^host\s+(\w+)\s*=\s*(.+)$', line)
+        if match:
+            name, value = match.groups()
+            self._check_duplicate_name(name, "host")
+            self.hosts[name] = self._interpolate(value.strip())
+
+    def _parse_storage_def(self, line: str) -> None:
+        """Parse storage definition: storage NAME = spec"""
+        match = re.match(r'^storage\s+(\w+)\s*=\s*(.+)$', line)
+        if match:
+            name, value = match.groups()
+            self._check_duplicate_name(name, "storage")
+            self.storages[name] = self._interpolate(value.strip())
+
+    def _parse_legacy_variable(self, line: str) -> None:
+        """Parse legacy variable definition: VAR = value (inside --- block)"""
+        match = re.match(r'^(\w+)\s*=\s*(.+)$', line)
+        if match:
+            name, value = match.groups()
+            if name not in self.defined_names:
+                self.defined_names.add(name)
+            self.variables[name] = value.strip()
+
+    def _parse_legacy_host_def(self, line: str) -> None:
+        """Parse legacy host definition: @name = value"""
         match = re.match(r'^@(\w+)\s*=\s*(.+)$', line)
         if match:
             name, value = match.groups()
+            if name not in self.defined_names:
+                self.defined_names.add(name)
             self.hosts[name] = self._interpolate(value.strip())
 
     def _parse_control(self, line: str) -> None:
-        """Parse control command: > command args"""
+        """Parse control command: command args"""
+        parts = self._split_args(line)
+        if not parts:
+            return
+
+        command = parts[0]
+        args = parts[1:] if len(parts) > 1 else []
+
+        self.steps.append(DSLStep(
+            type=StepType.CONTROL,
+            line_num=self.line_num,
+            raw=line,
+            command=command,
+            args=args,
+        ))
+
+    def _parse_legacy_control(self, line: str) -> None:
+        """Parse legacy control command: > command args"""
         content = line[1:].strip()
         parts = self._split_args(content)
 
@@ -186,7 +316,45 @@ class DSLParser:
         ))
 
     def _parse_execute(self, line: str) -> None:
-        """Parse execute command: host [timeout=N]: command"""
+        """Parse execute command: @host [timeout=N] > command"""
+        # Split on ' > ' to separate host part from command
+        parts = line.split(' > ', 1)
+        if len(parts) != 2:
+            return
+
+        host_part = parts[0].strip()
+        commands = parts[1].strip()
+
+        # Check for background execution
+        background = commands.endswith('&')
+        if background:
+            commands = commands[:-1].strip()
+
+        # Parse host and optional timeout
+        timeout = 0
+        host_tokens = host_part.split()
+        host = host_tokens[0]
+
+        for token in host_tokens[1:]:
+            if token.startswith('timeout='):
+                timeout = self._parse_duration(token[8:])
+
+        # Remove @ prefix from host
+        if host.startswith('@'):
+            host = host[1:]
+
+        self.steps.append(DSLStep(
+            type=StepType.EXECUTE,
+            line_num=self.line_num,
+            raw=line,
+            host=host,
+            commands=self._interpolate(commands),
+            background=background,
+            timeout=timeout,
+        ))
+
+    def _parse_legacy_execute(self, line: str) -> None:
+        """Parse legacy execute command: host [timeout=N]: command"""
         colon_idx = line.index(':')
         host_part = line[:colon_idx].strip()
         commands = line[colon_idx + 1:].strip()
@@ -196,8 +364,8 @@ class DSLParser:
         if background:
             commands = commands[:-1].strip()
 
-        # Parse host and optional timeout: "host timeout=168h" or just "host"
-        timeout = 0  # 0 means use default
+        # Parse host and optional timeout
+        timeout = 0
         host_tokens = host_part.split()
         host = host_tokens[0]
 
@@ -205,7 +373,7 @@ class DSLParser:
             if token.startswith('timeout='):
                 timeout = self._parse_duration(token[8:])
 
-        # Resolve host reference
+        # Remove @ prefix from host
         if host.startswith('@'):
             host = host[1:]
 
@@ -239,7 +407,54 @@ class DSLParser:
         ))
 
     def _parse_wait(self, line: str) -> None:
-        """Parse wait condition: ? host: "pattern" timeout=N"""
+        """Parse wait command: wait @host condition timeout=N"""
+        content = line[5:].strip()  # Remove 'wait '
+
+        target = ""
+        pattern = ""
+        condition = ""
+        timeout = 300  # default 5 minutes
+
+        # Extract host (first @word)
+        host_match = re.match(r'^@(\w+)\s*', content)
+        if host_match:
+            target = host_match.group(1)
+            content = content[host_match.end():].strip()
+
+        # Extract quoted pattern
+        pattern_match = re.search(r'"([^"]+)"', content)
+        if pattern_match:
+            pattern = pattern_match.group(1)
+            content = content.replace(f'"{pattern}"', '').strip()
+
+        # Extract key=value options
+        for opt in re.findall(r'(\w+)=(\S+)', content):
+            key, value = opt
+            if key == 'timeout':
+                timeout = self._parse_duration(value)
+            elif key == 'file':
+                condition = f"file:{self._interpolate(value)}"
+            elif key == 'port':
+                condition = f"port:{value}"
+            elif key == 'idle' and value.lower() == 'true':
+                condition = "idle"
+
+        # Check for standalone 'idle' keyword
+        if 'idle' in content and 'idle=' not in content:
+            condition = "idle"
+
+        self.steps.append(DSLStep(
+            type=StepType.WAIT,
+            line_num=self.line_num,
+            raw=line,
+            target=target,
+            pattern=pattern,
+            condition=condition,
+            timeout=timeout,
+        ))
+
+    def _parse_legacy_wait(self, line: str) -> None:
+        """Parse legacy wait condition: ? host: condition timeout=N"""
         content = line[1:].strip()
 
         target = ""
@@ -267,13 +482,13 @@ class DSLParser:
             if key == 'timeout':
                 timeout = self._parse_duration(value)
             elif key == 'file':
-                condition = f"file:{value}"
+                condition = f"file:{self._interpolate(value)}"
             elif key == 'port':
                 condition = f"port:{value}"
             elif key == 'idle' and value.lower() == 'true':
                 condition = "idle"
 
-        # Check for standalone 'idle' keyword (no =value)
+        # Check for standalone 'idle' keyword
         if 'idle' in content and 'idle=' not in content:
             condition = "idle"
 
@@ -288,14 +503,24 @@ class DSLParser:
         ))
 
     def _interpolate(self, text: str) -> str:
-        """Interpolate ${VAR} references."""
-        def replace_var(match):
+        """Interpolate $VAR and ${VAR} references."""
+        # First handle ${VAR} syntax
+        def replace_braced(match):
             var_name = match.group(1)
             if var_name.startswith('secret:'):
                 return match.group(0)  # Keep secret refs as-is
             return self.variables.get(var_name, match.group(0))
 
-        return re.sub(r'\$\{(\w+(?::\w+)?)\}', replace_var, text)
+        text = re.sub(r'\$\{(\w+(?::\w+)?)\}', replace_braced, text)
+
+        # Then handle $VAR syntax (but not ${VAR} which was already handled)
+        def replace_simple(match):
+            var_name = match.group(1)
+            return self.variables.get(var_name, match.group(0))
+
+        text = re.sub(r'\$(\w+)(?!\{)', replace_simple, text)
+
+        return text
 
     def _split_args(self, text: str) -> List[str]:
         """Split arguments respecting quotes."""

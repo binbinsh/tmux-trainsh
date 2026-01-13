@@ -62,34 +62,163 @@ Supported secret keys:
 
 ## Recipe DSL
 
+Recipe files (`.recipe`) define automated training workflows with a simple DSL.
+
+### Quick Example
+
 ```
----
-MODEL = "llama-7b"
-EPOCHS = 3
----
+# Variables
+var MODEL = llama-7b
+var WORKDIR = /workspace/train
 
-@gpu = root@vastai-instance -p 22022
-@storage = r2:models
+# Hosts
+host gpu = placeholder
+host backup = myserver
 
-# Open a tmux pane connected to GPU host
-> tmux.open @gpu as gpu
+# Storage
+storage output = r2:my-bucket
 
-# Setup
-gpu: cd /workspace && git clone https://github.com/user/repo
-gpu: pip install -r requirements.txt
+# Workflow
+vast.pick @gpu num_gpus=1 min_gpu_ram=24
+vast.wait timeout=5m
+tmux.open @gpu
 
-# Training
-gpu: python train.py --model ${MODEL} --epochs ${EPOCHS}
+@gpu > cd $WORKDIR && git clone https://github.com/user/repo
+@gpu > pip install -r requirements.txt
+@gpu > python train.py --model $MODEL &
 
-# Wait for completion
-? gpu : "Training complete" timeout=2h
+wait @gpu idle timeout=2h
 
-# Upload results to R2
-gpu:/workspace/output -> storage:/${MODEL}/
+@gpu:$WORKDIR/model -> @output:/models/$MODEL/
+@gpu:$WORKDIR/model -> @backup:/backup/
 
-# Close the pane
-> tmux.close gpu
+vast.stop
+tmux.close @gpu
 ```
+
+### Syntax Reference
+
+#### Definitions
+
+All definitions must appear before workflow commands. Names cannot be duplicated across var/host/storage.
+
+| Type | Syntax | Reference | Description |
+|------|--------|-----------|-------------|
+| Variable | `var NAME = value` | `$NAME` | Define a variable |
+| Host | `host NAME = spec` | `@NAME` | Define a remote host |
+| Storage | `storage NAME = spec` | `@NAME` | Define a storage backend |
+
+**Host spec formats:**
+
+| Spec | Description |
+|------|-------------|
+| `placeholder` | Placeholder, must be filled by `vast.pick` |
+| `user@hostname` | SSH host |
+| `user@hostname -p PORT` | SSH host with port |
+| `user@hostname -i KEY` | SSH host with identity file |
+| `user@hostname -J JUMP` | SSH host with jump host |
+| `name` | Reference to hosts.toml config |
+
+**Storage spec formats:**
+
+| Spec | Description |
+|------|-------------|
+| `placeholder` | Placeholder, must be filled at runtime |
+| `r2:bucket` | Cloudflare R2 |
+| `b2:bucket` | Backblaze B2 |
+| `s3:bucket` | Amazon S3 |
+| `name` | Reference to storages.toml config |
+
+#### Execute Commands
+
+Run commands on a host:
+
+```
+@host > command
+@host > command &
+@host timeout=2h > command
+```
+
+| Syntax | Description |
+|--------|-------------|
+| `@host > cmd` | Run command, wait for completion |
+| `@host > cmd &` | Run command in background |
+| `@host timeout=DURATION > cmd` | Run with custom timeout (default: 10m) |
+
+#### Wait Commands
+
+Wait for conditions:
+
+```
+wait @host "pattern" timeout=DURATION
+wait @host file=PATH timeout=DURATION
+wait @host port=PORT timeout=DURATION
+wait @host idle timeout=DURATION
+```
+
+| Condition | Description |
+|-----------|-------------|
+| `"pattern"` | Wait for regex pattern in terminal output |
+| `file=PATH` | Wait for file to exist |
+| `port=PORT` | Wait for port to be open |
+| `idle` | Wait for no child processes (command finished) |
+
+#### Transfer Commands
+
+Transfer files between endpoints:
+
+```
+@src:path -> @dst:path
+@src:path -> ./local/path
+./local/path -> @dst:path
+```
+
+#### Control Commands
+
+| Command | Description |
+|---------|-------------|
+| `tmux.open @host` | Open tmux session on host |
+| `tmux.close @host` | Close tmux session |
+| `vast.pick @host [options]` | Interactively select Vast.ai instance |
+| `vast.start [id]` | Start Vast.ai instance |
+| `vast.stop [id]` | Stop Vast.ai instance |
+| `vast.wait [options]` | Wait for instance to be ready |
+| `vast.cost [id]` | Show usage cost |
+| `notify "message"` | Send notification |
+| `sleep DURATION` | Sleep for duration |
+
+**vast.pick options:**
+
+- `num_gpus=N` - Minimum GPU count
+- `min_gpu_ram=N` - Minimum GPU memory (GB)
+- `gpu=NAME` - GPU model (e.g., RTX_4090)
+- `max_dph=N` - Maximum $/hour
+- `limit=N` - Max instances to show
+
+**vast.wait options:**
+
+- `timeout=DURATION` - Max wait time (default: 10m)
+- `poll=DURATION` - Poll interval (default: 10s)
+- `stop_on_fail=BOOL` - Stop instance on timeout
+
+#### Duration Format
+
+- `30s` - 30 seconds
+- `5m` - 5 minutes
+- `2h` - 2 hours
+- `300` - 300 seconds (raw number)
+
+#### Comments
+
+```
+# This is a comment
+```
+
+#### Variable Interpolation
+
+- `$NAME` - Reference a variable
+- `${NAME}` - Reference a variable (alternative)
+- `${secret:NAME}` - Reference a secret from secrets store
 
 ## Commands
 

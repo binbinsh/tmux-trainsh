@@ -11,79 +11,80 @@
 # Training time: Varies based on dataset size and model
 #
 # Usage:
-#   trainsh recipe run llamafactory-finetune
+#   train recipe run llamafactory-finetune
 
----
-REPO_URL = https://github.com/hiyouga/LLaMA-Factory.git
-WORKDIR = /workspace/LLaMA-Factory
-MODEL_NAME = Qwen/Qwen2.5-1.5B
-TEMPLATE = qwen
-DATASET = alpaca_en_demo
-LORA_RANK = 8
-LORA_ALPHA = 16
-LEARNING_RATE = 5e-5
-NUM_EPOCHS = 3
-BATCH_SIZE = 4
-GRAD_ACCUM = 4
-MAX_SAMPLES = 1000
-OUTPUT_DIR = saves/qwen2.5-1.5b-lora
-LOCAL_OUTPUT = ./llamafactory-output
----
+var REPO_URL = https://github.com/hiyouga/LLaMA-Factory.git
+var WORKDIR = /workspace/LLaMA-Factory
+var MODEL_NAME = Qwen/Qwen2.5-1.5B
+var TEMPLATE = qwen
+var DATASET = alpaca_en_demo
+var LORA_RANK = 8
+var LORA_ALPHA = 16
+var LEARNING_RATE = 5e-5
+var NUM_EPOCHS = 3
+var BATCH_SIZE = 4
+var GRAD_ACCUM = 4
+var MAX_SAMPLES = 1000
+var OUTPUT_DIR = saves/qwen2.5-1.5b-lora
+var LOCAL_OUTPUT = ./llamafactory-output
 
-# Define GPU host
-@gpu = vast
+host gpu = placeholder
 
 # Select a GPU instance with sufficient VRAM
-> vast.pick @gpu num_gpus=1 min_gpu_ram=24
+vast.pick @gpu num_gpus=1 min_gpu_ram=24
 
 # Wait for instance to be ready
-> vast.wait timeout=5m
+vast.wait timeout=5m
+
+# Open tmux session
+tmux.open @gpu
 
 # Clone LLaMA-Factory repository
-gpu: git clone ${REPO_URL} ${WORKDIR} 2>/dev/null || (cd ${WORKDIR} && git pull)
+@gpu > git clone $REPO_URL $WORKDIR 2>/dev/null || (cd $WORKDIR && git pull)
 
 # Install dependencies
-gpu: cd ${WORKDIR} && pip install -e ".[torch,metrics]" && pip install deepspeed
+@gpu > cd $WORKDIR && pip install -e ".[torch,metrics]" && pip install deepspeed
 
 # Setup HuggingFace cache directory
-gpu: export HF_HOME=/workspace/.cache/huggingface && mkdir -p $HF_HOME
+@gpu > export HF_HOME=/workspace/.cache/huggingface && mkdir -p $HF_HOME
 
 # Create output directories
-gpu: mkdir -p ${WORKDIR}/${OUTPUT_DIR} ${WORKDIR}/logs
+@gpu > mkdir -p $WORKDIR/$OUTPUT_DIR $WORKDIR/logs
 
-# Start LoRA fine-tuning (using nohup for persistence)
-gpu: cd ${WORKDIR} && nohup llamafactory-cli train \
+# Start LoRA fine-tuning
+@gpu > cd $WORKDIR && llamafactory-cli train \
     --stage sft \
     --do_train True \
-    --model_name_or_path ${MODEL_NAME} \
-    --dataset ${DATASET} \
-    --template ${TEMPLATE} \
+    --model_name_or_path $MODEL_NAME \
+    --dataset $DATASET \
+    --template $TEMPLATE \
     --finetuning_type lora \
-    --lora_rank ${LORA_RANK} \
-    --lora_alpha ${LORA_ALPHA} \
+    --lora_rank $LORA_RANK \
+    --lora_alpha $LORA_ALPHA \
     --lora_dropout 0.1 \
-    --output_dir ${OUTPUT_DIR} \
+    --output_dir $OUTPUT_DIR \
     --overwrite_output_dir True \
-    --per_device_train_batch_size ${BATCH_SIZE} \
-    --gradient_accumulation_steps ${GRAD_ACCUM} \
+    --per_device_train_batch_size $BATCH_SIZE \
+    --gradient_accumulation_steps $GRAD_ACCUM \
     --lr_scheduler_type cosine \
     --logging_steps 10 \
     --save_steps 500 \
-    --learning_rate ${LEARNING_RATE} \
-    --num_train_epochs ${NUM_EPOCHS} \
-    --max_samples ${MAX_SAMPLES} \
+    --learning_rate $LEARNING_RATE \
+    --num_train_epochs $NUM_EPOCHS \
+    --max_samples $MAX_SAMPLES \
     --plot_loss True \
     --fp16 True \
-    > logs/train.log 2>&1 && touch ${OUTPUT_DIR}/training_complete.txt &
+    && touch $OUTPUT_DIR/training_complete.txt &
 
-# Poll for training completion
-? gpu: file=${WORKDIR}/${OUTPUT_DIR}/training_complete.txt timeout=6h
+# Wait for training completion
+wait @gpu file=$WORKDIR/$OUTPUT_DIR/training_complete.txt timeout=6h
 
 # Download LoRA adapter
-gpu:${WORKDIR}/${OUTPUT_DIR} -> ${LOCAL_OUTPUT}/lora-adapter
+@gpu:$WORKDIR/$OUTPUT_DIR -> $LOCAL_OUTPUT/lora-adapter
 
 # Download training logs
-gpu:${WORKDIR}/logs -> ${LOCAL_OUTPUT}/logs
+@gpu:$WORKDIR/logs -> $LOCAL_OUTPUT/logs
 
 # Stop the instance
-> vast.stop
+vast.stop
+tmux.close @gpu
