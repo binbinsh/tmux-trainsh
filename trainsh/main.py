@@ -8,6 +8,7 @@ from typing import Optional
 usage = '''[command] [args...]
 
 Commands:
+  exec      - Execute DSL commands directly
   host      - Host management (SSH, Colab, Vast.ai)
   transfer  - File transfer between hosts/storage
   recipe    - Execute automation recipes
@@ -80,7 +81,10 @@ def main(args: list[str]) -> Optional[str]:
     cmd_args = args[2:]
 
     # Route to subcommand
-    if command == "vast":
+    if command == "exec":
+        from .commands.exec_cmd import main as exec_main
+        return exec_main(cmd_args)
+    elif command == "vast":
         from .commands.vast import main as vast_main
         return vast_main(cmd_args)
     elif command == "transfer":

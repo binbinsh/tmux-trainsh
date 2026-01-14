@@ -224,6 +224,9 @@ Transfer files between endpoints:
 
 | Command | Description |
 |---------|-------------|
+| `train exec '<dsl>'` | Execute DSL commands directly |
+| `train exec '@host > cmd'` | Run command on remote host |
+| `train exec '@src:path -> @dst:path'` | Transfer files |
 | `train host list` | List configured hosts |
 | `train host add` | Add new host (SSH/Colab) |
 | `train host show <name>` | Show host details |

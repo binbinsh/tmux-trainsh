@@ -1713,6 +1713,7 @@ class DSLExecutor:
     def _parse_endpoint(self, spec: str) -> 'TransferEndpoint':
         """Parse transfer endpoint: @host:/path, @storage:/path, or /local/path"""
         from ..core.models import TransferEndpoint
+        from ..commands.host import load_hosts
 
         if spec.startswith('@'):
             # Remote: @name:/path - could be host or storage
@@ -1725,9 +1726,19 @@ class DSLExecutor:
                     storage_spec = self.recipe.storages[name]
                     return TransferEndpoint(type="storage", path=path, storage_id=name)
 
-                # Otherwise it's a host reference
-                host = self.recipe.hosts.get(name, name)
-                return TransferEndpoint(type="host", path=path, host_id=host)
+                # Check recipe hosts first, then global hosts
+                if name in self.recipe.hosts:
+                    host = self.recipe.hosts[name]
+                    return TransferEndpoint(type="host", path=path, host_id=host)
+
+                # Check global hosts
+                global_hosts = load_hosts()
+                if name in global_hosts:
+                    # Use the name directly - _build_transfer_hosts will include it
+                    return TransferEndpoint(type="host", path=path, host_id=name)
+
+                # Unknown host - use name and let caller handle error
+                return TransferEndpoint(type="host", path=path, host_id=name)
             else:
                 # Just @name without path - use as host with root path
                 return TransferEndpoint(type="host", path="/", host_id=spec[1:])
@@ -1736,15 +1747,23 @@ class DSLExecutor:
             return TransferEndpoint(type="local", path=os.path.expanduser(spec))
 
     def _build_transfer_hosts(self) -> Dict[str, Host]:
-        """Build host mapping for transfers from recipe host specs."""
-        hosts: Dict[str, Host] = {}
-        for spec in self.recipe.hosts.values():
+        """Build host mapping for transfers from recipe host specs and global config."""
+        from ..commands.host import load_hosts
+
+        # Start with global hosts
+        global_hosts = load_hosts()
+        hosts: Dict[str, Host] = dict(global_hosts)
+
+        # Add/override with recipe-defined hosts
+        for name, spec in self.recipe.hosts.items():
             if spec == "local":
                 continue
             resolved_spec = spec
             if spec.startswith("vast:"):
                 resolved_spec = _resolve_vast_host(spec[5:])
-            hosts[spec] = _host_from_ssh_spec(resolved_spec)
+            hosts[name] = _host_from_ssh_spec(resolved_spec)
+            # Also store by spec for lookup
+            hosts[spec] = hosts[name]
         return hosts
 
     def _build_transfer_storages(self) -> Dict[str, 'Storage']:
@@ -1877,11 +1896,33 @@ def run_recipe(
     return executor.execute(resume_from=resume_from)
 
 
+def _test_ssh_connection(host: str, port: int, timeout: int = 5) -> bool:
+    """Test if SSH connection works."""
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o", "BatchMode=yes",
+                "-o", f"ConnectTimeout={timeout}",
+                "-o", "StrictHostKeyChecking=no",
+                "-p", str(port),
+                f"root@{host}",
+                "echo ok"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 5,
+        )
+        return result.returncode == 0 and "ok" in result.stdout
+    except Exception:
+        return False
+
+
 def _resolve_vast_host(instance_id: str) -> str:
     """Resolve vast.ai instance ID to SSH host spec.
 
-    Prefers direct SSH connection if available (usually faster),
-    falls back to proxy SSH.
+    Tests direct SSH first (usually faster), falls back to proxy SSH
+    if direct connection fails.
     """
     from ..services.vast_api import get_vast_client
 
@@ -1889,11 +1930,17 @@ def _resolve_vast_host(instance_id: str) -> str:
         client = get_vast_client()
         instance = client.get_instance(int(instance_id))
 
-        # Prefer direct SSH if available (usually faster)
+        # Try direct SSH first if available
         if instance.public_ipaddr and instance.direct_port_start:
-            return f"root@{instance.public_ipaddr} -p {instance.direct_port_start}"
+            if _test_ssh_connection(instance.public_ipaddr, instance.direct_port_start):
+                return f"root@{instance.public_ipaddr} -p {instance.direct_port_start}"
 
         # Fall back to proxy SSH
+        if instance.ssh_host and instance.ssh_port:
+            if _test_ssh_connection(instance.ssh_host, instance.ssh_port):
+                return f"root@{instance.ssh_host} -p {instance.ssh_port}"
+
+        # If both failed, still return proxy (let caller handle the error)
         if instance.ssh_host and instance.ssh_port:
             return f"root@{instance.ssh_host} -p {instance.ssh_port}"
 

@@ -74,6 +74,18 @@ install_deps() {
         echo "rsync: installed"
     fi
 
+    # Check for pv (for transfer progress display)
+    if ! command -v pv &> /dev/null; then
+        echo "Installing pv..."
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            brew install pv 2>/dev/null || echo "Please install pv: brew install pv"
+        else
+            sudo apt-get install -y pv 2>/dev/null || echo "Please install pv manually"
+        fi
+    else
+        echo "pv: installed"
+    fi
+
     # Check for rclone
     if ! command -v rclone &> /dev/null; then
         echo "Installing rclone..."

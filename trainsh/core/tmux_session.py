@@ -86,6 +86,8 @@ class TmuxSession:
         result = self._run("has-session", "-t", self.name)
         if result.returncode != 0:
             self._run("new-session", "-d", "-s", self.name, check=True)
+            # Set larger scrollback buffer (default is 2000)
+            self._run("set-option", "-t", self.name, "history-limit", "50000")
 
     @property
     def exists(self) -> bool:

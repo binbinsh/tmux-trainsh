@@ -121,22 +121,39 @@ class TransferEngine:
             args.append(os.path.expanduser(destination))
 
         try:
-            result = subprocess.run(
+            # Run rsync with real-time output for progress
+            import sys
+            process = subprocess.Popen(
                 args,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
             )
 
-            # Parse bytes transferred from rsync output
+            output_lines = []
             bytes_transferred = 0
-            match = re.search(r"sent ([\d,]+) bytes", result.stdout)
-            if match:
-                bytes_transferred = int(match.group(1).replace(",", ""))
+
+            # Stream output in real-time
+            for line in process.stdout:
+                line = line.rstrip()
+                output_lines.append(line)
+
+                # Show progress lines (rsync progress format)
+                if line and not line.startswith(' '):
+                    print(f"  {line}", flush=True)
+
+                # Parse bytes from final summary
+                match = re.search(r"sent ([\d,]+) bytes", line)
+                if match:
+                    bytes_transferred = int(match.group(1).replace(",", ""))
+
+            process.wait()
 
             return TransferResult(
-                success=result.returncode == 0,
-                exit_code=result.returncode,
-                message=result.stderr if result.returncode != 0 else "Transfer complete",
+                success=process.returncode == 0,
+                exit_code=process.returncode,
+                message="\n".join(output_lines[-5:]) if process.returncode != 0 else "Transfer complete",
                 bytes_transferred=bytes_transferred,
             )
         except Exception as e:
@@ -397,23 +414,35 @@ class TransferEngine:
         full_cmd = src_ssh + [rsync_cmd]
 
         try:
-            result = subprocess.run(
+            # Run with real-time output
+            process = subprocess.Popen(
                 full_cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=3600,  # 1 hour timeout for large transfers
+                bufsize=1,
             )
 
-            # Parse bytes transferred
+            output_lines = []
             bytes_transferred = 0
-            match = re.search(r"sent ([\d,]+) bytes", result.stdout)
-            if match:
-                bytes_transferred = int(match.group(1).replace(",", ""))
+
+            for line in process.stdout:
+                line = line.rstrip()
+                output_lines.append(line)
+                # Show all non-empty lines
+                if line:
+                    print(f"  {line}", flush=True)
+                # Parse bytes from final summary
+                match = re.search(r"sent ([\d,]+) bytes", line)
+                if match:
+                    bytes_transferred = int(match.group(1).replace(",", ""))
+
+            process.wait()
 
             return TransferResult(
-                success=result.returncode == 0,
-                exit_code=result.returncode,
-                message=result.stderr if result.returncode != 0 else "Transfer complete",
+                success=process.returncode == 0,
+                exit_code=process.returncode,
+                message="\n".join(output_lines[-5:]) if process.returncode != 0 else "Transfer complete",
                 bytes_transferred=bytes_transferred,
             )
         except subprocess.TimeoutExpired:
@@ -436,12 +465,12 @@ class TransferEngine:
         src_host: Host,
         dst_host: Host,
     ) -> TransferResult:
-        """Transfer using ssh + tar pipe (streaming, no local storage).
+        """Transfer using ssh + tar pipe with pv for progress.
 
-        Data flows: src_host -> local memory buffer -> dst_host
+        Data flows: src_host -> local memory (pv) -> dst_host
         No files are written to local disk.
 
-        Command: ssh src 'tar cf - path' | ssh dst 'tar xf - -C dest'
+        Command: ssh src 'tar cf - path' | pv | ssh dst 'tar xf - -C dest'
         """
         src_ssh = self._build_ssh_args(src_host)
         dst_ssh = self._build_ssh_args(dst_host)
@@ -454,52 +483,57 @@ class TransferEngine:
         src_basename = os.path.basename(src_path)
 
         if destination.path.endswith('/'):
-            # Copy into directory: /src/foo -> /dst/bar/ means /dst/bar/foo
             tar_create = f"tar cf - -C '{src_parent}' '{src_basename}'"
             tar_extract = f"tar xf - -C '{dst_path}'"
         else:
-            # Direct path: extract to parent, basename should match
             dst_parent = os.path.dirname(dst_path)
             tar_create = f"tar cf - -C '{src_parent}' '{src_basename}'"
             tar_extract = f"mkdir -p '{dst_parent}' && tar xf - -C '{dst_parent}'"
 
-        # Build pipeline: ssh src 'tar c' | ssh dst 'tar x'
         src_cmd = src_ssh + [tar_create]
         dst_cmd = dst_ssh + [tar_extract]
 
-        # Quote args properly for shell
         def shell_quote(args):
             return ' '.join(f"'{a}'" if ' ' in a or "'" not in a else f'"{a}"' for a in args)
 
-        full_cmd = f"{shell_quote(src_cmd)} | {shell_quote(dst_cmd)}"
+        # Check if pv is available for progress display
+        has_pv = subprocess.run(["which", "pv"], capture_output=True).returncode == 0
+
+        if has_pv:
+            # Use pv for progress: ssh src | pv | ssh dst
+            full_cmd = f"{shell_quote(src_cmd)} | pv -pterab | {shell_quote(dst_cmd)}"
+            print(f"  Streaming: {src_host.hostname} -> {dst_host.hostname} (with progress)", flush=True)
+        else:
+            full_cmd = f"{shell_quote(src_cmd)} | {shell_quote(dst_cmd)}"
+            print(f"  Streaming: {src_host.hostname} -> {dst_host.hostname}", flush=True)
+            print(f"  (Install 'pv' for progress display: brew install pv)", flush=True)
 
         try:
-            result = subprocess.run(
+            # Run with stderr going directly to terminal for pv progress
+            import sys
+            process = subprocess.Popen(
                 full_cmd,
                 shell=True,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=None,  # Let stderr go directly to terminal
                 text=True,
-                timeout=3600,
             )
 
-            if result.returncode != 0:
-                error_msg = result.stderr or result.stdout or "Unknown error"
+            # Wait for process to complete
+            stdout, _ = process.communicate()
+
+            if process.returncode != 0:
                 return TransferResult(
                     success=False,
-                    exit_code=result.returncode,
-                    message=f"Pipe transfer failed: {error_msg}",
+                    exit_code=process.returncode,
+                    message=f"Pipe transfer failed: {stdout or 'Unknown error'}",
                 )
 
+            print(f"\n  Transfer complete (streaming)", flush=True)
             return TransferResult(
                 success=True,
                 exit_code=0,
                 message="Transfer complete (streaming)",
-            )
-        except subprocess.TimeoutExpired:
-            return TransferResult(
-                success=False,
-                exit_code=-1,
-                message="Transfer timed out",
             )
         except Exception as e:
             return TransferResult(
