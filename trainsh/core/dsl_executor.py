@@ -240,10 +240,10 @@ class DSLExecutor:
         if not self.recipe_path:
             return
 
-        # Collect resolved hosts
+        # Collect all windows (including local hosts)
         hosts = {}
         for name, window in self.ctx.windows.items():
-            if window.host and window.host != "local":
+            if window.host:
                 hosts[name] = window.host
 
         # Get vast instance tracking info
@@ -1710,49 +1710,93 @@ class DSLExecutor:
             # Check idle condition (no child processes in tmux pane)
             if condition == "idle":
                 window = self.ctx.windows.get(target)
-                if window and window.host != "local" and window.remote_session:
-                    try:
-                        # Get the pane's shell PID
-                        pane_pid_cmd = f"tmux list-panes -t {window.remote_session} -F '#{{pane_pid}}'"
-                        ssh_args = _build_ssh_args(window.host, command=pane_pid_cmd, tty=False)
-                        result = subprocess.run(ssh_args, capture_output=True, text=True, timeout=10)
+                if window and window.remote_session:
+                    if window.host == "local":
+                        # Local idle check
+                        try:
+                            # Get the pane's shell PID
+                            pane_pid_cmd = f"tmux list-panes -t {window.remote_session} -F '#{{pane_pid}}'"
+                            result = subprocess.run(
+                                pane_pid_cmd,
+                                shell=True,
+                                capture_output=True,
+                                text=True,
+                                timeout=10,
+                            )
 
-                        if result.returncode == 0:
-                            pane_pid = result.stdout.strip().split('\n')[0]
+                            if result.returncode == 0:
+                                pane_pid = result.stdout.strip().split('\n')[0]
 
-                            # Check if the shell has any child processes
-                            check_cmd = f"ps --ppid {pane_pid} --no-headers 2>/dev/null | wc -l"
-                            ssh_args = _build_ssh_args(window.host, command=check_cmd, tty=False)
+                                # Check if the shell has any child processes
+                                check_cmd = f"ps --ppid {pane_pid} --no-headers 2>/dev/null | wc -l"
+                                result = subprocess.run(
+                                    check_cmd,
+                                    shell=True,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=10,
+                                )
+
+                                if result.returncode == 0:
+                                    child_count = int(result.stdout.strip())
+                                    if self.logger:
+                                        self.logger.log_detail("wait_idle_check", f"Local pane {pane_pid} has {child_count} child processes", {
+                                            "pane_pid": pane_pid,
+                                            "child_count": child_count,
+                                        })
+
+                                    if child_count == 0:
+                                        if self.logger:
+                                            self.logger.log_detail("wait_idle", f"Local pane is idle (no child processes)", {"elapsed_sec": elapsed})
+                                        return True, f"Pane is idle (command completed)"
+
+                        except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+                            self.log(f"  Local idle check failed: {e}")
+
+                    else:
+                        # Remote idle check via SSH
+                        try:
+                            # Get the pane's shell PID
+                            pane_pid_cmd = f"tmux list-panes -t {window.remote_session} -F '#{{pane_pid}}'"
+                            ssh_args = _build_ssh_args(window.host, command=pane_pid_cmd, tty=False)
                             result = subprocess.run(ssh_args, capture_output=True, text=True, timeout=10)
 
                             if result.returncode == 0:
-                                child_count = int(result.stdout.strip())
-                                if self.logger:
-                                    self.logger.log_detail("wait_idle_check", f"Pane {pane_pid} has {child_count} child processes", {
-                                        "pane_pid": pane_pid,
-                                        "child_count": child_count,
-                                    })
+                                pane_pid = result.stdout.strip().split('\n')[0]
 
-                                if child_count == 0:
+                                # Check if the shell has any child processes
+                                check_cmd = f"ps --ppid {pane_pid} --no-headers 2>/dev/null | wc -l"
+                                ssh_args = _build_ssh_args(window.host, command=check_cmd, tty=False)
+                                result = subprocess.run(ssh_args, capture_output=True, text=True, timeout=10)
+
+                                if result.returncode == 0:
+                                    child_count = int(result.stdout.strip())
                                     if self.logger:
-                                        self.logger.log_detail("wait_idle", f"Pane is idle (no child processes)", {"elapsed_sec": elapsed})
-                                    return True, f"Pane is idle (command completed)"
+                                        self.logger.log_detail("wait_idle_check", f"Pane {pane_pid} has {child_count} child processes", {
+                                            "pane_pid": pane_pid,
+                                            "child_count": child_count,
+                                        })
 
-                        ssh_failures = 0
+                                    if child_count == 0:
+                                        if self.logger:
+                                            self.logger.log_detail("wait_idle", f"Pane is idle (no child processes)", {"elapsed_sec": elapsed})
+                                        return True, f"Pane is idle (command completed)"
 
-                    except (subprocess.TimeoutExpired, OSError) as e:
-                        ssh_failures += 1
-                        self.log(f"  SSH idle check failed ({ssh_failures}/{self.ssh_max_retries}): {e}")
+                            ssh_failures = 0
 
-                        if ssh_failures >= self.ssh_max_retries:
-                            return False, f"Too many SSH failures: {e}"
+                        except (subprocess.TimeoutExpired, OSError) as e:
+                            ssh_failures += 1
+                            self.log(f"  SSH idle check failed ({ssh_failures}/{self.ssh_max_retries}): {e}")
 
-                        backoff = min(
-                            self.ssh_retry_base_interval * (2 ** (ssh_failures - 1)),
-                            self.ssh_retry_max_interval
-                        )
-                        time.sleep(backoff)
-                        continue
+                            if ssh_failures >= self.ssh_max_retries:
+                                return False, f"Too many SSH failures: {e}"
+
+                            backoff = min(
+                                self.ssh_retry_base_interval * (2 ** (ssh_failures - 1)),
+                                self.ssh_retry_max_interval
+                            )
+                            time.sleep(backoff)
+                            continue
 
             # Format remaining time
             remaining_str = _format_duration(remaining)
@@ -1966,6 +2010,7 @@ def run_recipe(
     if resume and job_id:
         saved_state = state_manager.load(job_id)
         if saved_state:
+            # Restore windows from saved hosts
             for name, host_spec in saved_state.hosts.items():
                 # Reconstruct remote_session name from job_id and window name
                 remote_session = f"train_{job_id[:8]}_{name}"
@@ -1974,6 +2019,40 @@ def run_recipe(
                     host=host_spec,
                     remote_session=remote_session,
                 )
+
+            # If no windows were restored but we're past tmux.open steps,
+            # try to find existing tmux sessions for this job
+            if not executor.ctx.windows and resume_from > 0:
+                # Check if any tmux sessions exist for this job
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        f"tmux list-sessions -F '#{{session_name}}' 2>/dev/null | grep 'train_{job_id[:8]}_'",
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        for session_name in result.stdout.strip().split('\n'):
+                            if session_name:
+                                # Extract window name from session name
+                                window_name = session_name.replace(f"train_{job_id[:8]}_", "")
+                                # Determine host from recipe or default to local
+                                host_spec = "local"
+                                for host_name, spec in recipe.hosts.items():
+                                    if spec == "local":
+                                        host_spec = "local"
+                                        break
+                                executor.ctx.windows[window_name] = WindowInfo(
+                                    name=window_name,
+                                    host=host_spec,
+                                    remote_session=session_name,
+                                )
+                                if log_callback:
+                                    log_callback(f"Restored window '{window_name}' from existing tmux session")
+                except Exception:
+                    pass
 
     return executor.execute(resume_from=resume_from)
 

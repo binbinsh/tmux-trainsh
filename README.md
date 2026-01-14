@@ -71,7 +71,7 @@ Recipe files (`.recipe`) define automated training workflows with a simple DSL.
 var MODEL = llama-7b
 var WORKDIR = /workspace/train
 
-# Hosts
+# Hosts (machines)
 host gpu = placeholder
 host backup = myserver
 
@@ -81,19 +81,23 @@ storage output = r2:my-bucket
 # Workflow
 vast.pick @gpu num_gpus=1 min_gpu_ram=24
 vast.wait timeout=5m
-tmux.open @gpu
 
-@gpu > cd $WORKDIR && git clone https://github.com/user/repo
-@gpu > pip install -r requirements.txt
-@gpu > python train.py --model $MODEL &
+# Create a tmux session "work" on the gpu host
+tmux.open @gpu as work
 
-wait @gpu idle timeout=2h
+# Commands reference the session name, not the host
+@work > cd $WORKDIR && git clone https://github.com/user/repo
+@work > pip install -r requirements.txt
+@work > python train.py --model $MODEL &
 
+wait @work idle timeout=2h
+
+# Transfers reference the host (for SSH connection info)
 @gpu:$WORKDIR/model -> @output:/models/$MODEL/
 @gpu:$WORKDIR/model -> @backup:/backup/
 
 vast.stop
-tmux.close @gpu
+tmux.close @work
 ```
 
 ### Syntax Reference
@@ -131,29 +135,31 @@ All definitions must appear before workflow commands. Names cannot be duplicated
 
 #### Execute Commands
 
-Run commands on a host:
+Run commands in a tmux session (created with `tmux.open`):
 
 ```
-@host > command
-@host > command &
-@host timeout=2h > command
+@session > command
+@session > command &
+@session timeout=2h > command
 ```
 
 | Syntax | Description |
 |--------|-------------|
-| `@host > cmd` | Run command, wait for completion |
-| `@host > cmd &` | Run command in background |
-| `@host timeout=DURATION > cmd` | Run with custom timeout (default: 10m) |
+| `@session > cmd` | Run command, wait for completion |
+| `@session > cmd &` | Run command in background |
+| `@session timeout=DURATION > cmd` | Run with custom timeout (default: 10m) |
+
+**Note:** The `@session` references a session name from `tmux.open @host as session`, not the host directly.
 
 #### Wait Commands
 
-Wait for conditions:
+Wait for conditions in a session:
 
 ```
-wait @host "pattern" timeout=DURATION
-wait @host file=PATH timeout=DURATION
-wait @host port=PORT timeout=DURATION
-wait @host idle timeout=DURATION
+wait @session "pattern" timeout=DURATION
+wait @session file=PATH timeout=DURATION
+wait @session port=PORT timeout=DURATION
+wait @session idle timeout=DURATION
 ```
 
 | Condition | Description |
@@ -175,10 +181,29 @@ Transfer files between endpoints:
 
 #### Control Commands
 
+**tmux session commands:**
+
+The recipe system separates two concepts:
+- **Host**: The machine where commands run (defined with `host NAME = spec`)
+- **Session**: A persistent tmux session on that host (created with `tmux.open @host as session_name`)
+
+Commands are sent to **sessions**, not hosts directly. This allows multiple sessions on the same host.
+
+```
+# WRONG - missing session name
+tmux.open @gpu
+@gpu > python train.py
+
+# CORRECT - create named session, then use session name
+tmux.open @gpu as work
+@work > python train.py
+tmux.close @work
+```
+
 | Command | Description |
 |---------|-------------|
-| `tmux.open @host` | Open tmux session on host |
-| `tmux.close @host` | Close tmux session |
+| `tmux.open @host as name` | Create tmux session named "name" on host |
+| `tmux.close @session` | Close tmux session |
 | `vast.pick @host [options]` | Interactively select Vast.ai instance |
 | `vast.start [id]` | Start Vast.ai instance |
 | `vast.stop [id]` | Stop Vast.ai instance |
