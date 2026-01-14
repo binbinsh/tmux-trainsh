@@ -58,7 +58,7 @@ def cmd_set(args: List[str]) -> None:
     """Set a secret value."""
     if not args:
         print("Usage: train secrets set <key>")
-        print("\nExample: trainsh secrets set VAST_API_KEY")
+        print("\nExample: train secrets set VAST_API_KEY")
         sys.exit(1)
 
     from ..core.secrets import get_secrets_manager

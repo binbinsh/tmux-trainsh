@@ -194,7 +194,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
 def main(args: list) -> Optional[str]:
     """Main entry point for pricing command."""
     parser = argparse.ArgumentParser(
-        prog="trainsh pricing",
+        prog="train pricing",
         description="Manage pricing and currency conversion",
     )
     subparsers = parser.add_subparsers(dest="command", help="Pricing commands")

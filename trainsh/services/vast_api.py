@@ -430,7 +430,7 @@ def get_vast_client() -> VastAPIClient:
     if not api_key:
         raise RuntimeError(
             "Vast.ai API key not configured. "
-            "Run: trainsh secrets set VAST_API_KEY"
+            "Run: train secrets set VAST_API_KEY"
         )
 
     return VastAPIClient(api_key)

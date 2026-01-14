@@ -55,7 +55,7 @@ def cmd_list(args: List[str]) -> None:
 
     if not connections:
         print("No Colab connections configured.")
-        print("Use 'trainsh colab connect' to add one.")
+        print("Use 'train colab connect' to add one.")
         return
 
     print("Colab connections:")
@@ -134,7 +134,7 @@ def cmd_connect(args: List[str]) -> None:
     _save_colab_data(data)
 
     print(f"\nAdded Colab connection: {name}")
-    print("Use 'trainsh colab ssh' to connect.")
+    print("Use 'train colab ssh' to connect.")
 
 
 def cmd_ssh(args: List[str]) -> None:
@@ -146,7 +146,7 @@ def cmd_ssh(args: List[str]) -> None:
 
     if not connections:
         print("No Colab connections configured.")
-        print("Use 'trainsh colab connect' first.")
+        print("Use 'train colab connect' first.")
         sys.exit(1)
 
     # Select connection

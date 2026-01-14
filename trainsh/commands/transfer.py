@@ -9,9 +9,9 @@ usage = '''<source> <destination> [options]
 Transfer files between local, remote hosts, and cloud storage.
 
 Examples:
-  trainsh transfer ~/data host:myserver:/data
-  trainsh transfer host:myserver:/models ~/models
-  trainsh transfer ~/data storage:gdrive:/backups
+  train transfer ~/data host:myserver:/data
+  train transfer host:myserver:/models ~/models
+  train transfer ~/data storage:gdrive:/backups
 
 Options:
   --host, -H <name>     Remote host name or ID
@@ -126,22 +126,68 @@ def main(args: List[str]) -> Optional[str]:
             dry_run=dry_run,
         )
     elif src_type == "storage" or dst_type == "storage":
-        # Need to load storage config
-        # For now, assume rclone remote is already configured with the storage name
-        src_rclone = f"{src_id}:{src_path}" if src_type == "storage" else src_path
-        dst_rclone = f"{dst_id}:{dst_path}" if dst_type == "storage" else dst_path
+        # Load storage configurations
+        from .storage import load_storages
+        from ..services.transfer_engine import (
+            build_rclone_env,
+            get_rclone_remote_name,
+        )
+        from ..core.models import StorageType
+
+        storages = load_storages()
+
+        src_storage = storages.get(src_id) if src_type == "storage" else None
+        dst_storage = storages.get(dst_id) if dst_type == "storage" else None
+
+        # Validate storages exist
+        if src_type == "storage" and not src_storage:
+            print(f"Error: Source storage not found: {src_id}")
+            print("Use 'train storage list' to see configured storages.")
+            sys.exit(1)
+        if dst_type == "storage" and not dst_storage:
+            print(f"Error: Destination storage not found: {dst_id}")
+            print("Use 'train storage list' to see configured storages.")
+            sys.exit(1)
+
+        # Build rclone paths with correct remote names
+        if src_storage:
+            src_remote = get_rclone_remote_name(src_storage)
+            # Handle bucket for S3-compatible storage
+            if src_storage.type in (StorageType.R2, StorageType.S3, StorageType.B2):
+                bucket = src_storage.config.get("bucket", "")
+                if bucket and not src_path.startswith(bucket):
+                    src_path = f"{bucket}/{src_path.lstrip('/')}"
+            src_rclone = f"{src_remote}:{src_path}"
+        else:
+            src_rclone = src_path
+
+        if dst_storage:
+            dst_remote = get_rclone_remote_name(dst_storage)
+            # Handle bucket for S3-compatible storage
+            if dst_storage.type in (StorageType.R2, StorageType.S3, StorageType.B2):
+                bucket = dst_storage.config.get("bucket", "")
+                if bucket and not dst_path.startswith(bucket):
+                    dst_path = f"{bucket}/{dst_path.lstrip('/')}"
+            dst_rclone = f"{dst_remote}:{dst_path}"
+        else:
+            dst_rclone = dst_path
+
+        print(f"  Source: {src_rclone}")
+        print(f"  Destination: {dst_rclone}")
 
         result = engine.rclone(
             source=src_rclone,
             destination=dst_rclone,
             operation="sync" if delete else "copy",
             dry_run=dry_run,
+            src_storage=src_storage,
+            dst_storage=dst_storage,
         )
     else:
         # Host transfers - need to load host config
         # For now, just provide guidance
         print("Note: For host transfers, ensure the host is configured.")
-        print("Use 'trainsh host list' to see configured hosts.")
+        print("Use 'train host list' to see configured hosts.")
         result = engine.transfer(
             source=src_endpoint,
             destination=dst_endpoint,

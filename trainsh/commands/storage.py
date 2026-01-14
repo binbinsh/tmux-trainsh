@@ -106,7 +106,7 @@ def cmd_list(args: List[str]) -> None:
 
     if not storages:
         print("No storage backends configured.")
-        print("Use 'trainsh storage add' to add one.")
+        print("Use 'train storage add' to add one.")
         return
 
     print("Configured storage backends:")
@@ -196,8 +196,10 @@ def cmd_add(args: List[str]) -> None:
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
-        print("\nAccess keys will be stored in secrets.")
-        print("Run 'trainsh secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
+        print("\nCredentials will be automatically loaded from secrets.")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY' and '{name.upper()}_SECRET_KEY'")
+        print("Option 2: Global - 'train secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
+        print("(Storage-specific credentials take priority over global ones)")
         config["account_id"] = account_id
         config["bucket"] = bucket
         config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
@@ -206,8 +208,9 @@ def cmd_add(args: List[str]) -> None:
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
-        print("\nApplication keys will be stored in secrets.")
-        print("Run 'trainsh secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
+        print("\nCredentials will be automatically loaded from secrets.")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_KEY_ID' and '{name.upper()}_APPLICATION_KEY'")
+        print("Option 2: Global - 'train secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
         config["bucket"] = bucket
 
     elif storage_type == StorageType.S3:
@@ -220,8 +223,9 @@ def cmd_add(args: List[str]) -> None:
         endpoint = prompt_input("Custom endpoint (optional, for S3-compatible): ")
         if endpoint is None:
             return
-        print("\nAWS credentials will be stored in secrets.")
-        print("Run 'trainsh secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
+        print("\nCredentials will be automatically loaded from secrets.")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY_ID' and '{name.upper()}_SECRET_ACCESS_KEY'")
+        print("Option 2: Global - 'train secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
         config["bucket"] = bucket
         config["region"] = region
         if endpoint:
@@ -333,7 +337,11 @@ def cmd_test(args: List[str]) -> None:
     storage = storages[name]
     print(f"Testing storage: {name} ({storage.type.value})...")
 
-    from ..services.transfer_engine import check_rclone_available
+    from ..services.transfer_engine import (
+        check_rclone_available,
+        build_rclone_env,
+        get_rclone_remote_name,
+    )
 
     if storage.type.value in ("gdrive", "r2", "b2", "s3", "gcs"):
         if not check_rclone_available():
@@ -341,15 +349,43 @@ def cmd_test(args: List[str]) -> None:
             print("Install with: brew install rclone")
             sys.exit(1)
 
-        # Try to list the remote
+        # Build environment with storage credentials
+        import os
         import subprocess
+        env = os.environ.copy()
+        rclone_env = build_rclone_env(storage)
+        env.update(rclone_env)
+
+        # Get the correct remote name
+        remote_name = get_rclone_remote_name(storage)
+
+        # For R2/S3/B2, also need to specify the bucket
+        bucket = storage.config.get("bucket", "")
+        if bucket:
+            rclone_path = f"{remote_name}:{bucket}"
+        else:
+            rclone_path = f"{remote_name}:"
+
+        print(f"  Using rclone remote: {rclone_path}")
+        if rclone_env:
+            print(f"  Auto-configured with {len(rclone_env)} environment variables")
+
+        # Try to list the remote
         result = subprocess.run(
-            ["rclone", "lsd", f"{name}:"],
+            ["rclone", "lsd", rclone_path],
             capture_output=True,
             text=True,
+            env=env,
         )
         if result.returncode == 0:
             print("Connection successful!")
+            # Show some output if available
+            if result.stdout.strip():
+                lines = result.stdout.strip().split('\n')[:5]
+                for line in lines:
+                    print(f"  {line}")
+                if len(result.stdout.strip().split('\n')) > 5:
+                    print("  ...")
         else:
             print(f"Connection failed: {result.stderr}")
             sys.exit(1)

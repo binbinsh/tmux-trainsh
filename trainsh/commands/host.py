@@ -87,7 +87,7 @@ def cmd_list(args: List[str]) -> None:
 
     if not hosts:
         print("No hosts configured.")
-        print("Use 'trainsh host add' to add a host.")
+        print("Use 'train host add' to add a host.")
         return
 
     print("Configured hosts:")
@@ -237,7 +237,7 @@ def cmd_add(args: List[str]) -> None:
 
     print(f"\nAdded host: {name}")
     if host.type == HostType.COLAB:
-        print("Use 'trainsh host ssh' to connect.")
+        print("Use 'train host ssh' to connect.")
     else:
         print(f"SSH command: ssh -p {host.port} {host.username}@{host.hostname}")
 

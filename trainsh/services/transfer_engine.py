@@ -4,10 +4,201 @@
 import subprocess
 import os
 import re
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Dict
 from dataclasses import dataclass
 
 from ..core.models import Host, Storage, StorageType, TransferEndpoint, HostType
+from ..core.secrets import get_secrets_manager
+from ..constants import SecretKeys
+
+
+def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dict[str, str]:
+    """
+    Build rclone environment variables for a storage backend.
+
+    rclone supports dynamic remote configuration via environment variables:
+    RCLONE_CONFIG_<remote>_TYPE=<type>
+    RCLONE_CONFIG_<remote>_<option>=<value>
+
+    This allows us to configure remotes without modifying ~/.config/rclone/rclone.conf
+
+    Credentials are loaded in priority order:
+    1. Storage-specific secrets: {STORAGE_NAME}_ACCESS_KEY, etc.
+    2. Global secrets: R2_ACCESS_KEY, AWS_ACCESS_KEY_ID, etc.
+    3. Config values stored in storage.config
+
+    Args:
+        storage: Storage configuration
+        remote_name: Override remote name (defaults to storage.name)
+
+    Returns:
+        Dictionary of environment variables to set
+    """
+    name = (remote_name or storage.name).upper().replace("-", "_").replace(" ", "_")
+    storage_prefix = name  # For storage-specific secrets
+    secrets = get_secrets_manager()
+    env: Dict[str, str] = {}
+    config = storage.config
+
+    def get_credential(storage_key: str, global_key: str, config_key: str = "") -> str:
+        """Get credential from storage-specific, global, or config sources."""
+        # 1. Try storage-specific secret: {STORAGE_NAME}_{KEY}
+        value = secrets.get(f"{storage_prefix}_{storage_key}")
+        if value:
+            return value
+        # 2. Try global secret
+        value = secrets.get(global_key)
+        if value:
+            return value
+        # 3. Fall back to config value
+        if config_key:
+            return config.get(config_key, "")
+        return ""
+
+    if storage.type == StorageType.R2:
+        # Cloudflare R2 (S3-compatible)
+        env[f"RCLONE_CONFIG_{name}_TYPE"] = "s3"
+        env[f"RCLONE_CONFIG_{name}_PROVIDER"] = "Cloudflare"
+        env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
+
+        # Get credentials with fallback chain
+        access_key = get_credential("ACCESS_KEY", SecretKeys.R2_ACCESS_KEY, "access_key_id")
+        secret_key = get_credential("SECRET_KEY", SecretKeys.R2_SECRET_KEY, "secret_access_key")
+
+        if access_key:
+            env[f"RCLONE_CONFIG_{name}_ACCESS_KEY_ID"] = access_key
+        if secret_key:
+            env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] = secret_key
+
+        # Endpoint from config
+        endpoint = config.get("endpoint", "")
+        if not endpoint and config.get("account_id"):
+            endpoint = f"https://{config['account_id']}.r2.cloudflarestorage.com"
+        if endpoint:
+            env[f"RCLONE_CONFIG_{name}_ENDPOINT"] = endpoint
+
+    elif storage.type == StorageType.S3:
+        # Amazon S3 or S3-compatible
+        env[f"RCLONE_CONFIG_{name}_TYPE"] = "s3"
+        env[f"RCLONE_CONFIG_{name}_PROVIDER"] = config.get("provider", "AWS")
+        env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
+
+        # Get credentials with fallback chain
+        access_key = get_credential("ACCESS_KEY_ID", SecretKeys.AWS_ACCESS_KEY_ID, "access_key_id")
+        secret_key = get_credential("SECRET_ACCESS_KEY", SecretKeys.AWS_SECRET_ACCESS_KEY, "secret_access_key")
+
+        if access_key:
+            env[f"RCLONE_CONFIG_{name}_ACCESS_KEY_ID"] = access_key
+        if secret_key:
+            env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] = secret_key
+
+        # Region and endpoint
+        if config.get("region"):
+            env[f"RCLONE_CONFIG_{name}_REGION"] = config["region"]
+        if config.get("endpoint"):
+            env[f"RCLONE_CONFIG_{name}_ENDPOINT"] = config["endpoint"]
+
+    elif storage.type == StorageType.B2:
+        # Backblaze B2
+        env[f"RCLONE_CONFIG_{name}_TYPE"] = "b2"
+
+        # Get credentials with fallback chain
+        key_id = get_credential("KEY_ID", SecretKeys.B2_KEY_ID, "key_id")
+        app_key = get_credential("APPLICATION_KEY", SecretKeys.B2_APPLICATION_KEY, "application_key")
+
+        if key_id:
+            env[f"RCLONE_CONFIG_{name}_ACCOUNT"] = key_id
+        if app_key:
+            env[f"RCLONE_CONFIG_{name}_KEY"] = app_key
+
+    elif storage.type == StorageType.GOOGLE_DRIVE:
+        # Google Drive
+        env[f"RCLONE_CONFIG_{name}_TYPE"] = "drive"
+
+        # For Google Drive, we support two modes:
+        # 1. Use existing rclone remote (remote_name in config)
+        # 2. Use service account or token from secrets
+        if config.get("client_id"):
+            env[f"RCLONE_CONFIG_{name}_CLIENT_ID"] = config["client_id"]
+        if config.get("client_secret"):
+            env[f"RCLONE_CONFIG_{name}_CLIENT_SECRET"] = config["client_secret"]
+        if config.get("root_folder_id"):
+            env[f"RCLONE_CONFIG_{name}_ROOT_FOLDER_ID"] = config["root_folder_id"]
+
+        # Token from secrets (JSON format) - try storage-specific first
+        token = get_credential("TOKEN", SecretKeys.GOOGLE_DRIVE_CREDENTIALS, "token")
+        if token:
+            env[f"RCLONE_CONFIG_{name}_TOKEN"] = token
+
+        # If using existing rclone remote, just pass through
+        if config.get("remote_name") and not any(env):
+            # User wants to use pre-configured rclone remote
+            # In this case, return empty env and use the remote_name directly
+            return {}
+
+    elif storage.type == StorageType.GCS:
+        # Google Cloud Storage
+        env[f"RCLONE_CONFIG_{name}_TYPE"] = "google cloud storage"
+
+        if config.get("project_id"):
+            env[f"RCLONE_CONFIG_{name}_PROJECT_NUMBER"] = config["project_id"]
+        if config.get("service_account_json"):
+            env[f"RCLONE_CONFIG_{name}_SERVICE_ACCOUNT_CREDENTIALS"] = config["service_account_json"]
+        if config.get("bucket"):
+            env[f"RCLONE_CONFIG_{name}_BUCKET_POLICY_ONLY"] = "true"
+
+    elif storage.type == StorageType.SSH:
+        # SFTP via SSH
+        env[f"RCLONE_CONFIG_{name}_TYPE"] = "sftp"
+
+        if config.get("host"):
+            env[f"RCLONE_CONFIG_{name}_HOST"] = config["host"]
+        if config.get("user"):
+            env[f"RCLONE_CONFIG_{name}_USER"] = config["user"]
+        if config.get("port"):
+            env[f"RCLONE_CONFIG_{name}_PORT"] = str(config["port"])
+        if config.get("key_file"):
+            key_path = os.path.expanduser(config["key_file"])
+            env[f"RCLONE_CONFIG_{name}_KEY_FILE"] = key_path
+
+    elif storage.type == StorageType.SMB:
+        # SMB/CIFS share
+        env[f"RCLONE_CONFIG_{name}_TYPE"] = "smb"
+
+        if config.get("host"):
+            env[f"RCLONE_CONFIG_{name}_HOST"] = config["host"]
+        if config.get("user"):
+            env[f"RCLONE_CONFIG_{name}_USER"] = config["user"]
+        if config.get("pass"):
+            env[f"RCLONE_CONFIG_{name}_PASS"] = config["pass"]
+        if config.get("domain"):
+            env[f"RCLONE_CONFIG_{name}_DOMAIN"] = config["domain"]
+
+    return env
+
+
+def get_rclone_remote_name(storage: Storage) -> str:
+    """
+    Get the rclone remote name for a storage.
+
+    For Google Drive with existing rclone config, uses the configured remote_name.
+    Otherwise uses the storage name (sanitized for rclone).
+
+    Args:
+        storage: Storage configuration
+
+    Returns:
+        Remote name to use in rclone commands
+    """
+    # If Google Drive with external rclone config, use that remote name
+    if storage.type == StorageType.GOOGLE_DRIVE:
+        remote_name = storage.config.get("remote_name")
+        if remote_name:
+            return remote_name
+
+    # Otherwise use storage name
+    return storage.name
+
 
 
 @dataclass
@@ -171,6 +362,8 @@ class TransferEngine:
         delete: bool = False,
         dry_run: bool = False,
         progress: bool = True,
+        src_storage: Optional[Storage] = None,
+        dst_storage: Optional[Storage] = None,
     ) -> TransferResult:
         """
         Transfer files using rclone.
@@ -182,6 +375,8 @@ class TransferEngine:
             delete: Delete destination files not in source (for sync)
             dry_run: Simulate transfer
             progress: Show progress
+            src_storage: Source storage configuration (for auto-config)
+            dst_storage: Destination storage configuration (for auto-config)
 
         Returns:
             TransferResult with status
@@ -199,17 +394,66 @@ class TransferEngine:
 
         args.extend([source, destination])
 
+        # Build environment with storage credentials
+        env = os.environ.copy()
+
+        if src_storage:
+            rclone_env = build_rclone_env(src_storage)
+            env.update(rclone_env)
+
+        if dst_storage:
+            rclone_env = build_rclone_env(dst_storage)
+            env.update(rclone_env)
+
         try:
-            result = subprocess.run(
+            # Run rclone with real-time progress output
+            process = subprocess.Popen(
                 args,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
+                env=env,
             )
 
+            output_lines = []
+            bytes_transferred = 0
+
+            # Stream output in real-time
+            for line in process.stdout:
+                line = line.rstrip()
+                output_lines.append(line)
+
+                # Show progress lines
+                if line:
+                    # rclone progress format: "Transferred: X / Y, ETA X"
+                    print(f"  {line}", flush=True)
+
+                    # Parse transferred bytes from rclone output
+                    match = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
+                    if match:
+                        size_str = match.group(1)
+                        unit = match.group(2).upper()
+                        try:
+                            size = float(size_str)
+                            if unit == "KIB" or unit == "KB":
+                                bytes_transferred = int(size * 1024)
+                            elif unit == "MIB" or unit == "MB":
+                                bytes_transferred = int(size * 1024 * 1024)
+                            elif unit == "GIB" or unit == "GB":
+                                bytes_transferred = int(size * 1024 * 1024 * 1024)
+                            else:
+                                bytes_transferred = int(size)
+                        except ValueError:
+                            pass
+
+            process.wait()
+
             return TransferResult(
-                success=result.returncode == 0,
-                exit_code=result.returncode,
-                message=result.stderr if result.returncode != 0 else "Transfer complete",
+                success=process.returncode == 0,
+                exit_code=process.returncode,
+                message="\n".join(output_lines[-5:]) if process.returncode != 0 else "Transfer complete",
+                bytes_transferred=bytes_transferred,
             )
         except FileNotFoundError:
             return TransferResult(
@@ -256,13 +500,20 @@ class TransferEngine:
         tool = self._select_transfer_tool(source, destination, storages)
 
         if tool == "rclone":
-            src_path = self._resolve_endpoint(source, hosts, storages, for_rclone=True)
-            dst_path = self._resolve_endpoint(destination, hosts, storages, for_rclone=True)
+            # Get storage objects for credentials
+            src_storage = storages.get(source.storage_id) if source.storage_id else None
+            dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
+
+            # Resolve paths using appropriate remote names
+            src_path = self._resolve_endpoint_for_rclone(source, hosts, storages)
+            dst_path = self._resolve_endpoint_for_rclone(destination, hosts, storages)
 
             return self.rclone(
                 source=src_path,
                 destination=dst_path,
                 operation="sync" if delete else "copy",
+                src_storage=src_storage,
+                dst_storage=dst_storage,
             )
         else:
             # Use rsync for local/SSH/host transfers
@@ -584,6 +835,49 @@ class TransferEngine:
             if storage and for_rclone:
                 # Return rclone remote format
                 return f"{storage.name}:{endpoint.path}"
+            return endpoint.path
+        return endpoint.path
+
+    def _resolve_endpoint_for_rclone(
+        self,
+        endpoint: TransferEndpoint,
+        hosts: dict[str, Host],
+        storages: dict[str, Storage],
+    ) -> str:
+        """
+        Resolve an endpoint to rclone path format.
+
+        For storage endpoints, uses get_rclone_remote_name() to determine
+        the correct remote name (either from storage name or configured remote).
+
+        Args:
+            endpoint: Transfer endpoint
+            hosts: Host dictionary
+            storages: Storage dictionary
+
+        Returns:
+            Path in rclone format (remote:path or local path)
+        """
+        if endpoint.type == "local":
+            return os.path.expanduser(endpoint.path)
+        elif endpoint.type == "storage" and endpoint.storage_id:
+            storage = storages.get(endpoint.storage_id)
+            if storage:
+                remote_name = get_rclone_remote_name(storage)
+                # Handle bucket in path for R2/S3/B2
+                path = endpoint.path
+                if storage.type in (StorageType.R2, StorageType.S3, StorageType.B2):
+                    bucket = storage.config.get("bucket", "")
+                    if bucket and not path.startswith(bucket):
+                        # Prepend bucket to path
+                        path = f"{bucket}/{path.lstrip('/')}"
+                return f"{remote_name}:{path}"
+            return endpoint.path
+        elif endpoint.type == "host" and endpoint.host_id:
+            # Host endpoints shouldn't use rclone, but handle gracefully
+            host = hosts.get(endpoint.host_id)
+            if host:
+                return f"{host.username}@{host.hostname}:{endpoint.path}"
             return endpoint.path
         return endpoint.path
 

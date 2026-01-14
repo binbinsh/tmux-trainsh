@@ -76,7 +76,7 @@ def cmd_ssh(args: List[str]) -> None:
 
     if inst.actual_status != "running":
         print(f"Instance not running (status: {inst.actual_status})")
-        print("Use 'trainsh vast start <id>' to start the instance.")
+        print("Use 'train vast start <id>' to start the instance.")
         sys.exit(1)
 
     ssh_host = inst.ssh_host or inst.public_ipaddr
@@ -209,7 +209,7 @@ def cmd_keys(args: List[str]) -> None:
 
     if not keys:
         print("No SSH keys registered.")
-        print("Use 'trainsh vast attach-key' to add your SSH key.")
+        print("Use 'train vast attach-key' to add your SSH key.")
         return
 
     print("Registered SSH keys:")
@@ -276,7 +276,7 @@ def main(args: List[str]) -> Optional[str]:
         if "VAST_API_KEY" in str(e) or "API key" in str(e).lower():
             print(f"Error: {e}")
             print("\nMake sure VAST_API_KEY is set:")
-            print("  trainsh secrets set VAST_API_KEY")
+            print("  train secrets set VAST_API_KEY")
         else:
             raise
 
