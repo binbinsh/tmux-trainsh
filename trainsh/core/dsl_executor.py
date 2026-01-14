@@ -460,14 +460,31 @@ class DSLExecutor:
             })
 
         if host == "local":
-            # Local: no tmux session needed, commands run directly
+            # Local: create tmux session for persistence (same as remote)
             self.ctx.windows[window_name] = WindowInfo(
                 name=window_name,
                 host=host,
-                remote_session=None,
+                remote_session=remote_session_name,
             )
-            self.log(f"  Registered local window: {window_name}")
-            return True, f"Registered local window: {window_name}"
+            # Create local tmux session
+            create_cmd = f"tmux new-session -d -s {remote_session_name} 2>/dev/null || tmux has-session -t {remote_session_name}"
+            try:
+                result = subprocess.run(
+                    create_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0 and "already exists" not in result.stderr:
+                    return False, f"Failed to create local tmux session: {result.stderr}"
+                self.log(f"  Local tmux session: {remote_session_name}")
+                self.log(f"  Attach with: tmux attach -t {remote_session_name}")
+                return True, f"Created local tmux session: {remote_session_name}"
+            except subprocess.TimeoutExpired:
+                return False, "Timeout creating local tmux session"
+            except Exception as e:
+                return False, str(e)
 
         # Remote: create tmux session on remote host via SSH
         # Use 'tmux new-session -d -s name' to create detached session
@@ -526,10 +543,25 @@ class DSLExecutor:
         if not window:
             return False, f"Unknown window: {window_name}"
 
-        if window.host == "local" or not window.remote_session:
-            # Local window, just unregister
+        if not window.remote_session:
+            # No tmux session, just unregister
             self.ctx.windows.pop(window_name, None)
             return True, f"Unregistered window: {window_name}"
+
+        if window.host == "local":
+            # Local: kill the local tmux session
+            kill_cmd = f"tmux kill-session -t {window.remote_session} 2>/dev/null || true"
+            try:
+                subprocess.run(
+                    kill_cmd,
+                    shell=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.ctx.windows.pop(window_name, None)
+                return True, f"Killed local tmux session: {window.remote_session}"
+            except Exception as e:
+                return False, str(e)
 
         # Remote: kill the remote tmux session via SSH
         kill_cmd = f"tmux kill-session -t {window.remote_session} 2>/dev/null || true"
@@ -1345,21 +1377,71 @@ class DSLExecutor:
         remote_session = window.remote_session
 
         if host == "local":
-            # Local: run command directly
-            try:
-                result = subprocess.run(
-                    commands,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
-                duration_ms = int((time.time() - start_time) * 1000)
-                if self.logger:
-                    self.logger.log_ssh("local", commands, result.returncode, result.stdout, result.stderr, duration_ms)
-                return result.returncode == 0, result.stdout or result.stderr
-            except subprocess.TimeoutExpired:
-                return False, f"Command timed out after {timeout}s"
+            # Local: use local tmux session if available, otherwise run directly
+            if remote_session:
+                if step.background:
+                    # Background: send command to local tmux and return immediately
+                    tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(commands)} Enter"
+                    try:
+                        result = subprocess.run(
+                            tmux_cmd,
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        if self.logger:
+                            self.logger.log_detail("send_keys", f"Sent to local tmux {window_name}", {
+                                "commands": commands,
+                                "remote_session": remote_session,
+                                "success": result.returncode == 0,
+                            })
+                        return result.returncode == 0, "Command sent (background)"
+                    except subprocess.TimeoutExpired:
+                        return False, "Timeout sending command to local tmux"
+                else:
+                    # Foreground: send command with wait-for signal
+                    import uuid
+                    signal = f"done_{uuid.uuid4().hex[:8]}"
+
+                    # Wrap command: run command, then signal completion
+                    wrapped = f"( {commands} ); tmux wait-for -S {signal}"
+                    send_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(wrapped)} Enter"
+
+                    try:
+                        # Send the command
+                        subprocess.run(send_cmd, shell=True, capture_output=True, timeout=30)
+                        # Wait for the signal
+                        wait_cmd = f"tmux wait-for {signal}"
+                        result = subprocess.run(
+                            wait_cmd,
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout,
+                        )
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        if self.logger:
+                            self.logger.log_ssh("local_tmux", commands, result.returncode, "", "", duration_ms)
+                        return result.returncode == 0, "Command completed"
+                    except subprocess.TimeoutExpired:
+                        return False, f"Command timed out after {timeout}s"
+            else:
+                # No tmux session, run directly
+                try:
+                    result = subprocess.run(
+                        commands,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    if self.logger:
+                        self.logger.log_ssh("local", commands, result.returncode, result.stdout, result.stderr, duration_ms)
+                    return result.returncode == 0, result.stdout or result.stderr
+                except subprocess.TimeoutExpired:
+                    return False, f"Command timed out after {timeout}s"
 
         # Remote: use SSH with remote tmux session for persistence
         if remote_session:
