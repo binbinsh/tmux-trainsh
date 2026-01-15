@@ -1,5 +1,9 @@
 # tmux-trainsh
 
+[![PyPI version](https://img.shields.io/pypi/v/tmux-trainsh.svg)](https://pypi.org/project/tmux-trainsh/)
+[![PyPI status](https://img.shields.io/pypi/status/tmux-trainsh.svg)](https://pypi.org/project/tmux-trainsh/)
+[![Python versions](https://img.shields.io/pypi/pyversions/tmux-trainsh.svg)](https://pypi.org/project/tmux-trainsh/)
+
 The missing training automation for public cloud GPU and storage.
 
 Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, S3, GDrive), and automate training workflows with a simple recipe DSL.
@@ -11,6 +15,14 @@ Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, S3,
 - Optional: `rsync`, `rclone`
 
 ## Installation
+
+### From PyPI (recommended)
+
+```bash
+uv tool install tmux-trainsh
+```
+
+### From GitHub
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.sh | bash -s -- --github

@@ -122,9 +122,14 @@ def main(args: list[str]) -> Optional[str]:
 
 def cli() -> None:
     """CLI entry point (called by uv/pip installed command)."""
+    from . import __version__
+    from .utils.update_checker import maybe_check_updates
+
     result = main(sys.argv)
     if result:
         print(result)
+
+    maybe_check_updates(__version__)
 
 
 if __name__ == "__main__":
