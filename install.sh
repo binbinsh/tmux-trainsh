@@ -117,7 +117,7 @@ if [ "$FROM_GITHUB" = true ]; then
     uv tool install "$REPO" --force
 else
     echo "Installing tmux-trainsh from PyPI..."
-    uv tool install tmux-trainsh --force
+    uv tool install -U tmux-trainsh
 fi
 
 # Install dependencies if requested
