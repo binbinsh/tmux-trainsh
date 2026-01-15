@@ -33,6 +33,10 @@ class JobState:
     # Maps host name -> resolved SSH spec
     hosts: Dict[str, str] = field(default_factory=dict)
 
+    # Pending wait-for signals for background commands
+    # Maps window name -> signal channel
+    wait_signals: Dict[str, str] = field(default_factory=dict)
+
     # Tmux session name on remote (for reconnection)
     tmux_session: str = ""
 

@@ -185,19 +185,9 @@ class DSLParser:
             self._parse_storage_def(stripped)
             return
 
-        # Backward compatibility: @name = value (old host definition)
-        if stripped.startswith('@') and ' = ' in stripped and ' > ' not in stripped:
-            self._parse_legacy_host_def(stripped)
-            return
-
         # New syntax: wait @host condition
         if stripped.startswith('wait '):
             self._parse_wait(stripped)
-            return
-
-        # Backward compatibility: ? host: condition
-        if stripped.startswith('?'):
-            self._parse_legacy_wait(stripped)
             return
 
         # Transfer: source -> dest or source <- dest
@@ -210,28 +200,11 @@ class DSLParser:
             self._parse_execute(stripped)
             return
 
-        # Backward compatibility: host: command (old execute syntax)
-        # Check for old execute syntax: host: command
-        if ':' in stripped and not stripped.startswith('/') and ' > ' not in stripped:
-            parts = stripped.split(':', 1)
-            host_part = parts[0].strip()
-            # Must look like a host reference, not a URL
-            if host_part and not host_part.startswith('http') and not host_part.startswith('@'):
-                # Check if it could be a host: command pattern
-                if not any(stripped.startswith(cmd) for cmd in CONTROL_COMMANDS):
-                    self._parse_legacy_execute(stripped)
-                    return
-
         # Control command: command args (e.g., vast.pick @gpu, tmux.open @host)
         # Check if line starts with a known control command
         first_word = stripped.split()[0] if stripped.split() else ""
         if first_word in CONTROL_COMMANDS:
             self._parse_control(stripped)
-            return
-
-        # Backward compatibility: > command (old control syntax)
-        if stripped.startswith('>'):
-            self._parse_legacy_control(stripped)
             return
 
         # Unknown line - ignore silently for forward compatibility
@@ -261,46 +234,9 @@ class DSLParser:
             self._check_duplicate_name(name, "storage")
             self.storages[name] = self._interpolate(value.strip())
 
-    def _parse_legacy_variable(self, line: str) -> None:
-        """Parse legacy variable definition: VAR = value (inside --- block)"""
-        match = re.match(r'^(\w+)\s*=\s*(.+)$', line)
-        if match:
-            name, value = match.groups()
-            if name not in self.defined_names:
-                self.defined_names.add(name)
-            self.variables[name] = value.strip()
-
-    def _parse_legacy_host_def(self, line: str) -> None:
-        """Parse legacy host definition: @name = value"""
-        match = re.match(r'^@(\w+)\s*=\s*(.+)$', line)
-        if match:
-            name, value = match.groups()
-            if name not in self.defined_names:
-                self.defined_names.add(name)
-            self.hosts[name] = self._interpolate(value.strip())
-
     def _parse_control(self, line: str) -> None:
         """Parse control command: command args"""
         parts = self._split_args(line)
-        if not parts:
-            return
-
-        command = parts[0]
-        args = parts[1:] if len(parts) > 1 else []
-
-        self.steps.append(DSLStep(
-            type=StepType.CONTROL,
-            line_num=self.line_num,
-            raw=line,
-            command=command,
-            args=args,
-        ))
-
-    def _parse_legacy_control(self, line: str) -> None:
-        """Parse legacy control command: > command args"""
-        content = line[1:].strip()
-        parts = self._split_args(content)
-
         if not parts:
             return
 
@@ -324,40 +260,6 @@ class DSLParser:
 
         host_part = parts[0].strip()
         commands = parts[1].strip()
-
-        # Check for background execution
-        background = commands.endswith('&')
-        if background:
-            commands = commands[:-1].strip()
-
-        # Parse host and optional timeout
-        timeout = 0
-        host_tokens = host_part.split()
-        host = host_tokens[0]
-
-        for token in host_tokens[1:]:
-            if token.startswith('timeout='):
-                timeout = self._parse_duration(token[8:])
-
-        # Remove @ prefix from host
-        if host.startswith('@'):
-            host = host[1:]
-
-        self.steps.append(DSLStep(
-            type=StepType.EXECUTE,
-            line_num=self.line_num,
-            raw=line,
-            host=host,
-            commands=self._interpolate(commands),
-            background=background,
-            timeout=timeout,
-        ))
-
-    def _parse_legacy_execute(self, line: str) -> None:
-        """Parse legacy execute command: host [timeout=N]: command"""
-        colon_idx = line.index(':')
-        host_part = line[:colon_idx].strip()
-        commands = line[colon_idx + 1:].strip()
 
         # Check for background execution
         background = commands.endswith('&')
@@ -420,55 +322,6 @@ class DSLParser:
         if host_match:
             target = host_match.group(1)
             content = content[host_match.end():].strip()
-
-        # Extract quoted pattern
-        pattern_match = re.search(r'"([^"]+)"', content)
-        if pattern_match:
-            pattern = pattern_match.group(1)
-            content = content.replace(f'"{pattern}"', '').strip()
-
-        # Extract key=value options
-        for opt in re.findall(r'(\w+)=(\S+)', content):
-            key, value = opt
-            if key == 'timeout':
-                timeout = self._parse_duration(value)
-            elif key == 'file':
-                condition = f"file:{self._interpolate(value)}"
-            elif key == 'port':
-                condition = f"port:{value}"
-            elif key == 'idle' and value.lower() == 'true':
-                condition = "idle"
-
-        # Check for standalone 'idle' keyword
-        if 'idle' in content and 'idle=' not in content:
-            condition = "idle"
-
-        self.steps.append(DSLStep(
-            type=StepType.WAIT,
-            line_num=self.line_num,
-            raw=line,
-            target=target,
-            pattern=pattern,
-            condition=condition,
-            timeout=timeout,
-        ))
-
-    def _parse_legacy_wait(self, line: str) -> None:
-        """Parse legacy wait condition: ? host: condition timeout=N"""
-        content = line[1:].strip()
-
-        target = ""
-        pattern = ""
-        condition = ""
-        timeout = 300  # default 5 minutes
-
-        # Check for host: prefix
-        if ':' in content:
-            colon_idx = content.index(':')
-            target = content[:colon_idx].strip()
-            if target.startswith('@'):
-                target = target[1:]
-            content = content[colon_idx + 1:].strip()
 
         # Extract quoted pattern
         pattern_match = re.search(r'"([^"]+)"', content)
