@@ -1624,15 +1624,8 @@ class DSLExecutor:
         while time.time() - start < timeout:
             remaining = int(timeout - (time.time() - start))
 
-            # Step 1: Quick check if already idle (handles resume case)
-            try:
-                if self._is_pane_idle(host, session):
-                    window.wait_signal = None
-                    return True, "Pane is idle"
-            except Exception as e:
-                self.log(f"  Idle check failed: {e}")
-
-            # Step 2: If we have a signal, use tmux wait-for (blocks until command completes)
+            # If we have a signal, use tmux wait-for (most reliable)
+            # This handles the case when command was just sent and hasn't started yet
             if signal:
                 try:
                     wait_timeout = min(poll_interval, remaining)
@@ -1644,8 +1637,15 @@ class DSLExecutor:
                 except Exception as e:
                     self.log(f"  Wait-for failed: {e}")
                     signal = None  # Fall back to polling
+            else:
+                # No signal (e.g., resume case) - check pane state
+                try:
+                    if self._is_pane_idle(host, session):
+                        return True, "Pane is idle"
+                except Exception as e:
+                    self.log(f"  Idle check failed: {e}")
 
-            # Step 3: Show status
+            # Show status
             self.log(f"  Waiting for @{window.name}... ({_format_duration(remaining)} remaining)")
             try:
                 output = self._get_pane_recent_output(host, session, lines=2)
@@ -1655,7 +1655,7 @@ class DSLExecutor:
             except Exception:
                 pass
 
-            # Step 4: Sleep if not using wait-for
+            # Sleep if not using wait-for
             if not signal:
                 time.sleep(poll_interval)
 
