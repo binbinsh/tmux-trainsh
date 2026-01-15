@@ -72,6 +72,72 @@ Supported secret keys:
 - `GITHUB_TOKEN` - GitHub token
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` - AI APIs
 
+## Tmux Configuration
+
+tmux-trainsh can manage your tmux configuration with optimized defaults:
+
+```bash
+# Apply tmux configuration to local machine
+train config tmux-setup
+```
+
+This generates `~/.tmux.conf` with settings including:
+- Mouse support enabled
+- Large scrollback buffer (50000 lines)
+- Status bar on top with session name, hostname, and current path
+- Window numbering starting at 1
+- Click-to-switch windows
+
+### Customize tmux settings
+
+The tmux configuration uses a list of raw tmux options, allowing any valid tmux setting:
+
+```bash
+# List all tmux options with indices
+train config tmux-list
+
+# Add a new option
+train config tmux-add "set -g status-style bg=blue"
+
+# Remove an option by index
+train config tmux-remove 5
+
+# Apply changes to local ~/.tmux.conf
+train config tmux-setup
+```
+
+Or edit `~/.config/tmux-trainsh/config.toml` directly:
+
+```toml
+[tmux]
+options = [
+  "set -g mouse on",
+  "set -g history-limit 50000",
+  "set -g base-index 1",
+  "set -g status-position top",
+  "set -g status-left \"[#S] \"",
+  "set -g status-right \"#H:#{pane_current_path}\"",
+  "bind -n MouseDown1Status select-window -t =",
+  # Add any custom tmux options here
+]
+```
+
+### Apply tmux config in recipes
+
+Use `tmux.config @host` to apply your tmux configuration to remote hosts:
+
+```
+# In your .recipe file
+host gpu = vast:12345
+
+# Apply tmux config to remote host before opening sessions
+tmux.config @gpu
+
+# Then open tmux session with your preferred settings
+tmux.open @gpu as work
+@work > python train.py
+```
+
 ## Recipe DSL
 
 Recipe files (`.recipe`) define automated training workflows with a simple DSL.
@@ -216,6 +282,7 @@ tmux.close @work
 |---------|-------------|
 | `tmux.open @host as name` | Create tmux session named "name" on host |
 | `tmux.close @session` | Close tmux session |
+| `tmux.config @host` | Apply tmux configuration to remote host |
 | `vast.pick @host [options]` | Interactively select Vast.ai instance |
 | `vast.start [id]` | Start Vast.ai instance |
 | `vast.stop [id]` | Stop Vast.ai instance |
@@ -303,6 +370,10 @@ tmux.close @work
 | `train config get <key>` | Get config value |
 | `train config set <key> <val>` | Set config value |
 | `train config reset` | Reset configuration |
+| `train config tmux-setup` | Apply tmux configuration to ~/.tmux.conf |
+| `train config tmux-list` | List tmux options with indices |
+| `train config tmux-add <opt>` | Add a tmux option |
+| `train config tmux-remove <n>` | Remove tmux option by index |
 | `train colab list` | List Colab connections |
 | `train colab connect` | Add Colab connection |
 | `train colab ssh` | SSH into Colab |

@@ -40,6 +40,9 @@ def _format_toml_value(value: Any) -> str:
         return f'"{value}"'
     elif isinstance(value, (int, float)):
         return str(value)
+    elif isinstance(value, list):
+        items = ", ".join(_format_toml_value(v) for v in value)
+        return f"[{items}]"
     else:
         return str(value)
 
@@ -98,6 +101,26 @@ def get_default_config() -> Dict[str, Any]:
         },
         "ui": {
             "currency": "USD",
+        },
+        "tmux": {
+            # Raw tmux options as "option = value" strings
+            # These are written directly to tmux.conf
+            "options": [
+                "set -g mouse on",
+                "set -g history-limit 50000",
+                "set -g base-index 1",
+                "setw -g pane-base-index 1",
+                "set -g renumber-windows on",
+                "set -g status-position top",
+                "set -g status-interval 1",
+                "set -g status-left-length 50",
+                'set -g status-left "[#S] "',
+                "set -g status-right-length 100",
+                'set -g status-right "#H:#{pane_current_path}"',
+                'set -g window-status-format " #I:#W "',
+                'set -g window-status-current-format " #I:#W "',
+                "bind -n MouseDown1Status select-window -t =",
+            ],
         },
     }
 

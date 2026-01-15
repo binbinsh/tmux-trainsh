@@ -17,7 +17,7 @@ class StepType(Enum):
 
 # Control commands that are recognized
 CONTROL_COMMANDS = {
-    "tmux.open", "tmux.close",
+    "tmux.open", "tmux.close", "tmux.config",
     "vast.pick", "vast.start", "vast.stop", "vast.wait", "vast.cost",
     "notify", "sleep",
 }
