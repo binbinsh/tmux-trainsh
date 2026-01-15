@@ -25,7 +25,6 @@ class WindowInfo:
     name: str
     host: str
     remote_session: Optional[str] = None  # Remote tmux session name (for nohup-like behavior)
-    wait_signal: Optional[str] = None  # tmux wait-for signal channel for pending background command
 
 
 @dataclass
@@ -243,12 +242,9 @@ class DSLExecutor:
 
         # Collect all windows (including local hosts)
         hosts = {}
-        wait_signals = {}
         for name, window in self.ctx.windows.items():
             if window.host:
                 hosts[name] = window.host
-            if window.wait_signal:
-                wait_signals[name] = window.wait_signal
 
         # Get vast instance tracking info
         vast_instance_id = self.ctx.variables.get("VAST_ID") or self.ctx.variables.get("_vast_instance_id")
@@ -263,7 +259,6 @@ class DSLExecutor:
             status=status,
             variables=dict(self.ctx.variables),
             hosts=hosts,
-            wait_signals=wait_signals,
             tmux_session=get_tmux_session_name(self.ctx.job_id),
             vast_instance_id=vast_instance_id,
             vast_start_time=vast_start_time,
@@ -1385,11 +1380,8 @@ class DSLExecutor:
             # Local: use local tmux session if available, otherwise run directly
             if remote_session:
                 if step.background:
-                    # Background: wrap command with wait-for signal for later idle check
-                    import uuid
-                    signal = f"bg_{uuid.uuid4().hex[:8]}"
-                    wrapped = f"( {commands} ); tmux wait-for -S {signal}"
-                    tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(wrapped)} Enter"
+                    # Background: just send the command, use wait idle to check completion
+                    tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(commands)} Enter"
                     try:
                         result = subprocess.run(
                             tmux_cmd,
@@ -1398,43 +1390,33 @@ class DSLExecutor:
                             text=True,
                             timeout=30,
                         )
-                        if result.returncode == 0:
-                            window.wait_signal = signal
                         if self.logger:
                             self.logger.log_detail("send_keys", f"Sent to local tmux {window_name}", {
                                 "commands": commands,
                                 "remote_session": remote_session,
-                                "wait_signal": signal,
+                                "background": True,
                                 "success": result.returncode == 0,
                             })
-                        return result.returncode == 0, f"Command sent (background, signal={signal})"
+                        return result.returncode == 0, "Command sent (background)"
                     except subprocess.TimeoutExpired:
                         return False, "Timeout sending command to local tmux"
                 else:
-                    # Foreground: send command with wait-for signal
-                    import uuid
-                    signal = f"done_{uuid.uuid4().hex[:8]}"
-
-                    # Wrap command: run command, then signal completion
-                    wrapped = f"( {commands} ); tmux wait-for -S {signal}"
-                    send_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(wrapped)} Enter"
+                    # Foreground: send command and poll until idle
+                    tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(commands)} Enter"
 
                     try:
-                        # Send the command
-                        subprocess.run(send_cmd, shell=True, capture_output=True, timeout=30)
-                        # Wait for the signal
-                        wait_cmd = f"tmux wait-for {signal}"
-                        result = subprocess.run(
-                            wait_cmd,
-                            shell=True,
-                            capture_output=True,
-                            text=True,
-                            timeout=timeout,
-                        )
-                        duration_ms = int((time.time() - start_time) * 1000)
-                        if self.logger:
-                            self.logger.log_ssh("local_tmux", commands, result.returncode, "", "", duration_ms)
-                        return result.returncode == 0, "Command completed"
+                        subprocess.run(tmux_cmd, shell=True, capture_output=True, timeout=30)
+                        # Wait a moment for command to start
+                        time.sleep(0.5)
+                        # Poll until pane is idle
+                        while time.time() - start_time < timeout:
+                            if self._is_pane_idle(host, remote_session):
+                                duration_ms = int((time.time() - start_time) * 1000)
+                                if self.logger:
+                                    self.logger.log_ssh("local_tmux", commands, 0, "", "", duration_ms)
+                                return True, "Command completed"
+                            time.sleep(1)
+                        return False, f"Command timed out after {timeout}s"
                     except subprocess.TimeoutExpired:
                         return False, f"Command timed out after {timeout}s"
             else:
@@ -1457,11 +1439,8 @@ class DSLExecutor:
         # Remote: use SSH with remote tmux session for persistence
         if remote_session:
             if step.background:
-                # Background: wrap command with wait-for signal for later idle check
-                import uuid
-                signal = f"bg_{uuid.uuid4().hex[:8]}"
-                wrapped = f"( {commands} ); tmux wait-for -S {signal}"
-                tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(wrapped)} Enter"
+                # Background: just send the command, use wait idle to check completion
+                tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(commands)} Enter"
                 ssh_args = _build_ssh_args(host, command=tmux_cmd, tty=False)
 
                 try:
@@ -1471,55 +1450,41 @@ class DSLExecutor:
                         text=True,
                         timeout=30,
                     )
-                    if result.returncode == 0:
-                        window.wait_signal = signal
                     if self.logger:
                         self.logger.log_detail("send_keys", f"Sent to {window_name}", {
                             "commands": commands,
                             "remote_session": remote_session,
-                            "wait_signal": signal,
+                            "background": True,
                             "success": result.returncode == 0,
                         })
-                    return result.returncode == 0, f"Command sent (background, signal={signal})"
+                    return result.returncode == 0, "Command sent (background)"
                 except subprocess.TimeoutExpired:
                     return False, "SSH timeout sending command"
             else:
-                # Foreground: send command with wait-for signal
-                import uuid
-                signal = f"done_{uuid.uuid4().hex[:8]}"
-
-                # Wrap command: run command, then signal completion
-                wrapped = f"( {commands} ); tmux wait-for -S {signal}"
-                send_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(wrapped)} Enter"
-                ssh_args = _build_ssh_args(host, command=send_cmd, tty=False)
+                # Foreground: send command and poll until idle
+                tmux_cmd = f"tmux send-keys -t {remote_session} {shlex.quote(commands)} Enter"
+                ssh_args = _build_ssh_args(host, command=tmux_cmd, tty=False)
 
                 try:
                     subprocess.run(ssh_args, capture_output=True, text=True, timeout=30)
                 except subprocess.TimeoutExpired:
                     return False, "SSH timeout sending command"
 
-                # Wait for signal using tmux wait-for (blocks until signal received)
-                wait_cmd = f"tmux wait-for {signal}"
-                ssh_args = _build_ssh_args(host, command=wait_cmd, tty=False)
+                # Wait a moment for command to start
+                time.sleep(0.5)
 
-                try:
-                    result = subprocess.run(
-                        ssh_args,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                    )
-                    elapsed = int(time.time() - start_time)
-
-                    if self.logger:
-                        self.logger.log_detail("execute_complete", f"Command completed on {window_name}", {
-                            "elapsed_sec": elapsed,
-                            "remote_session": remote_session,
-                        })
-
-                    return result.returncode == 0, f"Command completed ({elapsed}s)"
-                except subprocess.TimeoutExpired:
-                    return False, f"Command timed out after {timeout}s"
+                # Poll until pane is idle
+                while time.time() - start_time < timeout:
+                    if self._is_pane_idle(host, remote_session):
+                        elapsed = int(time.time() - start_time)
+                        if self.logger:
+                            self.logger.log_detail("execute_complete", f"Command completed on {window_name}", {
+                                "elapsed_sec": elapsed,
+                                "remote_session": remote_session,
+                            })
+                        return True, f"Command completed ({elapsed}s)"
+                    time.sleep(1)
+                return False, f"Command timed out after {timeout}s"
         else:
             # No remote session: direct SSH execution (shouldn't happen for remote hosts)
             ssh_args = _build_ssh_args(host, command=commands, tty=False)
@@ -1600,20 +1565,39 @@ class DSLExecutor:
         return ""
 
     def _is_pane_idle(self, host: str, session: str) -> bool:
-        """Check if a tmux pane is idle using pane_current_command."""
+        """Check if a tmux pane is idle using pane_current_command and child process count."""
+        # Check 1: pane_current_command should be a shell
         cmd = f"tmux display-message -t {session} -p '#{{pane_current_command}}'"
         result = self._run_tmux_cmd(host, cmd)
         if result.returncode != 0:
             return False
         current_cmd = result.stdout.strip()
-        # If pane is running a shell (not a command), it's idle
-        return current_cmd in {"bash", "zsh", "sh", "fish", "tcsh", "csh", "dash", "ksh"}
+        if current_cmd not in {"bash", "zsh", "sh", "fish", "tcsh", "csh", "dash", "ksh"}:
+            return False  # A command is running
+
+        # Check 2: shell should have no child processes
+        pane_pid_cmd = f"tmux list-panes -t {session} -F '#{{pane_pid}}'"
+        result = self._run_tmux_cmd(host, pane_pid_cmd)
+        if result.returncode != 0:
+            return False
+        pane_pid = result.stdout.strip().split('\n')[0]
+        if not pane_pid:
+            return False
+
+        child_cmd = f"ps --ppid {pane_pid} --no-headers 2>/dev/null | wc -l"
+        result = self._run_tmux_cmd(host, child_cmd)
+        if result.returncode != 0:
+            return False
+        try:
+            child_count = int(result.stdout.strip())
+            return child_count == 0
+        except ValueError:
+            return False
 
     def _wait_for_idle(self, window: 'WindowInfo', timeout: int) -> tuple[bool, str]:
-        """Wait for a tmux pane to become idle. Simple and reliable."""
+        """Wait for a tmux pane to become idle using ps polling."""
         host = window.host
         session = window.remote_session
-        signal = window.wait_signal
         start = time.time()
         poll_interval = 30
 
@@ -1621,29 +1605,15 @@ class DSLExecutor:
             self.log(f"  Long wait ({_format_duration(timeout)})")
             self.log(f"  If you disconnect, run 'recipe resume' to continue later")
 
+        # Poll until pane is truly idle (no child processes)
         while time.time() - start < timeout:
             remaining = int(timeout - (time.time() - start))
 
-            # If we have a signal, use tmux wait-for (most reliable)
-            # This handles the case when command was just sent and hasn't started yet
-            if signal:
-                try:
-                    wait_timeout = min(poll_interval, remaining)
-                    self._run_tmux_cmd(host, f"tmux wait-for {signal}", timeout=wait_timeout)
-                    window.wait_signal = None
-                    return True, "Command completed"
-                except subprocess.TimeoutExpired:
-                    pass  # Continue to show status
-                except Exception as e:
-                    self.log(f"  Wait-for failed: {e}")
-                    signal = None  # Fall back to polling
-            else:
-                # No signal (e.g., resume case) - check pane state
-                try:
-                    if self._is_pane_idle(host, session):
-                        return True, "Pane is idle"
-                except Exception as e:
-                    self.log(f"  Idle check failed: {e}")
+            try:
+                if self._is_pane_idle(host, session):
+                    return True, "Pane is idle"
+            except Exception as e:
+                self.log(f"  Idle check failed: {e}")
 
             # Show status
             self.log(f"  Waiting for @{window.name}... ({_format_duration(remaining)} remaining)")
@@ -1655,9 +1625,7 @@ class DSLExecutor:
             except Exception:
                 pass
 
-            # Sleep if not using wait-for
-            if not signal:
-                time.sleep(poll_interval)
+            time.sleep(poll_interval)
 
         return False, f"Timeout after {_format_duration(timeout)}"
 
@@ -2000,13 +1968,10 @@ def run_recipe(
             for name, host_spec in saved_state.hosts.items():
                 # Reconstruct remote_session name from job_id and window name
                 remote_session = f"train_{job_id[:8]}_{name}"
-                # Get wait_signal if saved
-                wait_signal = saved_state.wait_signals.get(name) if saved_state.wait_signals else None
                 executor.ctx.windows[name] = WindowInfo(
                     name=name,
                     host=host_spec,
                     remote_session=remote_session,
-                    wait_signal=wait_signal,
                 )
 
             # If no windows were restored but we're past tmux.open steps,

@@ -4,15 +4,16 @@
 set -e
 
 usage() {
-    echo "Usage: bash install.sh [OPTIONS]"
+    echo "Usage: curl -LsSf https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.sh | bash"
+    echo "   or: bash install.sh [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --github      Install from GitHub"
+    echo "  --github      Install from GitHub (latest commit)"
     echo "  --force       Force reinstall"
     echo "  --no-deps     Skip installing system dependencies"
     echo "  --help        Show this help message"
     echo ""
-    echo "Default: Install from current directory using uv tool install"
+    echo "Default: Install from PyPI"
 }
 
 # Parse arguments
@@ -115,10 +116,8 @@ if [ "$FROM_GITHUB" = true ]; then
     echo "  Source: $REPO"
     uv tool install "$REPO" --force
 else
-    PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    echo "Installing tmux-trainsh from local directory..."
-    echo "  Source: $PROJECT_DIR"
-    uv tool install "$PROJECT_DIR" --force
+    echo "Installing tmux-trainsh from PyPI..."
+    uv tool install tmux-trainsh --force
 fi
 
 # Install dependencies if requested
