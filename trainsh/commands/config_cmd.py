@@ -14,17 +14,14 @@ Subcommands:
   set <key> <val>  - Set a config value
   reset            - Reset to default configuration
   tmux-setup       - Apply tmux configuration to ~/.tmux.conf
-  tmux-add <opt>   - Add a tmux option (e.g., "set -g mouse on")
-  tmux-remove <n>  - Remove tmux option by index (0-based)
-  tmux-list        - List all tmux options with indices
+  tmux-edit        - Edit tmux options in $EDITOR
+  tmux-list        - List all tmux options
 
 Examples:
   train config get ui.currency
   train config set ui.currency CNY
+  train config tmux-edit
   train config tmux-setup
-  train config tmux-list
-  train config tmux-add "set -g status-style bg=blue"
-  train config tmux-remove 5
 '''
 
 
@@ -180,7 +177,7 @@ def cmd_tmux_setup(args: List[str]) -> None:
 
 
 def cmd_tmux_list(args: List[str]) -> None:
-    """List all tmux options with indices."""
+    """List all tmux options."""
     from ..config import load_config, get_default_config
 
     config = load_config()
@@ -191,66 +188,72 @@ def cmd_tmux_list(args: List[str]) -> None:
 
     print("Tmux options:")
     print("-" * 50)
-    for i, opt in enumerate(tmux_options):
-        print(f"  [{i}] {opt}")
+    for opt in tmux_options:
+        print(f"  {opt}")
     print("-" * 50)
     print(f"Total: {len(tmux_options)} options")
+    print("\nUse 'train config tmux-edit' to modify")
 
 
-def cmd_tmux_add(args: List[str]) -> None:
-    """Add a tmux option."""
-    if not args:
-        print("Usage: train config tmux-add <option>")
-        print('Example: train config tmux-add "set -g status-style bg=blue"')
-        sys.exit(1)
-
+def cmd_tmux_edit(args: List[str]) -> None:
+    """Edit tmux options in $EDITOR."""
+    import os
+    import tempfile
+    import subprocess
     from ..config import load_config, save_config, get_default_config
-
-    option = " ".join(args)
-    config = load_config()
-
-    if "tmux" not in config:
-        config["tmux"] = {}
-    if "options" not in config["tmux"]:
-        config["tmux"]["options"] = get_default_config().get("tmux", {}).get("options", [])
-
-    config["tmux"]["options"].append(option)
-    save_config(config)
-    print(f"Added: {option}")
-    print(f"Total options: {len(config['tmux']['options'])}")
-
-
-def cmd_tmux_remove(args: List[str]) -> None:
-    """Remove a tmux option by index."""
-    if not args:
-        print("Usage: train config tmux-remove <index>")
-        print("Use 'train config tmux-list' to see indices")
-        sys.exit(1)
-
-    from ..config import load_config, save_config, get_default_config
-
-    try:
-        index = int(args[0])
-    except ValueError:
-        print(f"Invalid index: {args[0]}")
-        sys.exit(1)
 
     config = load_config()
     tmux_options = config.get("tmux", {}).get("options", [])
 
     if not tmux_options:
         tmux_options = get_default_config().get("tmux", {}).get("options", [])
-        config["tmux"] = {"options": tmux_options}
 
-    if index < 0 or index >= len(tmux_options):
-        print(f"Index out of range: {index} (valid: 0-{len(tmux_options) - 1})")
-        sys.exit(1)
+    # Get editor
+    editor = os.environ.get("EDITOR", os.environ.get("VISUAL", "vi"))
 
-    removed = tmux_options.pop(index)
-    config["tmux"]["options"] = tmux_options
-    save_config(config)
-    print(f"Removed: {removed}")
-    print(f"Remaining options: {len(tmux_options)}")
+    # Write options to temp file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".tmux.conf", delete=False) as f:
+        f.write("# Tmux options (one per line)\n")
+        f.write("# Lines starting with # are ignored\n")
+        f.write("# Save and close to apply changes\n")
+        f.write("\n")
+        for opt in tmux_options:
+            f.write(f"{opt}\n")
+        temp_path = f.name
+
+    try:
+        # Open editor
+        result = subprocess.run([editor, temp_path])
+        if result.returncode != 0:
+            print("Editor exited with error, changes not saved")
+            return
+
+        # Read back
+        with open(temp_path, "r") as f:
+            lines = f.readlines()
+
+        # Parse options (skip comments and empty lines)
+        new_options = []
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                new_options.append(line)
+
+        # Update config
+        if "tmux" not in config:
+            config["tmux"] = {}
+        config["tmux"]["options"] = new_options
+        save_config(config)
+
+        print(f"Saved {len(new_options)} tmux options")
+        print("\nUse 'train config tmux-setup' to apply to ~/.tmux.conf")
+
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
 
 
 def main(args: List[str]) -> Optional[str]:
@@ -269,8 +272,7 @@ def main(args: List[str]) -> Optional[str]:
         "reset": cmd_reset,
         "tmux-setup": cmd_tmux_setup,
         "tmux-list": cmd_tmux_list,
-        "tmux-add": cmd_tmux_add,
-        "tmux-remove": cmd_tmux_remove,
+        "tmux-edit": cmd_tmux_edit,
     }
 
     if subcommand not in commands:

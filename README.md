@@ -90,19 +90,16 @@ This generates `~/.tmux.conf` with settings including:
 
 ### Customize tmux settings
 
-The tmux configuration uses a list of raw tmux options, allowing any valid tmux setting:
+Edit all tmux options at once using your default editor:
 
 ```bash
-# List all tmux options with indices
+# Open tmux options in $EDITOR
+train config tmux-edit
+
+# View current options
 train config tmux-list
 
-# Add a new option
-train config tmux-add "set -g status-style bg=blue"
-
-# Remove an option by index
-train config tmux-remove 5
-
-# Apply changes to local ~/.tmux.conf
+# Apply to local ~/.tmux.conf
 train config tmux-setup
 ```
 
@@ -371,9 +368,8 @@ tmux.close @work
 | `train config set <key> <val>` | Set config value |
 | `train config reset` | Reset configuration |
 | `train config tmux-setup` | Apply tmux configuration to ~/.tmux.conf |
-| `train config tmux-list` | List tmux options with indices |
-| `train config tmux-add <opt>` | Add a tmux option |
-| `train config tmux-remove <n>` | Remove tmux option by index |
+| `train config tmux-edit` | Edit tmux options in $EDITOR |
+| `train config tmux-list` | List current tmux options |
 | `train colab list` | List Colab connections |
 | `train colab connect` | Add Colab connection |
 | `train colab ssh` | SSH into Colab |

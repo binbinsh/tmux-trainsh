@@ -102,6 +102,25 @@ vast_copy = { src = "C.6003036:/workspace/", dst = "local:./data" }
 | `tmux_capture` | Capture tmux pane content | `host_id`, `session_name`, `lines?` |
 | `tmux_kill` | Kill tmux session | `host_id`, `session_name` |
 
+**DSL Control Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `tmux.open @host as name` | Create tmux session on host |
+| `tmux.close name` | Close tmux session |
+| `tmux.config @host` | Apply tmux configuration from config.toml to remote host |
+
+The `tmux.config` command reads `tmux.options` from your local config and writes them to `~/.tmux.conf` on the remote host, then reloads tmux.
+
+Example:
+```
+# Apply your tmux settings to remote host
+tmux.config @gpu
+
+# Then open session with your preferred settings
+tmux.open @gpu as work
+```
+
 #### Google Drive
 
 | Operation | Description | Parameters |
