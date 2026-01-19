@@ -15,7 +15,7 @@ Subcommands:
   ssh <id>          - SSH into instance
   start <id>        - Start instance
   stop <id>         - Stop instance
-  destroy <id>      - Destroy instance
+  rm <id>           - Rm instance
   reboot <id>       - Reboot instance
   search            - Search for GPU offers
   keys              - List SSH keys
@@ -123,15 +123,15 @@ def cmd_stop(args: List[str]) -> None:
     print("Instance stopped. (Storage charges still apply)")
 
 
-def cmd_destroy(args: List[str]) -> None:
-    """Destroy instance."""
+def cmd_rm(args: List[str]) -> None:
+    """Rm instance."""
     if not args:
-        print("Usage: train vast destroy <instance_id>")
+        print("Usage: train vast rm <instance_id>")
         sys.exit(1)
 
     inst_id = int(args[0])
 
-    confirm = prompt_input(f"Destroy instance {inst_id}? This cannot be undone. (y/N): ")
+    confirm = prompt_input(f"Rm instance {inst_id}? This cannot be undone. (y/N): ")
     if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
@@ -139,9 +139,9 @@ def cmd_destroy(args: List[str]) -> None:
     from ..services.vast_api import get_vast_client
 
     client = get_vast_client()
-    print(f"Destroying instance {inst_id}...")
-    client.destroy_instance(inst_id)
-    print("Instance destroyed.")
+    print(f"Rm instance {inst_id}...")
+    client.rm_instance(inst_id)
+    print("Instance rm.")
 
 
 def cmd_reboot(args: List[str]) -> None:
@@ -258,7 +258,7 @@ def main(args: List[str]) -> Optional[str]:
         "ssh": cmd_ssh,
         "start": cmd_start,
         "stop": cmd_stop,
-        "destroy": cmd_destroy,
+        "rm": cmd_rm,
         "reboot": cmd_reboot,
         "search": cmd_search,
         "keys": cmd_keys,

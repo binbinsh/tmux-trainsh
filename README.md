@@ -323,23 +323,16 @@ tmux.close @work
 
 ## Commands
 
+### Frequent
+
 | Command | Description |
 |---------|-------------|
 | `train exec '<dsl>'` | Execute DSL commands directly |
 | `train exec '@host > cmd'` | Run command on remote host |
 | `train exec '@src:path -> @dst:path'` | Transfer files |
 | `train host list` | List configured hosts |
-| `train host add` | Add new host (SSH/Colab) |
 | `train host show <name>` | Show host details |
 | `train host ssh <name>` | SSH into host |
-| `train host browse <name>` | Browse files on host |
-| `train host test <name>` | Test connection |
-| `train host remove <name>` | Remove a host |
-| `train storage list` | List storage backends |
-| `train storage add` | Add storage backend |
-| `train storage show <name>` | Show storage details |
-| `train storage test <name>` | Test connection |
-| `train storage remove <name>` | Remove storage |
 | `train transfer <src> <dst>` | Transfer files |
 | `train transfer <src> <dst> --delete` | Sync with deletions |
 | `train transfer <src> <dst> --exclude '*.ckpt'` | Exclude patterns |
@@ -347,17 +340,30 @@ tmux.close @work
 | `train recipe list` | List recipes |
 | `train recipe show <name>` | Show recipe details |
 | `train recipe run <name>` | Run a recipe |
-| `train recipe run <name> --no-visual` | Headless mode |
 | `train recipe run <name> --host gpu=vast:123` | Override host |
 | `train recipe run <name> --var MODEL=llama-7b` | Override variable |
 | `train recipe run <name> --pick-host gpu` | Pick Vast.ai host |
-| `train recipe new <name>` | Create new recipe |
-| `train recipe edit <name>` | Edit recipe in editor |
-| `train recipe logs` | View execution logs |
-| `train recipe logs --last` | Show last execution |
 | `train recipe status` | View running sessions |
 | `train recipe status --all` | Include completed sessions |
-| `train recipe resume` | Resume last interrupted recipe |
+
+### Occasional
+
+| Command | Description |
+|---------|-------------|
+| `train host add` | Add new host (SSH/Colab) |
+| `train host browse <name>` | Browse files on host |
+| `train host test <name>` | Test connection |
+| `train storage list` | List storage backends |
+| `train storage show <name>` | Show storage details |
+| `train storage add` | Add storage backend |
+| `train storage test <name>` | Test connection |
+| `train recipe new <name>` | Create new recipe |
+| `train recipe edit <name>` | Edit recipe in editor |
+| `train recipe resume <name>` | Resume a failed/interrupted recipe |
+| `train recipe resume <name> --check` | Check remote status only |
+| `train recipe logs` | View execution logs |
+| `train recipe logs --last` | Show last execution |
+| `train recipe logs <job-id>` | Show logs for a specific job |
 | `train recipe jobs` | View job history |
 | `train secrets list` | List stored secrets |
 | `train secrets set <key>` | Set a secret |
@@ -366,24 +372,32 @@ tmux.close @work
 | `train config show` | Show configuration |
 | `train config get <key>` | Get config value |
 | `train config set <key> <val>` | Set config value |
-| `train config reset` | Reset configuration |
 | `train config tmux-setup` | Apply tmux configuration to ~/.tmux.conf |
 | `train config tmux-edit` | Edit tmux options in $EDITOR |
 | `train config tmux-list` | List current tmux options |
 | `train colab list` | List Colab connections |
 | `train colab connect` | Add Colab connection |
-| `train colab ssh` | SSH into Colab |
 | `train colab run <cmd>` | Run command on Colab |
+| `train colab ssh` | SSH into Colab |
 | `train vast list` | List your instances |
 | `train vast show <id>` | Show instance details |
 | `train vast ssh <id>` | SSH into instance |
 | `train vast start <id>` | Start instance |
 | `train vast stop <id>` | Stop instance |
-| `train vast destroy <id>` | Destroy instance |
 | `train vast reboot <id>` | Reboot instance |
 | `train vast search` | Search for GPU offers |
 | `train vast keys` | List SSH keys |
-| `train vast attach-key` | Attach local SSH key |
+| `train vast attach-key [path]` | Attach local SSH key |
+
+### Rare
+
+| Command | Description |
+|---------|-------------|
+| `train host rm <name>` | Rm a host |
+| `train storage rm <name>` | Rm storage |
+| `train recipe rm <name>` | Rm a recipe |
+| `train config reset` | Reset configuration |
+| `train vast rm <id>` | Rm instance |
 | `train pricing rates` | Show exchange rates |
 | `train pricing rates --refresh` | Refresh exchange rates |
 | `train pricing currency` | Show display currency |

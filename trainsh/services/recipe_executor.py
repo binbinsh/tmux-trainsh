@@ -223,7 +223,7 @@ class RecipeExecutor:
             OperationType.UV_RUN: self._op_uv_run,
             OperationType.VAST_START: self._op_vast_start,
             OperationType.VAST_STOP: self._op_vast_stop,
-            OperationType.VAST_DESTROY: self._op_vast_destroy,
+            OperationType.VAST_RM: self._op_vast_rm,
             OperationType.VAST_SEARCH: self._op_vast_search,
             OperationType.VAST_CREATE: self._op_vast_create,
             OperationType.VAST_WAIT_READY: self._op_vast_wait_ready,
@@ -426,14 +426,14 @@ class RecipeExecutor:
         except VastAPIError as e:
             return "", str(e)
 
-    async def _op_vast_destroy(self, params: Dict[str, Any]) -> tuple[str, Optional[str]]:
-        """Destroy a Vast.ai instance."""
+    async def _op_vast_rm(self, params: Dict[str, Any]) -> tuple[str, Optional[str]]:
+        """Rm a Vast.ai instance."""
         try:
             client = get_vast_client()
             instance_id = params.get("instance_id") or self.variables.get("vast_instance_id")
             if instance_id:
-                client.destroy_instance(int(instance_id))
-                return f"Destroyed instance {instance_id}", None
+                client.rm_instance(int(instance_id))
+                return f"Rm instance {instance_id}", None
             return "", "No instance_id specified"
         except VastAPIError as e:
             return "", str(e)

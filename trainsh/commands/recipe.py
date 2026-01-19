@@ -14,6 +14,7 @@ Subcommands:
   show <name>      - Show recipe details
   new <name>       - Create a new recipe from template
   edit <name>      - Open recipe in editor
+  rm <name>        - Rm a recipe
   logs [exec-id]   - View execution logs
   status [id]      - View running recipe sessions
   jobs             - List all job states
@@ -355,6 +356,37 @@ def cmd_edit(args: List[str]) -> None:
         sys.exit(1)
 
     _open_editor(recipe_path)
+
+
+def cmd_rm(args: List[str]) -> None:
+    """Rm a recipe."""
+    if not args:
+        print("Usage: train recipe rm <name>")
+        sys.exit(1)
+
+    name = args[0]
+
+    recipe_path = None
+    if os.path.exists(name):
+        recipe_path = name
+    else:
+        recipes_dir = get_recipes_dir()
+        for ext in [".recipe", ""]:
+            test_path = os.path.join(recipes_dir, name + ext)
+            if os.path.exists(test_path):
+                recipe_path = test_path
+                break
+
+    if not recipe_path:
+        print(f"Recipe not found: {name}")
+        sys.exit(1)
+
+    try:
+        os.remove(recipe_path)
+        print(f"Recipe rm: {recipe_path}")
+    except OSError as e:
+        print(f"Failed to rm recipe: {e}")
+        sys.exit(1)
 
 
 def cmd_logs(args: List[str]) -> None:
@@ -768,6 +800,7 @@ def main(args: List[str]) -> Optional[str]:
         "resume": cmd_resume,
         "new": cmd_new,
         "edit": cmd_edit,
+        "rm": cmd_rm,
         "logs": cmd_logs,
         "status": cmd_status,
         "jobs": cmd_jobs,

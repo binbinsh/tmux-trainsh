@@ -26,7 +26,7 @@ class VastAPIClient:
     Vast.ai REST API client.
 
     Provides methods to:
-    - List, start, stop, destroy instances
+    - List, start, stop, rm instances
     - Search GPU offers
     - Create new instances
     - Manage SSH keys
@@ -143,9 +143,9 @@ class VastAPIClient:
             data={"state": "stopped"},
         )
 
-    def destroy_instance(self, instance_id: int) -> None:
+    def rm_instance(self, instance_id: int) -> None:
         """
-        Destroy an instance (terminate lease).
+        Rm an instance (terminate lease).
 
         Args:
             instance_id: The instance ID

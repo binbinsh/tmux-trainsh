@@ -275,7 +275,7 @@ class DSLParser:
             if token.startswith('timeout='):
                 timeout = self._parse_duration(token[8:])
 
-        # Remove @ prefix from host
+        # Strip @ prefix from host
         if host.startswith('@'):
             host = host[1:]
 
@@ -310,7 +310,7 @@ class DSLParser:
 
     def _parse_wait(self, line: str) -> None:
         """Parse wait command: wait @host condition timeout=N"""
-        content = line[5:].strip()  # Remove 'wait '
+        content = line[5:].strip()  # Strip 'wait '
 
         target = ""
         pattern = ""

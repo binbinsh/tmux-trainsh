@@ -70,7 +70,7 @@ Endpoints can be:
 |-----------|-------------|------------|
 | `vast_start` | Start target Vast host | (none; uses `${target}`) |
 | `vast_stop` | Stop target Vast host | (none; uses `${target}`) |
-| `vast_destroy` | Destroy target Vast host | (none; uses `${target}`) |
+| `vast_rm` | Rm target Vast host | (none; uses `${target}`) |
 | `vast_copy` | Copy data using Vast copy API | `src`, `dst`, `identity_file?` |
 
 Supported `src`/`dst` formats follow the Vast CLI:
@@ -356,7 +356,7 @@ pub enum Operation {
     RsyncDownload(RsyncDownloadOp),
     VastStart(VastStartOp),
     VastStop(VastStopOp),
-    VastDestroy(VastDestroyOp),
+    VastRm(VastRmOp),
     TmuxNew(TmuxNewOp),
     TmuxSend(TmuxSendOp),
     TmuxCapture(TmuxCaptureOp),

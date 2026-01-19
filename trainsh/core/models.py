@@ -255,7 +255,7 @@ class OperationType(Enum):
     # Vast.ai operations
     VAST_START = "vastStart"
     VAST_STOP = "vastStop"
-    VAST_DESTROY = "vastDestroy"
+    VAST_RM = "vastRm"
     VAST_SEARCH = "vastSearch"
     VAST_CREATE = "vastCreate"
     VAST_WAIT_READY = "vastWaitReady"

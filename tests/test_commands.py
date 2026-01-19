@@ -44,7 +44,7 @@ COMMANDS = [
     ("host ssh", "Usage"),
     ("host browse", "Usage"),
     ("host test", "Usage"),
-    ("host remove", "Usage"),
+    ("host rm", "Usage"),
 
     # Storage
     ("storage --help", "Subcommands"),
@@ -52,7 +52,7 @@ COMMANDS = [
     ("storage add", "Add new storage backend"),
     ("storage show", "Usage"),
     ("storage test", "Usage"),
-    ("storage remove", "Usage"),
+    ("storage rm", "Usage"),
 
     # Transfer
     ("transfer --help", "Transfer files"),
@@ -64,6 +64,7 @@ COMMANDS = [
     ("recipe run", "Usage"),
     ("recipe new", "Usage"),
     ("recipe edit", "Usage"),
+    ("recipe rm", "Usage"),
     ("recipe logs", "execution"),
     ("recipe logs --last", "execution"),
     ("recipe status", "sessions"),
@@ -97,7 +98,7 @@ COMMANDS = [
     ("vast ssh", "Usage"),
     ("vast start", "Usage"),
     ("vast stop", "Usage"),
-    ("vast destroy", "Usage"),
+    ("vast rm", "Usage"),
     ("vast reboot", "Usage"),
     ("vast search", "GPU"),
     ("vast keys", "SSH"),
@@ -236,7 +237,7 @@ def main():
 
     if total_failed > 0:
         print("\nFailed tests indicate commands that need to be fixed or")
-        print("removed from the README.")
+        print("rm from the README.")
         return 1
 
     print("\nAll tests passed! README commands are up to date.")

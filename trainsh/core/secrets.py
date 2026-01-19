@@ -133,7 +133,7 @@ class SecretsManager:
         Args:
             key: The secret key name
         """
-        # Remove from cache
+        # Drop from cache
         self._cache.pop(key, None)
 
         if self._keyring_available:

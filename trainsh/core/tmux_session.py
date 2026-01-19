@@ -51,7 +51,7 @@ class TmuxSession:
         output = session.capture(pane_id)
 
         # Cleanup
-        session.destroy()
+        session.rm()
     """
 
     def __init__(self, name: str, create: bool = True):
@@ -94,8 +94,8 @@ class TmuxSession:
         """Check if session exists."""
         return self._run("has-session", "-t", self.name).returncode == 0
 
-    def destroy(self) -> bool:
-        """Destroy the entire session."""
+    def rm(self) -> bool:
+        """Rm the entire session."""
         result = self._run("kill-session", "-t", self.name)
         self.panes.clear()
         return result.returncode == 0
