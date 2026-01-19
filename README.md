@@ -226,6 +226,10 @@ Run commands in a tmux session (created with `tmux.open`):
 
 **Note:** The `@session` references a session name from `tmux.open @host as session`, not the host directly.
 
+**Multiline:** Use shell line continuations (`\`) or heredocs (`<< 'EOF'`) to span commands across lines; the DSL treats them as a single execute step.
+
+**train exec:** `@name` resolves to an existing tmux session first. If none exists, it runs directly on the host named `name` without creating a tmux session.
+
 #### Wait Commands
 
 Wait for conditions in a session:
@@ -328,7 +332,7 @@ tmux.close @work
 | Command | Description |
 |---------|-------------|
 | `train exec '<dsl>'` | Execute DSL commands directly |
-| `train exec '@host > cmd'` | Run command on remote host |
+| `train exec '@session > cmd'` | Run in tmux session; falls back to host if no session exists |
 | `train exec '@src:path -> @dst:path'` | Transfer files |
 | `train host list` | List configured hosts |
 | `train host show <name>` | Show host details |

@@ -37,22 +37,22 @@ vast.pick @gpu num_gpus=1 min_gpu_ram=24
 vast.wait timeout=5m
 
 # Open tmux session
-tmux.open @gpu
+tmux.open @gpu as work
 
 # Clone LLaMA-Factory repository
-@gpu > git clone $REPO_URL $WORKDIR 2>/dev/null || (cd $WORKDIR && git pull)
+@work > git clone $REPO_URL $WORKDIR 2>/dev/null || (cd $WORKDIR && git pull)
 
 # Install dependencies
-@gpu > cd $WORKDIR && pip install -e ".[torch,metrics]" && pip install deepspeed
+@work > cd $WORKDIR && pip install -e ".[torch,metrics]" && pip install deepspeed
 
 # Setup HuggingFace cache directory
-@gpu > export HF_HOME=/workspace/.cache/huggingface && mkdir -p $HF_HOME
+@work > export HF_HOME=/workspace/.cache/huggingface && mkdir -p $HF_HOME
 
 # Create output directories
-@gpu > mkdir -p $WORKDIR/$OUTPUT_DIR $WORKDIR/logs
+@work > mkdir -p $WORKDIR/$OUTPUT_DIR $WORKDIR/logs
 
 # Start LoRA fine-tuning
-@gpu > cd $WORKDIR && llamafactory-cli train \
+@work > cd $WORKDIR && llamafactory-cli train \
     --stage sft \
     --do_train True \
     --model_name_or_path $MODEL_NAME \
@@ -77,7 +77,7 @@ tmux.open @gpu
     && touch $OUTPUT_DIR/training_complete.txt &
 
 # Wait for training completion
-wait @gpu file=$WORKDIR/$OUTPUT_DIR/training_complete.txt timeout=6h
+wait @work file=$WORKDIR/$OUTPUT_DIR/training_complete.txt timeout=6h
 
 # Download LoRA adapter
 @gpu:$WORKDIR/$OUTPUT_DIR -> $LOCAL_OUTPUT/lora-adapter
@@ -87,4 +87,4 @@ wait @gpu file=$WORKDIR/$OUTPUT_DIR/training_complete.txt timeout=6h
 
 # Stop the instance
 vast.stop
-tmux.close @gpu
+tmux.close @work

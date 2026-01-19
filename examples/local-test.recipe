@@ -7,21 +7,21 @@ var SLEEP_TIME = 2
 host local = local
 
 # Open a local tmux session
-tmux.open @local
+tmux.open @local as work
 
 # Run some local commands
-@local > echo "$MESSAGE"
-@local > echo "Current directory: $(pwd)"
-@local > echo "Date: $(date)"
+@work > echo "$MESSAGE"
+@work > echo "Current directory: $(pwd)"
+@work > echo "Date: $(date)"
 
 # Show some system info
-@local > uname -a
-@local > echo "Testing sleep for $SLEEP_TIME seconds..."
+@work > uname -a
+@work > echo "Testing sleep for $SLEEP_TIME seconds..."
 
 sleep ${SLEEP_TIME}s
 
-@local > echo "Done sleeping!"
+@work > echo "Done sleeping!"
 
 # Notify when complete
 notify "Local test completed!"
-tmux.close @local
+tmux.close @work

@@ -32,25 +32,25 @@ vast.pick @gpu num_gpus=1 min_gpu_ram=16
 vast.wait timeout=5m
 
 # Open tmux session
-tmux.open @gpu
+tmux.open @gpu as work
 
 # Clone the nanoGPT repository
-@gpu > git clone $REPO_URL $WORKDIR 2>/dev/null || (cd $WORKDIR && git pull)
+@work > git clone $REPO_URL $WORKDIR 2>/dev/null || (cd $WORKDIR && git pull)
 
 # Install dependencies
-@gpu > pip install torch numpy transformers datasets tiktoken wandb tqdm
+@work > pip install torch numpy transformers datasets tiktoken wandb tqdm
 
 # Prepare Shakespeare dataset
-@gpu > cd $WORKDIR/data/shakespeare_char && python prepare.py
+@work > cd $WORKDIR/data/shakespeare_char && python prepare.py
 
 # Start training in background
-@gpu > cd $WORKDIR && python train.py config/train_shakespeare_char.py --block_size=$BLOCK_SIZE --batch_size=$BATCH_SIZE --n_layer=$N_LAYER --n_head=$N_HEAD --n_embd=$N_EMBD --max_iters=$MAX_ITERS --out_dir=$MODEL_OUT &
+@work > cd $WORKDIR && python train.py config/train_shakespeare_char.py --block_size=$BLOCK_SIZE --batch_size=$BATCH_SIZE --n_layer=$N_LAYER --n_head=$N_HEAD --n_embd=$N_EMBD --max_iters=$MAX_ITERS --out_dir=$MODEL_OUT &
 
 # Wait for training completion
-wait @gpu "step $MAX_ITERS:" timeout=2h
+wait @work "step $MAX_ITERS:" timeout=2h
 
 # Test the trained model with sample generation
-@gpu > cd $WORKDIR && python sample.py --out_dir=$MODEL_OUT --num_samples=1 --max_new_tokens=200
+@work > cd $WORKDIR && python sample.py --out_dir=$MODEL_OUT --num_samples=1 --max_new_tokens=200
 
 # Download results
 @gpu:$WORKDIR/$MODEL_OUT -> $LOCAL_OUTPUT/model
@@ -58,4 +58,4 @@ wait @gpu "step $MAX_ITERS:" timeout=2h
 
 # Stop the instance to save costs
 vast.stop
-tmux.close @gpu
+tmux.close @work

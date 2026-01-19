@@ -189,6 +189,7 @@ class DSLExecutor:
         job_id: Optional[str] = None,
         recipe_path: Optional[str] = None,
         is_resuming: bool = False,
+        allow_host_execute: bool = False,
     ):
         """
         Initialize executor.
@@ -204,6 +205,7 @@ class DSLExecutor:
         self.log_callback = log_callback or print
         self.recipe_path = recipe_path
         self.is_resuming = is_resuming
+        self.allow_host_execute = allow_host_execute
 
         # Job state management
         self.state_manager = JobStateManager()
@@ -438,7 +440,7 @@ class DSLExecutor:
 
     def _cmd_tmux_open(self, args: List[str]) -> tuple[bool, str]:
         """
-        Handle: > tmux.open @host as name
+        Handle: tmux.open @host as name
 
         Creates a remote tmux session via SSH for persistent command execution.
         Commands survive SSH disconnect - attach manually with:
@@ -535,14 +537,17 @@ class DSLExecutor:
             return False, str(e)
 
     def _cmd_tmux_close(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > tmux.close name
+        """Handle: tmux.close @session
 
         Kills the remote tmux session via SSH.
         """
         if not args:
-            return False, "Usage: tmux.close name"
+            return False, "Usage: tmux.close @session"
 
         window_name = args[0]
+        if not window_name.startswith("@"):
+            return False, "Usage: tmux.close @session"
+        window_name = window_name[1:]
         window = self.ctx.windows.get(window_name)
 
         if not window:
@@ -678,7 +683,7 @@ class DSLExecutor:
             return False, str(e)
 
     def _cmd_notify(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > notify "message" """
+        """Handle: notify "message" """
         message = " ".join(args)
         self.log(f"📢 {message}")
 
@@ -695,7 +700,7 @@ class DSLExecutor:
         return True, message
 
     def _cmd_vast_start(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > vast.start template/search"""
+        """Handle: vast.start template/search"""
         from ..services.vast_api import get_vast_client, VastAPIError
 
         try:
@@ -790,7 +795,7 @@ class DSLExecutor:
             return False, str(e)
 
     def _cmd_vast_stop(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > vast.stop <instance_id>"""
+        """Handle: vast.stop <instance_id>"""
         from ..services.vast_api import get_vast_client, VastAPIError
 
         try:
@@ -818,7 +823,7 @@ class DSLExecutor:
             return False, str(e)
 
     def _cmd_vast_pick(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > vast.pick @host gpu=RTX_5090 num_gpus=8 min_gpu_ram=24 (selects from rented instances)"""
+        """Handle: vast.pick @host gpu=RTX_5090 num_gpus=8 min_gpu_ram=24 (selects from rented instances)"""
         from ..services.vast_api import get_vast_client, VastAPIError
 
         host_name = None
@@ -1020,7 +1025,7 @@ class DSLExecutor:
             return False, str(e)
 
     def _cmd_vast_wait(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > vast.wait <instance_id> timeout=10m poll=10s stop_on_fail=true"""
+        """Handle: vast.wait <instance_id> timeout=10m poll=10s stop_on_fail=true"""
         from ..services.vast_api import get_vast_client, VastAPIError
         from ..config import load_config
 
@@ -1356,7 +1361,7 @@ class DSLExecutor:
                 self.logger.log_detail("ssh_key_warning", f"Failed to manage SSH keys: {e}", {})
 
     def _cmd_vast_cost(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > vast.cost <instance_id>"""
+        """Handle: vast.cost <instance_id>"""
         from ..services.vast_api import get_vast_client, VastAPIError
         from ..services.pricing import load_pricing_settings, format_currency
         from ..config import load_config
@@ -1428,7 +1433,7 @@ class DSLExecutor:
             return True, msg
 
     def _cmd_sleep(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: > sleep duration"""
+        """Handle: sleep duration"""
         if not args:
             return False, "Usage: sleep 10s/5m/1h"
 
@@ -1439,7 +1444,7 @@ class DSLExecutor:
         return True, f"Slept for {duration}s"
 
     def _exec_execute(self, step: DSLStep) -> tuple[bool, str]:
-        """Execute command: host: command
+        """Execute command: @session > command
 
         Commands run in remote tmux sessions via SSH (survives SSH disconnect).
         For local hosts, commands run directly.
@@ -1454,7 +1459,7 @@ class DSLExecutor:
                 "background": step.background,
             })
 
-        window = self.ctx.windows.get(window_name)
+        window = self._resolve_window(window_name)
         if not window:
             return False, f"Unknown window: {window_name}"
 
@@ -1851,6 +1856,10 @@ class DSLExecutor:
         if self.logger:
             self.logger.log_detail("wait_start", f"Starting wait for {target}", wait_config)
 
+        window = self._resolve_window(target)
+        if not window:
+            return False, f"Unknown window: {target}"
+
         start = time.time()
         poll_interval = 30  # Check every 30 seconds
         ssh_failures = 0
@@ -1876,8 +1885,7 @@ class DSLExecutor:
                 filepath = self._interpolate(filepath)
 
                 # Resolve host from target
-                window = self.ctx.windows.get(target)
-                if window and window.host != "local":
+                if window.host != "local":
                     # Remote file check with retry logic
                     try:
                         check_cmd = f"test -f {filepath} && echo exists"
@@ -1938,9 +1946,8 @@ class DSLExecutor:
             # Check port condition
             if condition and condition.startswith("port:"):
                 port = int(condition[5:])
-                window = self.ctx.windows.get(target)
                 host = "localhost"
-                if window and window.host != "local":
+                if window.host != "local":
                     host = _host_from_ssh_spec(window.host).hostname
                 try:
                     result = subprocess.run(
@@ -1957,9 +1964,6 @@ class DSLExecutor:
 
             # Check idle condition - use dedicated method
             if condition == "idle":
-                window = self.ctx.windows.get(target)
-                if not window:
-                    return False, f"Unknown window: {target}"
                 if not window.remote_session:
                     return False, f"Window {target} has no tmux session"
                 return self._wait_for_idle(window, remaining)
@@ -1984,6 +1988,16 @@ class DSLExecutor:
         if host.startswith("vast:"):
             return _resolve_vast_host(host[5:])
         return host
+
+    def _resolve_window(self, name: str) -> Optional[WindowInfo]:
+        """Resolve a window name to an existing tmux session or host fallback."""
+        window = self.ctx.windows.get(name)
+        if window:
+            return window
+        if not self.allow_host_execute:
+            return None
+        host = self._resolve_host(f"@{name}")
+        return WindowInfo(name=name, host=host, remote_session=None)
 
     def _interpolate(self, text: str) -> str:
         """Interpolate variables and secrets."""

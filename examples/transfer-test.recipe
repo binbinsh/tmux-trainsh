@@ -5,21 +5,21 @@ var TEST_FILE = /tmp/trainsh-transfer-test.txt
 
 host local = local
 
-tmux.open @local
+tmux.open @local as work
 
 # Create a test file
-@local > echo "Transfer test - $(date)" > $TEST_FILE
-@local > cat $TEST_FILE
+@work > echo "Transfer test - $(date)" > $TEST_FILE
+@work > cat $TEST_FILE
 
 # Test local-to-local transfer (for testing without remote)
 $TEST_FILE -> /tmp/trainsh-transfer-copy.txt
 
-@local > echo "Copied file:"
-@local > cat /tmp/trainsh-transfer-copy.txt
+@work > echo "Copied file:"
+@work > cat /tmp/trainsh-transfer-copy.txt
 
 # Cleanup
-@local > rm -f $TEST_FILE /tmp/trainsh-transfer-copy.txt
-@local > echo "Transfer test completed!"
+@work > rm -f $TEST_FILE /tmp/trainsh-transfer-copy.txt
+@work > echo "Transfer test completed!"
 
 notify "Transfer test done!"
-tmux.close @local
+tmux.close @work

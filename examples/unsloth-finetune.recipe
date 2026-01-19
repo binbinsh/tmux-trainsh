@@ -35,16 +35,16 @@ vast.pick @gpu num_gpus=1 min_gpu_ram=16
 vast.wait timeout=5m
 
 # Open tmux session
-tmux.open @gpu
+tmux.open @gpu as work
 
 # Create workspace
-@gpu > mkdir -p $WORKDIR $OUTPUT_DIR
+@work > mkdir -p $WORKDIR $OUTPUT_DIR
 
 # Install Unsloth with dependencies
-@gpu > pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" && pip install --no-deps trl peft accelerate bitsandbytes xformers
+@work > pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" && pip install --no-deps trl peft accelerate bitsandbytes xformers
 
 # Create training script inline
-@gpu > cat > $WORKDIR/train.py << 'SCRIPT'
+@work > cat > $WORKDIR/train.py << 'SCRIPT'
 import torch
 import os
 from unsloth import FastLanguageModel
@@ -151,10 +151,10 @@ with open(f"{output_dir}/training_complete.txt", "w") as f:
 SCRIPT
 
 # Run training with environment variables
-@gpu > cd $WORKDIR && MODEL_NAME=$MODEL_NAME MAX_SEQ_LENGTH=$MAX_SEQ_LENGTH LORA_RANK=$LORA_RANK LORA_ALPHA=$LORA_ALPHA DATASET_NAME=$DATASET_NAME OUTPUT_DIR=$OUTPUT_DIR MAX_STEPS=$MAX_STEPS LEARNING_RATE=$LEARNING_RATE BATCH_SIZE=$BATCH_SIZE GRAD_ACCUM=$GRAD_ACCUM WARMUP_STEPS=$WARMUP_STEPS python train.py &
+@work > cd $WORKDIR && MODEL_NAME=$MODEL_NAME MAX_SEQ_LENGTH=$MAX_SEQ_LENGTH LORA_RANK=$LORA_RANK LORA_ALPHA=$LORA_ALPHA DATASET_NAME=$DATASET_NAME OUTPUT_DIR=$OUTPUT_DIR MAX_STEPS=$MAX_STEPS LEARNING_RATE=$LEARNING_RATE BATCH_SIZE=$BATCH_SIZE GRAD_ACCUM=$GRAD_ACCUM WARMUP_STEPS=$WARMUP_STEPS python train.py &
 
 # Wait for training completion
-wait @gpu file=$OUTPUT_DIR/training_complete.txt timeout=3h
+wait @work file=$OUTPUT_DIR/training_complete.txt timeout=3h
 
 # Download LoRA adapter
 @gpu:$OUTPUT_DIR/lora_model -> $LOCAL_OUTPUT/lora_model
@@ -167,4 +167,4 @@ wait @gpu file=$OUTPUT_DIR/training_complete.txt timeout=3h
 
 # Stop the instance
 vast.stop
-tmux.close @gpu
+tmux.close @work

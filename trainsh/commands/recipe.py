@@ -319,7 +319,7 @@ tmux.open @gpu as main
 notify "Recipe complete!"
 
 # Close session when done
-# tmux.close main
+# tmux.close @main
 '''
 
     recipe_name = name.rsplit(".", 1)[0]

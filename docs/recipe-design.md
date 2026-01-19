@@ -107,7 +107,7 @@ vast_copy = { src = "C.6003036:/workspace/", dst = "local:./data" }
 | Command | Description |
 |---------|-------------|
 | `tmux.open @host as name` | Create tmux session on host |
-| `tmux.close name` | Close tmux session |
+| `tmux.close @session` | Close tmux session |
 | `tmux.config @host` | Apply tmux configuration from config.toml to remote host |
 
 The `tmux.config` command reads `tmux.options` from your local config and writes them to `~/.tmux.conf` on the remote host, then reloads tmux.

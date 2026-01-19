@@ -2,7 +2,7 @@
 # Parses .recipe files into Recipe objects
 
 import re
-from typing import Optional, List, Dict, Set
+from typing import Optional, List, Dict, Set, Iterator, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -10,9 +10,9 @@ from enum import Enum
 class StepType(Enum):
     """Type of DSL step."""
     CONTROL = "control"      # command args (e.g., vast.pick, tmux.open)
-    EXECUTE = "execute"      # @host > command
+    EXECUTE = "execute"      # @session > command
     TRANSFER = "transfer"    # @src:path -> @dst:path
-    WAIT = "wait"            # wait @host condition
+    WAIT = "wait"            # wait @session condition
 
 
 # Control commands that are recognized
@@ -72,7 +72,7 @@ class DSLParser:
     """
     Parser for .recipe DSL files.
 
-    New Syntax:
+    Syntax:
         # Variables (reference with $NAME or ${NAME})
         var NAME = value
 
@@ -84,18 +84,19 @@ class DSLParser:
 
         # Control commands
         vast.pick @host options
-        tmux.open @host
+        tmux.open @host as session
+        tmux.close @session
         notify "message"
 
         # Execute commands
-        @host > command
-        @host > command &
-        @host timeout=2h > command
+        @session > command
+        @session > command &
+        @session timeout=2h > command
 
         # Wait commands
-        wait @host "pattern" timeout=2h
-        wait @host file=path timeout=1h
-        wait @host idle timeout=30m
+        wait @session "pattern" timeout=2h
+        wait @session file=path timeout=1h
+        wait @session idle timeout=30m
 
         # Transfer commands
         @src:path -> @dst:path
@@ -109,8 +110,6 @@ class DSLParser:
         self.defined_names: Set[str] = set()  # Track all defined names
         self.steps: List[DSLStep] = []
         self.line_num = 0
-        # For backward compatibility with --- blocks
-        self.in_var_block = False
 
     def parse(self, content: str, name: str = "") -> DSLRecipe:
         """Parse DSL content into a recipe."""
@@ -120,12 +119,9 @@ class DSLParser:
         self.defined_names = set()
         self.steps = []
         self.line_num = 0
-        self.in_var_block = False
 
-        lines = content.split('\n')
-
-        for i, line in enumerate(lines):
-            self.line_num = i + 1
+        for line_num, line in self._iter_lines(content):
+            self.line_num = line_num
             self._parse_line(line)
 
         return DSLRecipe(
@@ -144,6 +140,57 @@ class DSLParser:
         name = os.path.basename(path).rsplit('.', 1)[0]
         return self.parse(content, name)
 
+    def _iter_lines(self, content: str) -> Iterator[Tuple[int, str]]:
+        """Yield logical lines, joining multiline execute commands."""
+        lines = content.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            line_num = i + 1
+            stripped = line.strip()
+
+            if stripped.startswith('@') and ' > ' in stripped:
+                combined = line
+                command = line.split(' > ', 1)[1]
+                heredoc_delim = self._detect_heredoc_delim(command)
+                if heredoc_delim:
+                    i += 1
+                    found = False
+                    while i < len(lines):
+                        combined += '\n' + lines[i]
+                        if lines[i].strip() == heredoc_delim:
+                            found = True
+                            break
+                        i += 1
+                    if not found:
+                        raise DSLParseError(
+                            f"Unterminated heredoc (expected '{heredoc_delim}')",
+                            line_num
+                        )
+                    yield line_num, combined
+                    i += 1
+                    continue
+
+                while combined.rstrip().endswith('\\'):
+                    if i + 1 >= len(lines):
+                        raise DSLParseError("Line continuation at end of file", line_num)
+                    i += 1
+                    combined += '\n' + lines[i]
+
+                yield line_num, combined
+                i += 1
+                continue
+
+            yield line_num, line
+            i += 1
+
+    def _detect_heredoc_delim(self, command: str) -> Optional[str]:
+        """Detect heredoc delimiter in an execute command."""
+        match = re.search(r"<<-?\s*(['\"]?)([A-Za-z0-9_]+)\1", command)
+        if match:
+            return match.group(2)
+        return None
+
     def _check_duplicate_name(self, name: str, kind: str) -> None:
         """Check if a name is already defined."""
         if name in self.defined_names:
@@ -158,16 +205,6 @@ class DSLParser:
         # Strip and skip empty/comment lines
         stripped = line.strip()
         if not stripped or stripped.startswith('#'):
-            return
-
-        # Backward compatibility: variable block delimiter
-        if stripped == '---':
-            self.in_var_block = not self.in_var_block
-            return
-
-        # Inside variable block (backward compatibility)
-        if self.in_var_block:
-            self._parse_legacy_variable(stripped)
             return
 
         # New syntax: var NAME = value
@@ -185,19 +222,19 @@ class DSLParser:
             self._parse_storage_def(stripped)
             return
 
-        # New syntax: wait @host condition
+        # New syntax: wait @session condition
         if stripped.startswith('wait '):
             self._parse_wait(stripped)
             return
 
-        # Transfer: source -> dest or source <- dest
-        if ' -> ' in stripped or ' <- ' in stripped:
-            self._parse_transfer(stripped)
+        # New syntax: @session > command (execute)
+        if ' > ' in stripped and stripped.startswith('@'):
+            self._parse_execute(line)
             return
 
-        # New syntax: @host > command (execute)
-        if ' > ' in stripped and stripped.startswith('@'):
-            self._parse_execute(stripped)
+        # Transfer: source -> dest
+        if ' -> ' in stripped:
+            self._parse_transfer(stripped)
             return
 
         # Control command: command args (e.g., vast.pick @gpu, tmux.open @host)
@@ -207,8 +244,7 @@ class DSLParser:
             self._parse_control(stripped)
             return
 
-        # Unknown line - ignore silently for forward compatibility
-        pass
+        raise DSLParseError(f"Unrecognized DSL syntax: {line}", self.line_num)
 
     def _parse_var_def(self, line: str) -> None:
         """Parse variable definition: var NAME = value"""
@@ -252,7 +288,7 @@ class DSLParser:
         ))
 
     def _parse_execute(self, line: str) -> None:
-        """Parse execute command: @host [timeout=N] > command"""
+        """Parse execute command: @session [timeout=N] > command"""
         # Split on ' > ' to separate host part from command
         parts = line.split(' > ', 1)
         if len(parts) != 2:
@@ -275,7 +311,7 @@ class DSLParser:
             if token.startswith('timeout='):
                 timeout = self._parse_duration(token[8:])
 
-        # Strip @ prefix from host
+        # Strip @ prefix from session
         if host.startswith('@'):
             host = host[1:]
 
@@ -290,15 +326,10 @@ class DSLParser:
         ))
 
     def _parse_transfer(self, line: str) -> None:
-        """Parse transfer: source -> dest or source <- dest"""
-        if ' -> ' in line:
-            source, dest = line.split(' -> ', 1)
-            source = source.strip()
-            dest = dest.strip()
-        else:  # ' <- '
-            dest, source = line.split(' <- ', 1)
-            source = source.strip()
-            dest = dest.strip()
+        """Parse transfer: source -> dest"""
+        source, dest = line.split(' -> ', 1)
+        source = source.strip()
+        dest = dest.strip()
 
         self.steps.append(DSLStep(
             type=StepType.TRANSFER,
@@ -309,7 +340,7 @@ class DSLParser:
         ))
 
     def _parse_wait(self, line: str) -> None:
-        """Parse wait command: wait @host condition timeout=N"""
+        """Parse wait command: wait @session condition timeout=N"""
         content = line[5:].strip()  # Strip 'wait '
 
         target = ""
@@ -322,6 +353,8 @@ class DSLParser:
         if host_match:
             target = host_match.group(1)
             content = content[host_match.end():].strip()
+        else:
+            raise DSLParseError("wait requires a @session target", self.line_num)
 
         # Extract quoted pattern
         pattern_match = re.search(r'"([^"]+)"', content)
