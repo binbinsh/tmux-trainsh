@@ -59,13 +59,8 @@ def save_cache(data: dict) -> None:
         pass
 
 
-def check_for_updates(current_version: str, force: bool = False) -> Optional[str]:
-    """
-    Check if a newer version is available.
-
-    Returns the latest version string if update available, None otherwise.
-    Uses cache to avoid frequent network requests.
-    """
+def get_latest_version(force: bool = False) -> Optional[str]:
+    """Return latest version from cache or PyPI."""
     cache = load_cache()
 
     # Check cache validity
@@ -74,9 +69,8 @@ def check_for_updates(current_version: str, force: bool = False) -> Optional[str
             checked_at = datetime.fromisoformat(cache["checked_at"])
             if datetime.now() - checked_at < timedelta(hours=CACHE_TTL_HOURS):
                 latest = cache.get("latest_version")
-                if latest and parse_version(latest) > parse_version(current_version):
+                if latest:
                     return latest
-                return None
         except (ValueError, TypeError):
             pass
 
@@ -87,9 +81,19 @@ def check_for_updates(current_version: str, force: bool = False) -> Optional[str
             "latest_version": latest,
             "checked_at": datetime.now().isoformat(),
         })
-        if parse_version(latest) > parse_version(current_version):
-            return latest
+    return latest
 
+
+def check_for_updates(current_version: str, force: bool = False) -> Optional[str]:
+    """
+    Check if a newer version is available.
+
+    Returns the latest version string if update available, None otherwise.
+    Uses cache to avoid frequent network requests.
+    """
+    latest = get_latest_version(force=force)
+    if latest and parse_version(latest) > parse_version(current_version):
+        return latest
     return None
 
 

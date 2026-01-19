@@ -36,11 +36,9 @@ def main(args: list[str]) -> str | None:
 
 if __name__ == "__main__":
     from trainsh import __version__
-    from trainsh.utils.update_checker import maybe_check_updates
 
     # Standalone mode: args[0] is the script name
     result = main(["train"] + sys.argv[1:])
     if result:
         print(result)
-    maybe_check_updates(__version__)
     sys.exit(0)

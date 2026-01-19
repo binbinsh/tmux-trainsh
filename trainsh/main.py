@@ -17,6 +17,7 @@ Commands:
   config    - Configuration and settings
   colab     - Google Colab integration
   pricing   - Currency exchange rates and cost calculator
+  update    - Check for updates
 '''
 
 help_text = '''
@@ -108,6 +109,9 @@ def main(args: list[str]) -> Optional[str]:
     elif command == "pricing":
         from .commands.pricing import main as pricing_main
         return pricing_main(cmd_args)
+    elif command == "update":
+        from .commands.update import main as update_main
+        return update_main(cmd_args)
     elif command == "config":
         from .commands.config_cmd import main as config_main
         return config_main(cmd_args)
@@ -122,14 +126,9 @@ def main(args: list[str]) -> Optional[str]:
 
 def cli() -> None:
     """CLI entry point (called by uv/pip installed command)."""
-    from . import __version__
-    from .utils.update_checker import maybe_check_updates
-
     result = main(sys.argv)
     if result:
         print(result)
-
-    maybe_check_updates(__version__)
 
 
 if __name__ == "__main__":
