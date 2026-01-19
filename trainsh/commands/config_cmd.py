@@ -209,7 +209,7 @@ def cmd_tmux_edit(args: List[str]) -> None:
         tmux_options = get_default_config().get("tmux", {}).get("options", [])
 
     # Get editor
-    editor = os.environ.get("EDITOR", os.environ.get("VISUAL", "vi"))
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "nano"
 
     # Write options to temp file
     with tempfile.NamedTemporaryFile(mode="w", suffix=".tmux.conf", delete=False) as f:

@@ -41,6 +41,12 @@ def list_recipes() -> List[str]:
     return sorted(recipes)
 
 
+def _open_editor(path: str) -> None:
+    """Open file in user's editor."""
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "nano"
+    os.system(f'{editor} "{path}"')
+
+
 def cmd_list(args: List[str]) -> None:
     """List available recipes."""
     recipes = list_recipes()
@@ -284,31 +290,33 @@ def cmd_new(args: List[str]) -> None:
         sys.exit(1)
 
     template = '''# {name}
-# Created with tmux-train
+# Created with tmux-trainsh
 
----
-HOST = your-server
-MODEL = llama-7b
----
+# Variables (reference with $NAME or ${{NAME}})
+var HOST = your-server
+var MODEL = llama-7b
 
-# Define hosts
-@gpu = ${{HOST}}
+# Hosts (reference with @NAME)
+host gpu = $HOST
 
-# Open terminal
-> tmux.open @gpu as main
+# Open tmux session
+tmux.open @gpu as main
 
-# Run commands
-main: echo "Hello from ${{MODEL}}"
-main: uv --version
+# Run commands (session name, not host)
+@main > echo "Hello from $MODEL"
+@main > uv --version
 
 # File transfer example
-# ~/local/path -> @gpu:/remote/path
+# ./local/path -> @gpu:/remote/path
 
 # Wait for pattern
-# ? main: "completed" timeout=1h
+# wait @main "completed" timeout=1h
 
 # Notify when done
-> notify "Recipe complete!"
+notify "Recipe complete!"
+
+# Close session when done
+# tmux.close main
 '''
 
     recipe_name = name.rsplit(".", 1)[0]
@@ -317,7 +325,8 @@ main: uv --version
         f.write(template.format(name=recipe_name))
 
     print(f"Created recipe: {recipe_path}")
-    print("Edit it to add your steps.")
+    print("Opening in editor...")
+    _open_editor(recipe_path)
 
 
 def cmd_edit(args: List[str]) -> None:
@@ -345,8 +354,7 @@ def cmd_edit(args: List[str]) -> None:
         print("Use 'train recipe new' to create one.")
         sys.exit(1)
 
-    editor = os.environ.get("EDITOR", "vim")
-    os.system(f'{editor} "{recipe_path}"')
+    _open_editor(recipe_path)
 
 
 def cmd_logs(args: List[str]) -> None:
