@@ -15,7 +15,7 @@ Subcommands:
   ssh <id>          - SSH into instance
   start <id>        - Start instance
   stop <id>         - Stop instance
-  rm <id>           - Rm instance
+  rm <id>           - Remove instance
   reboot <id>       - Reboot instance
   search            - Search for GPU offers
   keys              - List SSH keys
@@ -124,14 +124,14 @@ def cmd_stop(args: List[str]) -> None:
 
 
 def cmd_rm(args: List[str]) -> None:
-    """Rm instance."""
+    """Remove instance."""
     if not args:
         print("Usage: train vast rm <instance_id>")
         sys.exit(1)
 
     inst_id = int(args[0])
 
-    confirm = prompt_input(f"Rm instance {inst_id}? This cannot be undone. (y/N): ")
+    confirm = prompt_input(f"Remove instance {inst_id}? This cannot be undone. (y/N): ")
     if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
@@ -139,9 +139,9 @@ def cmd_rm(args: List[str]) -> None:
     from ..services.vast_api import get_vast_client
 
     client = get_vast_client()
-    print(f"Rm instance {inst_id}...")
+    print(f"Removing instance {inst_id}...")
     client.rm_instance(inst_id)
-    print("Instance rm.")
+    print("Instance removed.")
 
 
 def cmd_reboot(args: List[str]) -> None:

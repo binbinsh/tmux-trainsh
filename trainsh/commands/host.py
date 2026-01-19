@@ -15,7 +15,7 @@ Subcommands:
   show <name>      - Show host details
   ssh <name>       - SSH into a host
   browse <name>    - Browse files on a host
-  rm <name>        - Rm a host
+  rm <name>        - Remove a host
   test <name>      - Test connection to a host
 
 Host types:
@@ -339,7 +339,7 @@ def cmd_test(args: List[str]) -> None:
 
 
 def cmd_rm(args: List[str]) -> None:
-    """Rm a host."""
+    """Remove a host."""
     if not args:
         print("Usage: train host rm <name>")
         sys.exit(1)
@@ -351,14 +351,14 @@ def cmd_rm(args: List[str]) -> None:
         print(f"Host not found: {name}")
         sys.exit(1)
 
-    confirm = prompt_input(f"Rm host '{name}'? (y/N): ")
+    confirm = prompt_input(f"Remove host '{name}'? (y/N): ")
     if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
 
     del hosts[name]
     save_hosts(hosts)
-    print(f"Host rm: {name}")
+    print(f"Host removed: {name}")
 
 
 def cmd_browse(args: List[str]) -> None:

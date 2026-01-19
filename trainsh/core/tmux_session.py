@@ -95,7 +95,7 @@ class TmuxSession:
         return self._run("has-session", "-t", self.name).returncode == 0
 
     def rm(self) -> bool:
-        """Rm the entire session."""
+        """Remove the entire session."""
         result = self._run("kill-session", "-t", self.name)
         self.panes.clear()
         return result.returncode == 0

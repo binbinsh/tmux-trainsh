@@ -427,13 +427,13 @@ class RecipeExecutor:
             return "", str(e)
 
     async def _op_vast_rm(self, params: Dict[str, Any]) -> tuple[str, Optional[str]]:
-        """Rm a Vast.ai instance."""
+        """Remove a Vast.ai instance."""
         try:
             client = get_vast_client()
             instance_id = params.get("instance_id") or self.variables.get("vast_instance_id")
             if instance_id:
                 client.rm_instance(int(instance_id))
-                return f"Rm instance {instance_id}", None
+                return f"Removed instance {instance_id}", None
             return "", "No instance_id specified"
         except VastAPIError as e:
             return "", str(e)

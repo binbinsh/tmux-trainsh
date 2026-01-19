@@ -12,7 +12,7 @@ Subcommands:
   list             - List configured storage backends
   add              - Add a new storage backend
   show <name>      - Show storage details
-  rm <name>        - Rm a storage backend
+  rm <name>        - Remove a storage backend
   test <name>      - Test connection to storage
 
 Supported storage types:
@@ -299,7 +299,7 @@ def cmd_show(args: List[str]) -> None:
 
 
 def cmd_rm(args: List[str]) -> None:
-    """Rm a storage backend."""
+    """Remove a storage backend."""
     if not args:
         print("Usage: train storage rm <name>")
         sys.exit(1)
@@ -311,14 +311,14 @@ def cmd_rm(args: List[str]) -> None:
         print(f"Storage not found: {name}")
         sys.exit(1)
 
-    confirm = prompt_input(f"Rm storage '{name}'? (y/N): ")
+    confirm = prompt_input(f"Remove storage '{name}'? (y/N): ")
     if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
         return
 
     del storages[name]
     save_storages(storages)
-    print(f"Storage rm: {name}")
+    print(f"Storage removed: {name}")
 
 
 def cmd_test(args: List[str]) -> None:

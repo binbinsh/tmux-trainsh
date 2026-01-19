@@ -5,6 +5,8 @@ import sys
 import os
 from typing import Optional, List
 
+from ..cli_utils import prompt_input
+
 usage = '''[subcommand] [args...]
 
 Subcommands:
@@ -14,7 +16,7 @@ Subcommands:
   show <name>      - Show recipe details
   new <name>       - Create a new recipe from template
   edit <name>      - Open recipe in editor
-  rm <name>        - Rm a recipe
+  rm <name>        - Remove a recipe
   logs [exec-id]   - View execution logs
   status [id]      - View running recipe sessions
   jobs             - List all job states
@@ -359,7 +361,7 @@ def cmd_edit(args: List[str]) -> None:
 
 
 def cmd_rm(args: List[str]) -> None:
-    """Rm a recipe."""
+    """Remove a recipe."""
     if not args:
         print("Usage: train recipe rm <name>")
         sys.exit(1)
@@ -382,10 +384,14 @@ def cmd_rm(args: List[str]) -> None:
         sys.exit(1)
 
     try:
+        confirm = prompt_input(f"Remove recipe '{recipe_path}'? (y/N): ")
+        if confirm is None or confirm.lower() != "y":
+            print("Cancelled.")
+            return
         os.remove(recipe_path)
-        print(f"Recipe rm: {recipe_path}")
+        print(f"Recipe removed: {recipe_path}")
     except OSError as e:
-        print(f"Failed to rm recipe: {e}")
+        print(f"Failed to remove recipe: {e}")
         sys.exit(1)
 
 

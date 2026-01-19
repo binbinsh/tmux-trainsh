@@ -237,7 +237,7 @@ def main():
 
     if total_failed > 0:
         print("\nFailed tests indicate commands that need to be fixed or")
-        print("rm from the README.")
+        print("remove from the README.")
         return 1
 
     print("\nAll tests passed! README commands are up to date.")

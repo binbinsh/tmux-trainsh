@@ -393,11 +393,11 @@ tmux.close @work
 
 | Command | Description |
 |---------|-------------|
-| `train host rm <name>` | Rm a host |
-| `train storage rm <name>` | Rm storage |
-| `train recipe rm <name>` | Rm a recipe |
+| `train host rm <name>` | Remove a host |
+| `train storage rm <name>` | Remove storage |
+| `train recipe rm <name>` | Remove a recipe |
 | `train config reset` | Reset configuration |
-| `train vast rm <id>` | Rm instance |
+| `train vast rm <id>` | Remove instance |
 | `train pricing rates` | Show exchange rates |
 | `train pricing rates --refresh` | Refresh exchange rates |
 | `train pricing currency` | Show display currency |
