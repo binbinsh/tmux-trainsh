@@ -31,9 +31,21 @@ def parse_version(v: str) -> tuple[int, ...]:
 
 def fetch_latest_version() -> Optional[str]:
     """Fetch latest version from PyPI."""
+    import os
     try:
+        # Manually configure proxy from environment variables
+        proxies = {}
+        for var in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+            if os.environ.get(var):
+                proxies["https"] = os.environ[var]
+                proxies["http"] = os.environ[var]
+                break
+
+        proxy_handler = urllib.request.ProxyHandler(proxies)
+        opener = urllib.request.build_opener(proxy_handler)
+
         req = urllib.request.Request(PYPI_URL, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with opener.open(req, timeout=15) as resp:
             data = json.loads(resp.read().decode())
             return data.get("info", {}).get("version")
     except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, OSError):
