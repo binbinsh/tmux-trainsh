@@ -6,6 +6,7 @@ import time
 import re
 import os
 import shlex
+import getpass
 from typing import Optional, Dict, List, Callable, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -235,7 +236,7 @@ class DSLExecutor:
         self.ssh_retry_base_interval = 30  # seconds
         self.ssh_retry_max_interval = 300  # 5 minutes
 
-        # Track last sudo auth attempt per host to reduce repeated prompts
+        # Track last sudo auth prompt per host to reduce repeated prompts
         self._sudo_last_prompt: Dict[str, float] = {}
 
     def _generate_id(self) -> str:
@@ -1670,16 +1671,18 @@ class DSLExecutor:
         if not re.search(r"\bsudo\b", commands):
             return True, ""
 
+        if window.remote_session:
+            return self._ensure_sudo_auth_tmux(window)
+
+        # Non-tmux execution: best-effort pre-auth in the current terminal
         host = window.host
         host_label = "local" if host == "local" else host
 
-        # Rate-limit explicit prompt logs per host to reduce noise
         now = time.time()
         last_prompt = self._sudo_last_prompt.get(host_label, 0)
         prompt_log = now - last_prompt > 30
 
         if host == "local":
-            # Non-interactive check: returns 0 if cached auth is valid
             check = subprocess.run(
                 ["sudo", "-n", "-v"],
                 capture_output=True,
@@ -1702,16 +1705,7 @@ class DSLExecutor:
 
             return True, ""
 
-        # Remote host: check cached auth via SSH + sudo -n -v
-        check_args = _build_ssh_args(host, command="sudo -n -v", tty=True)
-        check = subprocess.run(
-            check_args,
-            capture_output=True,
-            text=True,
-        )
-        if check.returncode == 0:
-            return True, ""
-
+        # Remote without tmux: run sudo -v in an interactive SSH session
         if prompt_log:
             self.log(f"Sudo auth required on {host_label}. Please enter your password.")
             self._sudo_last_prompt[host_label] = now
@@ -1726,6 +1720,81 @@ class DSLExecutor:
             return False, f"Sudo authentication failed for {host_label}"
 
         return True, ""
+
+    def _ensure_sudo_auth_tmux(self, window: WindowInfo) -> tuple[bool, str]:
+        """Ensure sudo auth inside the tmux session (so it applies to that TTY)."""
+        host = window.host
+        session = window.remote_session
+        host_label = "local" if host == "local" else host
+
+        # Unique prompt token so we can detect password requests reliably
+        prompt_token = "[sudo:authenticate]"
+
+        import uuid
+        signal = f"sudo_{uuid.uuid4().hex[:8]}"
+        sudo_cmd = f"( sudo -v -p '{prompt_token} Password: ' ); tmux wait-for -S {signal}"
+        self._tmux_send_keys(host, session, sudo_cmd)
+
+        prompted = False
+        start = time.time()
+        timeout = 120
+
+        while time.time() - start < timeout:
+            if self._tmux_wait_for_signal(host, signal, timeout=1):
+                return True, ""
+
+            if not prompted:
+                output = self._get_pane_recent_output(host, session, lines=3)
+                if re.search(rf"{re.escape(prompt_token)}|sudo:.*password", output, re.IGNORECASE):
+                    now = time.time()
+                    last_prompt = self._sudo_last_prompt.get(host_label, 0)
+                    if now - last_prompt > 1:
+                        self._sudo_last_prompt[host_label] = now
+                    try:
+                        password = getpass.getpass(f"Sudo password for {host_label}: ")
+                    except (EOFError, KeyboardInterrupt):
+                        return False, f"Sudo authentication cancelled for {host_label}"
+                    if not password:
+                        return False, f"Sudo authentication cancelled for {host_label}"
+                    self._tmux_send_keys(host, session, password)
+                    prompted = True
+
+            time.sleep(0.2)
+
+        return False, f"Sudo authentication timed out for {host_label}"
+
+    def _tmux_send_keys(self, host: str, session: str, text: str) -> None:
+        """Send literal text + Enter to a tmux session locally or via SSH."""
+        tmux_cmd = f"tmux send-keys -t {session} {shlex.quote(text)} Enter"
+        if host == "local":
+            subprocess.run(tmux_cmd, shell=True, capture_output=True, text=True, timeout=10)
+        else:
+            ssh_args = _build_ssh_args(host, command=tmux_cmd, tty=False)
+            subprocess.run(ssh_args, capture_output=True, text=True, timeout=20)
+
+    def _tmux_wait_for_signal(self, host: str, signal: str, timeout: int = 1) -> bool:
+        """Wait briefly for a tmux signal; returns True if received."""
+        wait_cmd = f"tmux wait-for {signal}"
+        try:
+            if host == "local":
+                result = subprocess.run(
+                    wait_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            else:
+                ssh_args = _build_ssh_args(host, command=wait_cmd, tty=False)
+                result = subprocess.run(
+                    ssh_args,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
 
     def _exec_transfer(self, step: DSLStep) -> tuple[bool, str]:
         """Execute file transfer: source -> dest"""
