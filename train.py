@@ -7,7 +7,7 @@ This file serves as the main entry point for:
 2. python train.py ... (standalone mode)
 
 Usage:
-    train --help
+    train help
     train config show
     train host list
     train vast list

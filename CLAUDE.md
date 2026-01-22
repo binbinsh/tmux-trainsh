@@ -15,7 +15,7 @@ uv pip install -e .
 # Run the CLI
 python -m trainsh
 # or after installation:
-train --help
+train help
 
 # Run tests
 python tests/test_commands.py
@@ -90,3 +90,23 @@ Tests verify all README commands are importable and produce expected output:
 ```bash
 python tests/test_commands.py
 ```
+
+## Documentation Updates
+
+**IMPORTANT:** When making code changes, always update documentation to stay in sync:
+
+1. **`trainsh/main.py`** - Update `help_text` variable when:
+   - Adding/removing/renaming commands
+   - Changing command syntax or options
+   - Adding new DSL features
+
+2. **`README.md`** - Update when:
+   - Adding/removing/renaming commands (update Commands tables)
+   - Changing CLI syntax or options
+   - Adding new features or DSL syntax
+   - Changing configuration file structure
+
+3. **Keep in sync:**
+   - `help_text` in `main.py` should be a concise summary of README content
+   - Command tables in README should match actual CLI commands
+   - DSL syntax in both files should match `core/dsl_parser.py` implementation

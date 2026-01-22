@@ -40,14 +40,52 @@ tmux-trainsh: GPU training workflow automation in the terminal.
 Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends
 (Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.
 
-Use "train <command> --help" for command-specific help.
+QUICK START
+  train secrets set VAST_API_KEY      # Set up API keys
+  train host add                      # Add SSH/Colab host
+  train storage add                   # Add storage backend
+  train run <recipe>                  # Run a recipe
 
-Examples:
-  train host add                # Add SSH/Colab host
-  train vast list               # List Vast.ai instances
-  train storage add             # Add storage backend (R2, B2, S3)
-  train transfer src dst        # Transfer files
-  train run train               # Run a recipe
+COMMANDS
+  run <name>              Run a recipe
+  exec '<dsl>'            Execute DSL commands directly
+  host list|add|ssh|...   Host management (SSH, Colab, Vast.ai)
+  storage list|add|...    Storage backend management (R2, B2, S3)
+  transfer <src> <dst>    File transfer between hosts/storage
+  recipe list|run|...     Recipe management
+  vast list|ssh|start|... Vast.ai instance management
+  colab list|connect|ssh  Google Colab integration
+  secrets list|set|get    Manage API keys and credentials
+  config show|set|...     Configuration and settings
+  pricing rates|convert   Currency exchange and cost calculator
+  help                    Show this help
+  version                 Show version
+
+RECIPE DSL (quick reference)
+  var NAME = value                    Define a variable
+  host gpu = placeholder              Define a host (filled by vast.pick)
+  storage output = r2:bucket          Define storage backend
+
+  vast.pick @gpu num_gpus=1           Pick Vast.ai instance
+  vast.wait timeout=5m                Wait for instance ready
+  tmux.open @gpu as work              Create tmux session
+
+  @work > command                     Run command in session
+  @work > command &                   Run in background
+  wait @work idle timeout=2h          Wait for completion
+
+  @gpu:/path -> @output:/path         Transfer files
+  vast.stop                           Stop instance
+
+CONFIG FILES
+  ~/.config/tmux-trainsh/
+  ├── config.toml         Main settings
+  ├── hosts.toml          SSH hosts
+  ├── storages.toml       Storage backends
+  └── recipes/            Recipe files (.recipe)
+
+Use "train <command> --help" for command-specific help.
+Full documentation: https://github.com/binbinsh/tmux-trainsh
 '''
 
 
@@ -60,10 +98,6 @@ Path to configuration file.
 --verbose -v
 type=bool-set
 Enable verbose output.
-
---version
-type=bool-set
-Show version and exit.
 '''
 
 
@@ -74,19 +108,6 @@ def main(args: list[str]) -> Optional[str]:
     # Ensure config directories exist
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     RECIPES_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Check for --help at top level only (not for subcommands)
-    if len(args) < 2 or (len(args) == 2 and args[1] in ("--help", "-h", "help")):
-        if "--help" in args or "-h" in args or "help" in args:
-            print(BANNER)
-            print(help_text)
-            raise SystemExit(0)
-
-    # Check for --version
-    if "--version" in args or "-V" in args:
-        from . import __version__
-        print(f"tmux-trainsh {__version__}")
-        raise SystemExit(0)
 
     # No subcommand - show usage
     if len(args) < 2:
@@ -135,8 +156,13 @@ def main(args: list[str]) -> Optional[str]:
     elif command == "config":
         from .commands.config_cmd import main as config_main
         return config_main(cmd_args)
-    elif command in ("--help", "-h", "help"):
+    elif command == "help":
+        print(BANNER)
         print(help_text)
+        raise SystemExit(0)
+    elif command == "version":
+        from . import __version__
+        print(f"tmux-trainsh {__version__}")
         raise SystemExit(0)
     else:
         print(f"Unknown command: {command}")

@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.
 
 ```bash
 # Show help
-train --help
+train help
 
 # Set up API keys
 train secrets set VAST_API_KEY
@@ -422,8 +422,8 @@ tmux.close @work
 | `train pricing colab` | Show Colab pricing |
 | `train pricing vast` | Show Vast.ai costs |
 | `train pricing convert 10 USD CNY` | Convert currency |
-| `train --help` | Show top-level help |
-| `train --version` | Show version |
+| `train help` | Show top-level help |
+| `train version` | Show version |
 | `train <command> --help` | Show command help |
 
 ## License
