@@ -235,6 +235,9 @@ class DSLExecutor:
         self.ssh_retry_base_interval = 30  # seconds
         self.ssh_retry_max_interval = 300  # 5 minutes
 
+        # Track last sudo auth attempt per host to reduce repeated prompts
+        self._sudo_last_prompt: Dict[str, float] = {}
+
     def _generate_id(self) -> str:
         """Generate unique execution ID."""
         import uuid
@@ -1471,6 +1474,10 @@ class DSLExecutor:
         if not window:
             return False, f"Unknown window: {window_name}"
 
+        ok, msg = self._ensure_sudo_auth(window, commands)
+        if not ok:
+            return False, msg
+
         timeout = step.timeout or 600  # Default 10 min timeout
         start_time = time.time()
         host = window.host
@@ -1657,6 +1664,68 @@ class DSLExecutor:
                 return result.returncode == 0, result.stdout or result.stderr
             except subprocess.TimeoutExpired:
                 return False, f"Command timed out after {timeout}s"
+
+    def _ensure_sudo_auth(self, window: WindowInfo, commands: str) -> tuple[bool, str]:
+        """Ensure sudo auth is valid before running a sudo command."""
+        if not re.search(r"\bsudo\b", commands):
+            return True, ""
+
+        host = window.host
+        host_label = "local" if host == "local" else host
+
+        # Rate-limit explicit prompt logs per host to reduce noise
+        now = time.time()
+        last_prompt = self._sudo_last_prompt.get(host_label, 0)
+        prompt_log = now - last_prompt > 30
+
+        if host == "local":
+            # Non-interactive check: returns 0 if cached auth is valid
+            check = subprocess.run(
+                ["sudo", "-n", "-v"],
+                capture_output=True,
+                text=True,
+            )
+            if check.returncode == 0:
+                return True, ""
+
+            if prompt_log:
+                self.log("Sudo auth required for local commands. Please enter your password.")
+                self._sudo_last_prompt[host_label] = now
+
+            try:
+                auth = subprocess.run(["sudo", "-v"])
+            except KeyboardInterrupt:
+                return False, "Sudo authentication cancelled"
+
+            if auth.returncode != 0:
+                return False, "Sudo authentication failed"
+
+            return True, ""
+
+        # Remote host: check cached auth via SSH + sudo -n -v
+        check_args = _build_ssh_args(host, command="sudo -n -v", tty=True)
+        check = subprocess.run(
+            check_args,
+            capture_output=True,
+            text=True,
+        )
+        if check.returncode == 0:
+            return True, ""
+
+        if prompt_log:
+            self.log(f"Sudo auth required on {host_label}. Please enter your password.")
+            self._sudo_last_prompt[host_label] = now
+
+        auth_args = _build_ssh_args(host, command="sudo -v", tty=True)
+        try:
+            auth = subprocess.run(auth_args)
+        except KeyboardInterrupt:
+            return False, f"Sudo authentication cancelled for {host_label}"
+
+        if auth.returncode != 0:
+            return False, f"Sudo authentication failed for {host_label}"
+
+        return True, ""
 
     def _exec_transfer(self, step: DSLStep) -> tuple[bool, str]:
         """Execute file transfer: source -> dest"""
