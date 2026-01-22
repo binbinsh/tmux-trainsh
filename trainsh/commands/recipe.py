@@ -248,17 +248,8 @@ def cmd_run(args: List[str]) -> None:
             print(f"No host selected for {host_name}")
             sys.exit(1)
 
-    # Find recipe file
-    recipe_path = None
-    if os.path.exists(name):
-        recipe_path = name
-    else:
-        recipes_dir = get_recipes_dir()
-        for ext in [".recipe", ""]:
-            test_path = os.path.join(recipes_dir, name + ext)
-            if os.path.exists(test_path):
-                recipe_path = test_path
-                break
+    # Find recipe file (searches user recipes and bundled examples)
+    recipe_path = find_recipe(name)
 
     if not recipe_path:
         print(f"Recipe not found: {name}")
