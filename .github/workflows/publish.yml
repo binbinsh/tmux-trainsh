@@ -49,7 +49,9 @@ jobs:
 
       - name: Build package
         if: steps.check.outputs.exists == 'false'
-        run: uv build
+        run: |
+          rm -rf dist/
+          uv build
 
       - name: Publish to PyPI
         if: steps.check.outputs.exists == 'false'
