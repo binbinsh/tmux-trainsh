@@ -1,0 +1,14 @@
+# aptup
+# Update all APT packages (Debian/Ubuntu)
+
+tmux.open @local as update
+
+@update > sudo apt update
+@update > sudo apt -y dist-upgrade
+@update > sudo apt -y autoremove
+
+# Notify when done
+notify "apt upgrade complete!"
+
+# Close session when done
+tmux.close @update

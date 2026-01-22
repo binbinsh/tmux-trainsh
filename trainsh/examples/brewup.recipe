@@ -1,0 +1,16 @@
+# brewup
+# Update all Homebrew packages (macOS)
+
+tmux.open @local as update
+
+# Run commands (session name, not host)
+@update > brew update
+@update > brew upgrade
+@update > brew upgrade --greedy --cask $(brew list --cask)
+@update > brew cleanup
+
+# Notify when done
+notify "brew upgrade complete!"
+
+# Close session when done
+tmux.close @update

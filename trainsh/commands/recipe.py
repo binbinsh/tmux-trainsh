@@ -32,6 +32,27 @@ def get_recipes_dir() -> str:
     return str(RECIPES_DIR)
 
 
+def get_examples_dir() -> Optional[str]:
+    """Get the bundled examples directory path."""
+    import importlib.resources
+    try:
+        # Python 3.9+
+        files = importlib.resources.files("trainsh")
+        examples_path = files / "examples"
+        if examples_path.is_dir():
+            return str(examples_path)
+    except (AttributeError, TypeError):
+        pass
+
+    # Fallback: check relative to this file
+    package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    examples_path = os.path.join(package_dir, "examples")
+    if os.path.isdir(examples_path):
+        return examples_path
+
+    return None
+
+
 def list_recipes() -> List[str]:
     """List all recipe files."""
     recipes_dir = get_recipes_dir()
@@ -44,30 +65,95 @@ def list_recipes() -> List[str]:
     return sorted(recipes)
 
 
+def list_examples() -> List[str]:
+    """List bundled example recipe files."""
+    examples_dir = get_examples_dir()
+    if not examples_dir:
+        return []
+
+    examples = []
+    try:
+        for filename in os.listdir(examples_dir):
+            if filename.endswith(".recipe"):
+                examples.append(filename)
+    except OSError:
+        return []
+
+    return sorted(examples)
+
+
 def _open_editor(path: str) -> None:
     """Open file in user's editor."""
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "nano"
     os.system(f'{editor} "{path}"')
 
 
+def find_recipe(name: str) -> Optional[str]:
+    """Find a recipe file by name. Searches user recipes first, then examples."""
+    # Check if it's an absolute/relative path that exists
+    if os.path.exists(name):
+        return name
+
+    # Check user recipes directory
+    recipes_dir = get_recipes_dir()
+    for ext in [".recipe", ""]:
+        test_path = os.path.join(recipes_dir, name + ext)
+        if os.path.exists(test_path):
+            return test_path
+
+    # Check if name starts with "examples/" prefix
+    if name.startswith("examples/"):
+        example_name = name[9:]  # Remove "examples/" prefix
+        examples_dir = get_examples_dir()
+        if examples_dir:
+            for ext in [".recipe", ""]:
+                test_path = os.path.join(examples_dir, example_name + ext)
+                if os.path.exists(test_path):
+                    return test_path
+
+    # Also check examples directory without prefix (fallback)
+    examples_dir = get_examples_dir()
+    if examples_dir:
+        for ext in [".recipe", ""]:
+            test_path = os.path.join(examples_dir, name + ext)
+            if os.path.exists(test_path):
+                return test_path
+
+    return None
+
+
 def cmd_list(args: List[str]) -> None:
     """List available recipes."""
     recipes = list_recipes()
+    examples = list_examples()
 
-    if not recipes:
+    if not recipes and not examples:
         print("No recipes found.")
         print(f"Create recipes in: {get_recipes_dir()}")
         return
 
-    print("Available recipes:")
-    print("-" * 40)
+    if recipes:
+        print("User recipes:")
+        print("-" * 40)
 
-    for recipe in recipes:
-        name = recipe.rsplit(".", 1)[0]
-        print(f"  {name}")
+        for recipe in recipes:
+            name = recipe.rsplit(".", 1)[0]
+            print(f"  {name}")
 
-    print("-" * 40)
-    print(f"Total: {len(recipes)} recipes")
+        print("-" * 40)
+        print(f"Total: {len(recipes)} recipes")
+        print()
+
+    if examples:
+        print("Bundled examples:")
+        print("-" * 40)
+
+        for example in examples:
+            name = example.rsplit(".", 1)[0]
+            print(f"  {name}")
+
+        print("-" * 40)
+        print(f"Total: {len(examples)} examples")
 
 
 def cmd_show(args: List[str]) -> None:
@@ -77,18 +163,7 @@ def cmd_show(args: List[str]) -> None:
         sys.exit(1)
 
     name = args[0]
-
-    # Find recipe file
-    recipe_path = None
-    if os.path.exists(name):
-        recipe_path = name
-    else:
-        recipes_dir = get_recipes_dir()
-        for ext in [".recipe", ""]:
-            test_path = os.path.join(recipes_dir, name + ext)
-            if os.path.exists(test_path):
-                recipe_path = test_path
-                break
+    recipe_path = find_recipe(name)
 
     if not recipe_path:
         print(f"Recipe not found: {name}")
