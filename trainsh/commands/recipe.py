@@ -127,7 +127,8 @@ def cmd_show(args: List[str]) -> None:
 def cmd_run(args: List[str]) -> None:
     """Execute a recipe."""
     if not args:
-        print("Usage: train recipe run <name> [options]")
+        print("Usage: train run <name> [options]")
+        print("       train recipe run <name> [options]")
         print()
         print("Options:")
         print("  --host NAME=HOST  Override host (e.g., --host gpu=vast:12345)")
@@ -559,7 +560,7 @@ def cmd_status(args: List[str]) -> None:
 
         if not jobs:
             print("No running recipe jobs.")
-            print("Run a recipe with 'train recipe run <name>'")
+            print("Run a recipe with 'train run <name>'")
             return
 
         print("Recipe Jobs:")

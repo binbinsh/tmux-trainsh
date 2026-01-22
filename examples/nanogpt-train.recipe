@@ -10,7 +10,7 @@
 # Training time: ~15-30 minutes for character-level model
 #
 # Usage:
-#   train recipe run nanogpt-train
+#   train run nanogpt-train
 
 var REPO_URL = https://github.com/karpathy/nanoGPT.git
 var WORKDIR = /workspace/nanoGPT

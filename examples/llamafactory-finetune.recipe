@@ -11,7 +11,7 @@
 # Training time: Varies based on dataset size and model
 #
 # Usage:
-#   train recipe run llamafactory-finetune
+#   train run llamafactory-finetune
 
 var REPO_URL = https://github.com/hiyouga/LLaMA-Factory.git
 var WORKDIR = /workspace/LLaMA-Factory

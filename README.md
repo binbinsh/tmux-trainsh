@@ -57,7 +57,7 @@ train host add
 train storage add
 
 # Run a recipe
-train recipe run train
+train run train
 ```
 
 ## Configuration
@@ -353,12 +353,12 @@ tmux.close @work
 | `train transfer <src> <dst> --delete` | Sync with deletions |
 | `train transfer <src> <dst> --exclude '*.ckpt'` | Exclude patterns |
 | `train transfer <src> <dst> --dry-run` | Preview transfer |
+| `train run <name>` | Run a recipe |
+| `train run <name> --host gpu=vast:123` | Override host |
+| `train run <name> --var MODEL=llama-7b` | Override variable |
+| `train run <name> --pick-host gpu` | Pick Vast.ai host |
 | `train recipe list` | List recipes |
 | `train recipe show <name>` | Show recipe details |
-| `train recipe run <name>` | Run a recipe |
-| `train recipe run <name> --host gpu=vast:123` | Override host |
-| `train recipe run <name> --var MODEL=llama-7b` | Override variable |
-| `train recipe run <name> --pick-host gpu` | Pick Vast.ai host |
 | `train recipe status` | View running sessions |
 | `train recipe status --all` | Include completed sessions |
 
@@ -375,6 +375,7 @@ tmux.close @work
 | `train storage test <name>` | Test connection |
 | `train recipe new <name>` | Create new recipe |
 | `train recipe edit <name>` | Edit recipe in editor |
+| `train recipe run <name>` | Run a recipe (same as `train run`) |
 | `train recipe resume <name>` | Resume a failed/interrupted recipe |
 | `train recipe resume <name> --check` | Check remote status only |
 | `train recipe logs` | View execution logs |

@@ -132,7 +132,7 @@ echo "Usage:"
 echo "  train --help"
 echo "  train host list"
 echo "  train vast list"
-echo "  train recipe run <recipe>"
+echo "  train run <recipe>"
 echo ""
 
 # Check if uv tools bin is in PATH

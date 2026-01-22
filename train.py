@@ -11,7 +11,7 @@ Usage:
     train config show
     train host list
     train vast list
-    train recipe run <recipe>
+    train run <recipe>
 """
 
 import sys

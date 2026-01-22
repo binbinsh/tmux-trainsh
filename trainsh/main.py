@@ -21,10 +21,11 @@ BANNER = r'''
 usage = '''[command] [args...]
 
 Commands:
+  run       - Run a recipe (alias for "recipe run")
   exec      - Execute DSL commands directly
   host      - Host management (SSH, Colab, Vast.ai)
   transfer  - File transfer between hosts/storage
-  recipe    - Execute automation recipes
+  recipe    - Recipe management (list, show, edit, etc.)
   storage   - Storage backend management (R2, B2, S3, etc.)
   secrets   - Manage API keys and credentials
   config    - Configuration and settings
@@ -46,7 +47,7 @@ Examples:
   train vast list               # List Vast.ai instances
   train storage add             # Add storage backend (R2, B2, S3)
   train transfer src dst        # Transfer files
-  train recipe run train        # Run a recipe
+  train run train               # Run a recipe
 '''
 
 
@@ -97,7 +98,11 @@ def main(args: list[str]) -> Optional[str]:
     cmd_args = args[2:]
 
     # Route to subcommand
-    if command == "exec":
+    if command == "run":
+        # Alias: "train run <name>" -> "train recipe run <name>"
+        from .commands.recipe import cmd_run
+        return cmd_run(cmd_args)
+    elif command == "exec":
         from .commands.exec_cmd import main as exec_main
         return exec_main(cmd_args)
     elif command == "vast":

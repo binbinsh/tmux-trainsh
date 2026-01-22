@@ -1,6 +1,6 @@
 # ssh-test.recipe
 # Test SSH connection to a remote host
-# Usage: train recipe run ssh-test --host server=your-server
+# Usage: train run ssh-test --host server=your-server
 
 var WORKDIR = /tmp/trainsh-test
 

@@ -10,7 +10,7 @@
 # Training time: ~30-60 minutes for demo dataset
 #
 # Usage:
-#   train recipe run unsloth-finetune
+#   train run unsloth-finetune
 
 var WORKDIR = /workspace/unsloth-train
 var MODEL_NAME = unsloth/Qwen2.5-1.5B
