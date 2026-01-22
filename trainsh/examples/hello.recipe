@@ -1,7 +1,7 @@
 # hello-world
 # A simple recipe to test trainsh locally
 
-var MESSAGE = Hello from trainsh!
+var MESSAGE = Hello from trainsh
 
 tmux.open @local as hello
 
