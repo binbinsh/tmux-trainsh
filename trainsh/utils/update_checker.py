@@ -2,12 +2,13 @@
 # Checks PyPI for newer versions and caches results
 
 import json
+import subprocess
 import sys
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from ..constants import CONFIG_DIR
 
@@ -125,3 +126,92 @@ def maybe_check_updates(current_version: str) -> None:
     latest = check_for_updates(current_version)
     if latest:
         print_update_notice(current_version, latest)
+
+
+def _has_command(cmd: str) -> bool:
+    """Check if a command is available in PATH."""
+    try:
+        subprocess.run(
+            [cmd, "--version"],
+            capture_output=True,
+            timeout=5,
+        )
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def detect_install_method() -> str:
+    """
+    Detect how tmux-trainsh was installed.
+
+    Returns one of: 'uv_tool', 'pipx', 'uv_pip', 'pip'
+    """
+    exe_path = Path(sys.executable).resolve()
+    exe_str = str(exe_path)
+
+    # Check for uv tool install (e.g., ~/.local/share/uv/tools/tmux-trainsh/...)
+    if "/.local/share/uv/tools/" in exe_str or "/uv/tools/" in exe_str:
+        return "uv_tool"
+
+    # Check for pipx install (e.g., ~/.local/pipx/venvs/tmux-trainsh/...)
+    if "/.local/pipx/venvs/" in exe_str or "/pipx/venvs/" in exe_str:
+        return "pipx"
+
+    # For venv/pip installs, prefer uv pip if uv is available (faster)
+    if _has_command("uv"):
+        return "uv_pip"
+
+    return "pip"
+
+
+def get_update_command() -> str:
+    """Return the appropriate update command based on install method."""
+    method = detect_install_method()
+    pkg = PYPI_PACKAGE
+
+    commands = {
+        "uv_tool": f"uv tool install -U {pkg}",
+        "pipx": f"pipx upgrade {pkg}",
+        "uv_pip": f"uv pip install -U {pkg}",
+        "pip": f"pip install -U {pkg}",
+    }
+    return commands.get(method, f"pip install -U {pkg}")
+
+
+def perform_update() -> Tuple[bool, str]:
+    """
+    Attempt to perform the update automatically.
+
+    Returns (success, message) tuple.
+    """
+    method = detect_install_method()
+
+    cmds = {
+        "uv_tool": ["uv", "tool", "install", "-U", PYPI_PACKAGE],
+        "pipx": ["pipx", "upgrade", PYPI_PACKAGE],
+        "uv_pip": ["uv", "pip", "install", "-U", PYPI_PACKAGE],
+        "pip": ["pip", "install", "-U", PYPI_PACKAGE],
+    }
+
+    cmd = cmds.get(method)
+    if not cmd:
+        return False, f"Unknown install method. Run manually: {get_update_command()}"
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            return True, f"Successfully updated. Restart to use the new version."
+        else:
+            error = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+            return False, f"Update failed: {error}\nRun manually: {' '.join(cmd)}"
+    except subprocess.TimeoutExpired:
+        return False, f"Update timed out. Run manually: {' '.join(cmd)}"
+    except FileNotFoundError:
+        # The tool (uv/pipx/pip) is not found
+        return False, f"'{cmd[0]}' not found. Run manually: {get_update_command()}"
