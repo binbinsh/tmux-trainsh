@@ -1732,6 +1732,24 @@ class DSLExecutor:
 
         import uuid
         signal = f"sudo_{uuid.uuid4().hex[:8]}"
+
+        # Start wait-for listener BEFORE sending command to avoid race condition
+        if host == "local":
+            wait_proc = subprocess.Popen(
+                f"tmux wait-for {signal}",
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        else:
+            ssh_args = _build_ssh_args(host, command=f"tmux wait-for {signal}", tty=False)
+            wait_proc = subprocess.Popen(
+                ssh_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        # Now send the sudo command (listener is already waiting)
         sudo_cmd = f"( sudo -v -p '{prompt_token} Password: ' ); tmux wait-for -S {signal}"
         self._tmux_send_keys(host, session, sudo_cmd)
 
@@ -1739,29 +1757,38 @@ class DSLExecutor:
         start = time.time()
         timeout = 120
 
-        while time.time() - start < timeout:
-            if self._tmux_wait_for_signal(host, signal, timeout=1):
-                return True, ""
+        try:
+            while time.time() - start < timeout:
+                # Check if signal received
+                if wait_proc.poll() is not None:
+                    return True, ""
 
-            if not prompted:
-                output = self._get_pane_recent_output(host, session, lines=3)
-                if re.search(rf"{re.escape(prompt_token)}|sudo:.*password", output, re.IGNORECASE):
-                    now = time.time()
-                    last_prompt = self._sudo_last_prompt.get(host_label, 0)
-                    if now - last_prompt > 1:
-                        self._sudo_last_prompt[host_label] = now
-                    try:
-                        password = getpass.getpass(f"Sudo password for {host_label}: ")
-                    except (EOFError, KeyboardInterrupt):
-                        return False, f"Sudo authentication cancelled for {host_label}"
-                    if not password:
-                        return False, f"Sudo authentication cancelled for {host_label}"
-                    self._tmux_send_keys(host, session, password)
-                    prompted = True
+                if not prompted:
+                    output = self._get_pane_recent_output(host, session, lines=3)
+                    if re.search(rf"{re.escape(prompt_token)}|sudo:.*password", output, re.IGNORECASE):
+                        now = time.time()
+                        last_prompt = self._sudo_last_prompt.get(host_label, 0)
+                        if now - last_prompt > 1:
+                            self._sudo_last_prompt[host_label] = now
+                        try:
+                            password = getpass.getpass(f"Sudo password for {host_label}: ")
+                        except (EOFError, KeyboardInterrupt):
+                            return False, f"Sudo authentication cancelled for {host_label}"
+                        if not password:
+                            return False, f"Sudo authentication cancelled for {host_label}"
+                        self._tmux_send_keys(host, session, password)
+                        prompted = True
 
-            time.sleep(0.2)
+                time.sleep(0.2)
 
-        return False, f"Sudo authentication timed out for {host_label}"
+            return False, f"Sudo authentication timed out for {host_label}"
+        finally:
+            if wait_proc.poll() is None:
+                wait_proc.terminate()
+                try:
+                    wait_proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    wait_proc.kill()
 
     def _tmux_send_keys(self, host: str, session: str, text: str) -> None:
         """Send literal text + Enter to a tmux session locally or via SSH."""
