@@ -700,14 +700,22 @@ class DSLExecutor:
         return True, message
 
     def _cmd_vast_start(self, args: List[str]) -> tuple[bool, str]:
-        """Handle: vast.start template/search"""
+        """Handle: vast.start [instance_id]"""
         from ..services.vast_api import get_vast_client, VastAPIError
 
         try:
             client = get_vast_client()
 
+            # Get instance ID from args or variables
+            instance_id = None
             if args:
                 instance_id = self._interpolate(args[0])
+            if not instance_id:
+                instance_id = self.ctx.variables.get("_vast_instance_id")
+            if not instance_id:
+                instance_id = self.ctx.variables.get("VAST_ID")
+
+            if instance_id:
                 try:
                     inst_id = int(instance_id)
                 except ValueError:

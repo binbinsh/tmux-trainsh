@@ -14,8 +14,7 @@
 ```
 
 [![PyPI version](https://img.shields.io/pypi/v/tmux-trainsh.svg)](https://pypi.org/project/tmux-trainsh/)
-[![PyPI status](https://img.shields.io/pypi/status/tmux-trainsh.svg)](https://pypi.org/project/tmux-trainsh/)
-[![Python versions](https://img.shields.io/pypi/pyversions/tmux-trainsh.svg)](https://pypi.org/project/tmux-trainsh/)
+[![Downloads](https://static.pepy.tech/badge/tmux-trainsh)](https://pepy.tech/project/tmux-trainsh)
 
 The missing training automation for public cloud GPU and storage.
 
