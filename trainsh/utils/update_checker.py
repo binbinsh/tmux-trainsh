@@ -147,8 +147,8 @@ def detect_install_method() -> str:
 
     Returns one of: 'uv_tool', 'pipx', 'uv_pip', 'pip'
     """
-    exe_path = Path(sys.executable).resolve()
-    exe_str = str(exe_path)
+    # Don't use resolve() - symlinks in uv/tools point to uv/python which breaks detection
+    exe_str = sys.executable
 
     # Check for uv tool install (e.g., ~/.local/share/uv/tools/tmux-trainsh/...)
     if "/.local/share/uv/tools/" in exe_str or "/uv/tools/" in exe_str:
