@@ -1,7 +1,6 @@
 # tmux-trainsh bridge execution helpers
 # Encapsulates local tmux bridge behavior to keep DSLExecutor focused on orchestration.
 
-import getpass
 import re
 import subprocess
 import time
@@ -9,7 +8,7 @@ from typing import Any, Callable, Dict, Iterable, Optional
 
 
 class BridgeExecutionHelper:
-    """Bridge-pane attach, command execution, idle wait, and sudo helpers."""
+    """Bridge-pane attach, command execution, and idle wait."""
 
     def __init__(
         self,
@@ -247,40 +246,3 @@ class BridgeExecutionHelper:
             })
             return None
 
-    def ensure_sudo_auth_bridge(
-        self,
-        window: Any,
-        pane_id: str,
-        sudo_last_prompt: Dict[str, float],
-    ) -> tuple[bool, str]:
-        """Ensure sudo auth via bridge pane, so auth lives in remote shell TTY."""
-        import uuid
-
-        host_label = "local" if window.host == "local" else window.host
-        max_attempts = 3
-
-        for attempt in range(max_attempts):
-            try:
-                if attempt == 0:
-                    prompt_msg = f"Sudo password for {host_label}: "
-                else:
-                    prompt_msg = f"Sudo password for {host_label} (attempt {attempt + 1}/{max_attempts}): "
-                password = getpass.getpass(prompt_msg)
-            except (EOFError, KeyboardInterrupt):
-                return False, f"Sudo authentication cancelled for {host_label}"
-            if not password:
-                return False, f"Sudo authentication cancelled for {host_label}"
-
-            marker = f"__sudo_ok_{uuid.uuid4().hex[:8]}__"
-            escaped_pw = password.replace("\\", "\\\\").replace("'", "'\"'\"'")
-            sudo_cmd = f"printf '%s\\n' '{escaped_pw}' | sudo -S -v 2>/dev/null && echo {marker}"
-
-            self._tmux_send_keys_local_target(pane_id, sudo_cmd)
-            time.sleep(1.5)
-            output = self._get_bridge_pane_recent_output(pane_id, lines=8)
-
-            if marker in output:
-                sudo_last_prompt[host_label] = time.time()
-                return True, ""
-
-        return False, f"Sudo authentication failed after {max_attempts} attempts for {host_label}"

@@ -132,9 +132,6 @@ class DSLExecutor:
         self.ssh_retry_base_interval = 30  # seconds
         self.ssh_retry_max_interval = 300  # 5 minutes
 
-        # Track last sudo auth prompt per host to reduce repeated prompts
-        self._sudo_last_prompt: Dict[str, float] = {}
-
         # Local tmux bridge for auto split/attach
         config = load_config()
         tmux_cfg = config.get("tmux", {})
@@ -541,18 +538,6 @@ class DSLExecutor:
     def _exec_execute(self, step: DSLStep) -> tuple[bool, str]:
         """Execute command via helper."""
         return self.execute_helper.exec_execute(step)
-
-    def _ensure_sudo_auth(self, window: WindowInfo, commands: str) -> tuple[bool, str]:
-        """Ensure sudo auth via helper."""
-        return self.execute_helper.ensure_sudo_auth(window, commands)
-
-    def _ensure_sudo_auth_tmux(self, window: WindowInfo) -> tuple[bool, str]:
-        """Ensure sudo auth in tmux via helper."""
-        return self.execute_helper.ensure_sudo_auth_tmux(window)
-
-    def _ensure_sudo_auth_bridge(self, window: WindowInfo, pane_id: str) -> tuple[bool, str]:
-        """Ensure sudo auth in bridge pane via helper."""
-        return self.execute_helper.ensure_sudo_auth_bridge(window, pane_id)
 
     def _tmux_send_keys(self, host: str, session: str, text: str) -> None:
         """Send tmux keys via helper."""

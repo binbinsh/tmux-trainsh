@@ -22,36 +22,38 @@ def _read_local_version() -> str:
     return "0.0.0-dev"
 
 
-def _resolve_git_commit() -> str:
-    """Resolve git commit hash (7 chars) for version display."""
-    env_hash = os.getenv("TRAINSH_GIT_COMMIT", "").strip()
-    if env_hash:
-        return env_hash[:7]
+def _resolve_build_number() -> int:
+    """Resolve build number from git commit count (1-based)."""
+    env_num = os.getenv("TRAINSH_BUILD_NUMBER", "").strip()
+    if env_num:
+        try:
+            return int(env_num)
+        except ValueError:
+            pass
 
     try:
         root = Path(__file__).resolve().parents[1]
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "--short=7", "HEAD"],
+        count = subprocess.check_output(
+            ["git", "rev-list", "--count", "HEAD"],
             cwd=root,
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=1.5,
         ).strip()
-        if re.fullmatch(r"[0-9a-fA-F]{7}", commit):
-            return commit.lower()
-    except (OSError, subprocess.SubprocessError):
+        return int(count)
+    except (OSError, subprocess.SubprocessError, ValueError):
         pass
 
-    return "unknown"
+    return 0
 
 try:
     __version__ = version("tmux-trainsh")
 except PackageNotFoundError:
     __version__ = _read_local_version()
 
-__git_commit__ = _resolve_git_commit()
-if __git_commit__ != "unknown":
-    __display_version__ = f"{__version__} ({__git_commit__})"
+__build_number__ = _resolve_build_number()
+if __build_number__ > 0:
+    __display_version__ = f"{__version__} (build {__build_number__})"
 else:
     __display_version__ = __version__
 
