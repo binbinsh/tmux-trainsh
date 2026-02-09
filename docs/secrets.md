@@ -1,6 +1,8 @@
 # Secrets Management
 
-Doppio provides a secure way to manage API keys, tokens, and other credentials using your operating system's native keychain.
+tmux-trainsh provides a secure way to manage API keys, tokens, and other credentials using your operating system's native keychain.
+
+> Note: examples below use legacy TOML snippets for readability. Current runtime also supports `${secret:name}` interpolation in `.recipe` DSL.
 
 ## Overview
 
@@ -34,17 +36,20 @@ wandb login --relogin
 
 | Syntax | Source | Storage | Use Case |
 |--------|--------|---------|----------|
-| `${var_name}` | Recipe `variables` | Plain text in recipe TOML | Paths, instance IDs, config values |
+| `${var_name}` | Recipe variables | Plain text in recipe files | Paths, instance IDs, config values |
 | `${secret:name}` | OS Keychain | Encrypted by OS | API keys, tokens, passwords |
 
 ## Managing Secrets
 
-### Via Settings UI
+### Via CLI
 
-1. Open Doppio → Settings → Secrets
-2. Click "Add Secret" or choose a suggested template
-3. Enter the name and value
-4. Click Save
+```bash
+train secrets set github/token
+train secrets set huggingface/token
+train secrets list
+train secrets get github/token
+train secrets delete github/token
+```
 
 ### Secret Naming Convention
 
@@ -119,13 +124,13 @@ python train.py --model ${remote_workdir}/model --wandb-project my-project
 
 If you see an error like `Secret 'github/token' not found`:
 
-1. Go to Settings → Secrets
+1. Run `train secrets list`
 2. Check if the secret exists with the exact name
-3. Add the secret if missing
+3. Add the secret with `train secrets set <name>`
 
 ### Keychain access denied
 
-On macOS, you may see a prompt asking to allow Doppio to access the keychain. Click "Always Allow" to prevent future prompts.
+On macOS, you may see a prompt asking to allow `python`/`train` to access the keychain. Click "Always Allow" to prevent future prompts.
 
 ### Linux: No secret service available
 

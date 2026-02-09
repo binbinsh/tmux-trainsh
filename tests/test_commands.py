@@ -40,6 +40,7 @@ COMMANDS = [
     ("host --help", "Subcommands"),
     ("host list", "hosts"),
     ("host add", "Add new host"),
+    ("host edit", "Usage"),
     ("host show", "Usage"),
     ("host ssh", "Usage"),
     ("host browse", "Usage"),

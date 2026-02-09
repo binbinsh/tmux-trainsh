@@ -1,12 +1,13 @@
 # tmux-trainsh tmux session management
 # Simplified tmux wrapper leveraging native tmux features
 
-import subprocess
 import shlex
 import time
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Callable
 from pathlib import Path
+
+from .local_tmux import LocalTmuxClient, TmuxCmdResult
 
 
 @dataclass
@@ -64,28 +65,22 @@ class TmuxSession:
         """
         self.name = name
         self.panes: Dict[str, str] = {}  # name -> pane_id
+        self._tmux = LocalTmuxClient()
 
         if create:
             self._ensure_session()
 
-    def _run(self, *args, timeout: int = 30, check: bool = False) -> subprocess.CompletedProcess:
+    def _run(self, *args, timeout: int = 30, check: bool = False) -> TmuxCmdResult:
         """Run tmux command."""
-        cmd = ["tmux"] + list(args)
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        result = self._tmux.run(*args, timeout=timeout)
         if check and result.returncode != 0:
-            raise RuntimeError(f"tmux command failed: {' '.join(cmd)}\n{result.stderr}")
+            raise RuntimeError(f"tmux command failed: tmux {' '.join(args)}\n{result.stderr}")
         return result
 
     def _ensure_session(self) -> None:
         """Create session if it doesn't exist."""
-        result = self._run("has-session", "-t", self.name)
-        if result.returncode != 0:
-            self._run("new-session", "-d", "-s", self.name, check=True)
+        if not self._tmux.has_session(self.name):
+            self._tmux.new_session(self.name, detached=True)
             # Set larger scrollback buffer (default is 2000)
             self._run("set-option", "-t", self.name, "history-limit", "50000")
 
@@ -356,29 +351,17 @@ class TmuxSession:
 
 def session_exists(name: str) -> bool:
     """Check if a tmux session exists."""
-    result = subprocess.run(
-        ["tmux", "has-session", "-t", name],
-        capture_output=True,
-    )
-    return result.returncode == 0
+    tmux = LocalTmuxClient()
+    return tmux.has_session(name)
 
 
 def list_sessions() -> List[str]:
     """List all tmux sessions."""
-    result = subprocess.run(
-        ["tmux", "list-sessions", "-F", "#{session_name}"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return []
-    return [s.strip() for s in result.stdout.strip().split("\n") if s.strip()]
+    tmux = LocalTmuxClient()
+    return tmux.list_sessions("#{session_name}")
 
 
 def kill_session(name: str) -> bool:
     """Kill a tmux session."""
-    result = subprocess.run(
-        ["tmux", "kill-session", "-t", name],
-        capture_output=True,
-    )
-    return result.returncode == 0
+    tmux = LocalTmuxClient()
+    return tmux.kill_session(name).returncode == 0

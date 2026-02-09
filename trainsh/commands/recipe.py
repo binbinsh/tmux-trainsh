@@ -3,9 +3,12 @@
 
 import sys
 import os
+import shlex
 from typing import Optional, List
 
 from ..cli_utils import prompt_input
+from ..core.job_state import generate_job_id
+from ..core.tmux_naming import get_live_session_name, get_window_session_name
 
 usage = '''[subcommand] [args...]
 
@@ -18,11 +21,60 @@ Subcommands:
   edit <name>      - Open recipe in editor
   rm <name>        - Remove a recipe
   logs [exec-id]   - View execution logs
-  status [id]      - View running recipe sessions
+  status [id]      - View running recipe sessions (use --last for latest running)
   jobs             - List all job states
 
 Recipes are stored in: ~/.config/tmux-trainsh/recipes/
 '''
+
+
+def _maybe_auto_enter_tmux(
+    subcommand: str,
+    args: List[str],
+    *,
+    recipe_name: str,
+    job_id: str,
+    session_index: int,
+    next_session_index: int,
+) -> bool:
+    """Auto-start command inside tmux when launched from a normal terminal."""
+    if os.environ.get("TMUX"):
+        return False
+    if os.environ.get("TRAINSH_TMUX_BOOTSTRAP"):
+        return False
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+
+    from ..config import load_config
+    from ..core.local_tmux import LocalTmuxClient
+
+    tmux_cfg = load_config().get("tmux", {})
+    auto_enter = bool(tmux_cfg.get("auto_enter_tmux", True))
+    if not auto_enter:
+        return False
+
+    tmux = LocalTmuxClient()
+    if not tmux.available:
+        return False
+
+    session_name = get_live_session_name(recipe_name, job_id, session_index)
+    inner_cmd = [sys.executable, "-m", "trainsh", "recipe", subcommand, *args]
+    command_prefix = ""
+    if os.environ.get("TERM", "").lower() in {"", "dumb", "unknown"}:
+        command_prefix = "TERM=xterm-256color "
+    command = (
+        f"{command_prefix}TRAINSH_TMUX_BOOTSTRAP=1 "
+        f"TRAINSH_JOB_ID={shlex.quote(job_id)} "
+        f"TRAINSH_SESSION_INDEX_START={next_session_index} "
+        f"{shlex.join(inner_cmd)}"
+    )
+
+    print(f"Not in tmux; auto-starting session: {session_name}")
+    result = tmux.new_session(session_name, detached=False, command=command)
+    if result.returncode != 0:
+        print("Failed to auto-start tmux session. Continuing in current terminal.")
+        return False
+    return True
 
 
 def get_recipes_dir() -> str:
@@ -255,7 +307,21 @@ def cmd_run(args: List[str]) -> None:
         print(f"Recipe not found: {name}")
         sys.exit(1)
 
-    from ..core.dsl_executor import run_recipe
+    run_job_id = os.environ.get("TRAINSH_JOB_ID") or generate_job_id()
+    session_start = int(os.environ.get("TRAINSH_SESSION_INDEX_START", "0") or "0")
+    recipe_display_name = os.path.splitext(os.path.basename(recipe_path))[0]
+
+    if _maybe_auto_enter_tmux(
+        "run",
+        args,
+        recipe_name=recipe_display_name,
+        job_id=run_job_id,
+        session_index=session_start,
+        next_session_index=session_start + 1,
+    ):
+        return
+
+    from ..core.executor_main import run_recipe
 
     print(f"Running recipe: {os.path.basename(recipe_path)}")
     print("Commands run in remote tmux sessions (survive SSH disconnect)")
@@ -276,6 +342,8 @@ def cmd_run(args: List[str]) -> None:
         recipe_path,
         host_overrides=host_overrides,
         var_overrides=var_overrides,
+        job_id=run_job_id,
+        initial_session_index=session_start,
     )
 
     print("-" * 40)
@@ -597,9 +665,24 @@ def _show_execution_details(reader, job_id: str) -> None:
 def cmd_status(args: List[str]) -> None:
     """View running recipe sessions."""
     from ..core.job_state import JobStateManager
-    from ..core.tmux_session import session_exists
 
     state_manager = JobStateManager()
+
+    if args and args[0] in ("--last", "-1"):
+        running_jobs = state_manager.list_running()
+        if running_jobs:
+            _show_job_details(running_jobs[0])
+            return
+
+        jobs = state_manager.list_all(limit=1)
+        if not jobs:
+            print("No recipe jobs found.")
+            print("Run a recipe with 'train run <name>'")
+            return
+        print("No running jobs found. Showing latest job instead.")
+        print()
+        _show_job_details(jobs[0])
+        return
 
     if args and args[0] not in ("--list", "-l", "--all", "-a"):
         # Show specific job
@@ -648,11 +731,53 @@ def cmd_status(args: List[str]) -> None:
 
         if not all_jobs:
             print("\nUse '--all' to show completed/failed jobs.")
+            print("Use '--last' to show the latest running job.")
+
+
+def _window_session_name(job, window_name: str, fallback_index: int) -> str:
+    """Resolve tmux session name for a recipe window."""
+    mapped = getattr(job, "window_sessions", {}).get(window_name)
+    if mapped:
+        return mapped
+    return get_window_session_name(job.recipe_name, job.job_id, fallback_index)
+
+
+def _show_attach_commands(job) -> None:
+    """Show attach commands for bridge/local/remote window sessions."""
+    from ..core.local_tmux import LocalTmuxClient
+    from ..core.remote_tmux import RemoteTmuxClient
+    from ..core.executor_utils import _build_ssh_args
+
+    printed = False
+    if getattr(job, "bridge_session", ""):
+        print("\nAttach Commands:")
+        print(f"  bridge: tmux attach -t {job.bridge_session}")
+        printed = True
+
+    if not job.hosts:
+        return
+
+    local_tmux = LocalTmuxClient()
+    if not printed:
+        print("\nAttach Commands:")
+
+    for fallback_index, (window_name, host_spec) in enumerate(job.hosts.items()):
+        session_name = _window_session_name(job, window_name, fallback_index)
+        try:
+            if host_spec == "local":
+                attach_cmd = local_tmux.build_attach_command(session_name, nested=False)
+            else:
+                attach_cmd = RemoteTmuxClient(host_spec, _build_ssh_args).build_attach_command(
+                    session_name,
+                    status_mode="keep",
+                )
+            print(f"  @{window_name}: {attach_cmd}")
+        except Exception:
+            print(f"  @{window_name}: tmux attach -t {session_name}")
 
 
 def _show_job_details(job) -> None:
     """Show details of a specific job."""
-    from ..core.job_state import get_tmux_session_name
     from ..core.tmux_session import TmuxSession, session_exists
 
     print(f"Job ID: {job.job_id}")
@@ -663,13 +788,20 @@ def _show_job_details(job) -> None:
     print(f"Created: {job.created_at}")
     print(f"Updated: {job.updated_at}")
 
-    tmux_session_name = get_tmux_session_name(job.job_id)
-    print(f"Tmux Session: {tmux_session_name}")
+    tmux_session_name = (
+        getattr(job, "tmux_session", "")
+        or getattr(job, "bridge_session", "")
+        or next(iter(getattr(job, "window_sessions", {}).values()), "")
+    )
+    print(f"Tmux Session: {tmux_session_name or '(none)'}")
+    if getattr(job, "bridge_session", "") and job.bridge_session != tmux_session_name:
+        print(f"Bridge Session: {job.bridge_session}")
 
     if job.hosts:
         print("\nHosts:")
         for name, spec in job.hosts.items():
             print(f"  @{name} = {spec}")
+        _show_attach_commands(job)
 
     if job.vast_instance_id:
         print(f"\nVast.ai Instance: {job.vast_instance_id}")
@@ -679,7 +811,7 @@ def _show_job_details(job) -> None:
     print("-" * 60)
 
     # Try to get live output from tmux
-    if job.status == "running" and session_exists(tmux_session_name):
+    if job.status == "running" and tmux_session_name and session_exists(tmux_session_name):
         try:
             tmux = TmuxSession(tmux_session_name, create=False)
             panes = tmux.list_panes()
@@ -735,7 +867,7 @@ def cmd_resume(args: List[str]) -> None:
         print(f"Recipe not found: {name}")
         sys.exit(1)
 
-    from ..core.dsl_executor import run_recipe
+    from ..core.executor_main import run_recipe
     from ..core.dsl_parser import parse_recipe
     from ..core.job_state import JobStateManager, check_remote_condition
 
@@ -747,6 +879,20 @@ def cmd_resume(args: List[str]) -> None:
         print(f"No resumable state found for: {name}")
         print("Use 'recipe run' to start a fresh execution.")
         sys.exit(1)
+
+    resume_job_id = os.environ.get("TRAINSH_JOB_ID") or saved_state.job_id
+    resume_start = int(os.environ.get("TRAINSH_SESSION_INDEX_START", str(saved_state.next_window_index)) or "0")
+    recipe_display_name = os.path.splitext(os.path.basename(recipe_path))[0]
+
+    if not check_only and _maybe_auto_enter_tmux(
+        "resume",
+        args,
+        recipe_name=recipe_display_name,
+        job_id=resume_job_id,
+        session_index=resume_start,
+        next_session_index=resume_start + 1,
+    ):
+        return
 
     print(f"Job ID: {saved_state.job_id}")
     print(f"Recipe: {os.path.basename(recipe_path)}")
@@ -810,6 +956,8 @@ def cmd_resume(args: List[str]) -> None:
     success = run_recipe(
         recipe_path,
         resume=True,
+        job_id=resume_job_id,
+        initial_session_index=resume_start,
     )
 
     print("-" * 40)

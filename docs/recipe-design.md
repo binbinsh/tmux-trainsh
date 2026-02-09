@@ -1,5 +1,14 @@
 # Recipe System Design
 
+> Status note (current CLI): this document includes legacy TOML design details.
+> The actively maintained runtime in this repo is the Python `.recipe` DSL described in `README.md`.
+> Current tmux behavior in runtime:
+> - `tmux.open @host as name` creates detached tmux sessions (local/remote).
+> - Remote tmux operations are executed over SSH via tmux CLI (no remote Python/libtmux required).
+> - Commands sent to remote tmux continue running even if local `train` exits.
+> - `train recipe status --last` shows the latest running job and attach commands.
+> - Session naming is unified as `train_<job_name>_<index>` for live/bridge/window sessions (`index` is allocation order).
+
 ## Overview
 
 The Recipe system replaces the fixed 6-step Task/Session workflow with a flexible, composable workflow engine that supports:
@@ -106,11 +115,12 @@ vast_copy = { src = "C.6003036:/workspace/", dst = "local:./data" }
 
 | Command | Description |
 |---------|-------------|
-| `tmux.open @host as name` | Create tmux session on host |
+| `tmux.open @host as name` | Create detached/persistent tmux session on host |
 | `tmux.close @session` | Close tmux session |
 | `tmux.config @host` | Apply tmux configuration from config.toml to remote host |
 
-The `tmux.config` command reads `tmux.options` from your local config and writes them to `~/.tmux.conf` on the remote host, then reloads tmux.
+The `tmux.config` command reads `tmux.options` from your local config and writes them to `~/.tmux.conf` on the remote host.
+If a tmux server is already active, it also runs `source-file` to reload immediately; otherwise, the config is applied on next tmux start/attach.
 
 Example:
 ```
@@ -143,7 +153,7 @@ tmux.open @gpu as work
 | `set_var` | Set a variable | `name`, `value` |
 | `get_value` | Get value and store in variable | `source`, `pattern`, `var_name` |
 | `http_request` | Make HTTP request | `method`, `url`, `headers`, `body` |
-| `notify` | Send notification | `title`, `message` |
+| `notify` | Send notification | `title`, `message`, `level`, `channels`, `webhook_url`, `command`, `timeout_secs`, `fail_on_error` |
 
 #### SSH & Rsync
 

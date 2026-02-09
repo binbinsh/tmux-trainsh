@@ -1,8 +1,11 @@
 # Storage Management System Design
 
+> Status note: this is a legacy design document from an earlier UI/Rust architecture.
+> Current CLI implementation details and usage are documented in `README.md`.
+
 ## Overview
 
-Doppio 的统一存储管理系统，基于 rclone 作为后端引擎，提供图形化的文件管理和传输功能。
+tmux-trainsh 的统一存储管理设计（legacy），基于 rclone 作为后端引擎。
 
 ## Architecture
 
@@ -523,4 +526,3 @@ StorageBackend::SshRemote {
 可能需要添加:
 - `keyring` 或 `secrecy` - 安全存储敏感信息
 - `notify` - 文件系统监控（可选，用于自动同步）
-

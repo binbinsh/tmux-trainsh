@@ -103,6 +103,16 @@ def get_default_config() -> Dict[str, Any]:
             "currency": "USD",
         },
         "tmux": {
+            # Auto-create local tmux splits that attach to recipe windows
+            "auto_bridge": True,
+            # If train is started outside tmux, create a detached local bridge session
+            "bridge_outside_tmux": True,
+            # If recipe run/resume starts outside tmux, auto-enter a tmux session first
+            "auto_enter_tmux": True,
+            # Prefer sending execute commands through local bridge pane when available
+            "prefer_bridge_exec": True,
+            # Remote bridge status bar behavior: keep | off | bottom
+            "bridge_remote_status": "off",
             # Raw tmux options as "option = value" strings
             # These are written directly to tmux.conf
             "options": [
@@ -121,6 +131,22 @@ def get_default_config() -> Dict[str, Any]:
                 'set -g window-status-current-format " #I:#W "',
                 "bind -n MouseDown1Status select-window -t =",
             ],
+        },
+        "notifications": {
+            # Enable/disable notifications globally.
+            "enabled": True,
+            # App name/title fallback for notifications.
+            "app_name": "train",
+            # Default channels: log | system | webhook | command
+            "channels": ["log", "system"],
+            # Optional default webhook URL used by channel=webhook.
+            "webhook_url": "",
+            # Optional default shell command used by channel=command.
+            "command": "",
+            # Timeout for each notification channel.
+            "timeout_secs": 5,
+            # If true, any channel failure fails the notify step.
+            "fail_on_error": False,
         },
     }
 

@@ -805,10 +805,34 @@ class TransferEngine:
             if os.path.exists(key_path):
                 args.extend(["-i", key_path])
 
+        proxy_command = self._resolve_proxy_command(host)
+        if proxy_command:
+            args.extend(["-o", f"ProxyCommand={proxy_command}"])
+        elif host.jump_host:
+            args.extend(["-J", host.jump_host.strip()])
+
         host_spec = f"{host.username}@{host.hostname}" if host.username else host.hostname
         args.append(host_spec)
 
         return args
+
+    def _resolve_proxy_command(self, host: Host) -> Optional[str]:
+        """Resolve proxy command from host config, including cloudflared shortcuts."""
+        env_vars = host.env_vars or {}
+        proxy_command = str(env_vars.get("proxy_command", "")).strip()
+        if proxy_command:
+            return proxy_command
+
+        tunnel_type = str(env_vars.get("tunnel_type", "")).strip().lower()
+        if tunnel_type != "cloudflared":
+            return None
+
+        cloudflared_hostname = str(env_vars.get("cloudflared_hostname", host.hostname)).strip()
+        if not cloudflared_hostname:
+            return None
+
+        cloudflared_bin = str(env_vars.get("cloudflared_bin", "cloudflared")).strip() or "cloudflared"
+        return f"{cloudflared_bin} access ssh --hostname {cloudflared_hostname}"
 
     def _build_scp_spec(self, host: Host, path: str) -> str:
         """Build SCP path specification for a host."""

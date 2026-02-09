@@ -33,8 +33,17 @@ class JobState:
     # Maps host name -> resolved SSH spec
     hosts: Dict[str, str] = field(default_factory=dict)
 
+    # Active window tmux sessions (window name -> tmux session name)
+    window_sessions: Dict[str, str] = field(default_factory=dict)
+
+    # Next window session index for tmux.open numbering
+    next_window_index: int = 0
+
     # Tmux session name on remote (for reconnection)
     tmux_session: str = ""
+
+    # Local bridge tmux session (used when running outside tmux)
+    bridge_session: str = ""
 
     # Vast.ai instance tracking
     vast_instance_id: Optional[str] = None
@@ -171,11 +180,6 @@ def generate_job_id() -> str:
     """Generate a unique job ID."""
     import uuid
     return str(uuid.uuid4())[:8]
-
-
-def get_tmux_session_name(job_id: str) -> str:
-    """Get the tmux session name for a job."""
-    return f"trainsh-{job_id}"
 
 
 def check_remote_condition(host_spec: str, condition: str) -> tuple[bool, str]:

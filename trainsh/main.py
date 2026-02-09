@@ -73,6 +73,7 @@ RECIPE DSL (quick reference)
   @work > command                     Run command in session
   @work > command &                   Run in background
   wait @work idle timeout=2h          Wait for completion
+  notify "Done"                        Send styled notification
 
   @gpu:/path -> @output:/path         Transfer files
   vast.stop                           Stop instance
@@ -161,8 +162,8 @@ def main(args: list[str]) -> Optional[str]:
         print(help_text)
         raise SystemExit(0)
     elif command == "version":
-        from . import __version__
-        print(f"tmux-trainsh {__version__}")
+        from . import __display_version__
+        print(f"tmux-trainsh {__display_version__}")
         raise SystemExit(0)
     else:
         print(f"Unknown command: {command}")

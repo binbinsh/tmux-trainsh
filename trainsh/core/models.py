@@ -79,7 +79,7 @@ class Host:
     auth_method: AuthMethod = AuthMethod.KEY
     ssh_key_path: Optional[str] = None
     jump_host: Optional[str] = None
-    env_vars: Dict[str, str] = field(default_factory=dict)
+    env_vars: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     last_connected_at: Optional[datetime] = None
     is_favorite: bool = False

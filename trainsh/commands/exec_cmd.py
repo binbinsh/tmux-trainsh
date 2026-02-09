@@ -45,7 +45,7 @@ def main(args: List[str]) -> Optional[str]:
 
     # Parse and execute
     from ..core.dsl_parser import parse_recipe_string
-    from ..core.dsl_executor import DSLExecutor
+    from ..core.executor_main import DSLExecutor
 
     try:
         recipe = parse_recipe_string(dsl_content, name="exec")

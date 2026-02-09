@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 from enum import Enum
 
+from ..config import load_config
 from ..core.models import (
     Recipe, RecipeStep, OperationType, StepStatus, StepResult,
     Execution, ExecutionStatus,
@@ -13,6 +14,7 @@ from ..core.models import (
 from ..core.variables import VariableInterpolator
 from ..core.secrets import get_secrets_manager
 from ..core.execution_log import ExecutionLogger
+from ..utils.notifier import Notifier, normalize_channels, normalize_level, parse_bool
 from .ssh import SSHClient
 from .tmux import TmuxManager
 from .transfer_engine import TransferEngine
@@ -67,6 +69,35 @@ class RecipeExecutor:
             variables=self.variables,
             secrets_getter=self.secrets.get,
         )
+
+        # Notifications
+        notify_cfg = load_config().get("notifications", {})
+        try:
+            self.notify_enabled = parse_bool(notify_cfg.get("enabled", True))
+        except ValueError:
+            self.notify_enabled = True
+        self.notify_app_name = str(notify_cfg.get("app_name", "train"))
+        self.notify_default_webhook = str(notify_cfg.get("webhook_url", "")).strip() or None
+        self.notify_default_command = str(notify_cfg.get("command", "")).strip() or None
+        try:
+            self.notify_default_channels = normalize_channels(
+                notify_cfg.get("channels"),
+                ["log", "system"],
+            )
+        except ValueError:
+            self.notify_default_channels = ["log", "system"]
+        try:
+            self.notify_default_timeout = int(notify_cfg.get("timeout_secs", 5))
+        except Exception:
+            self.notify_default_timeout = 5
+        if self.notify_default_timeout <= 0:
+            self.notify_default_timeout = 5
+        try:
+            self.notify_default_fail_on_error = parse_bool(notify_cfg.get("fail_on_error", False))
+        except ValueError:
+            self.notify_default_fail_on_error = False
+
+        self.notifier = Notifier(log_callback=self.log, app_name=self.notify_app_name)
 
     def log(self, message: str) -> None:
         """Log a message."""
@@ -540,13 +571,56 @@ class RecipeExecutor:
 
     async def _op_notify(self, params: Dict[str, Any]) -> tuple[str, Optional[str]]:
         """Send a notification."""
-        title = params.get("title", "tmux-trainsh")
-        message = params.get("message", "")
-        level = params.get("level", "info")
+        if not self.notify_enabled:
+            return "Notification skipped (notifications.enabled=false)", None
 
-        self.log(f"[{level.upper()}] {title}: {message}")
-        # Could integrate with system notifications here
-        return f"Notification sent: {title}", None
+        title = str(params.get("title") or self.notify_app_name)
+        message = str(params.get("message", ""))
+        level_raw = str(params.get("level", "info"))
+
+        try:
+            level = normalize_level(level_raw)
+        except ValueError as exc:
+            return "", str(exc)
+
+        try:
+            channels = normalize_channels(
+                params.get("channels"),
+                self.notify_default_channels,
+            )
+        except ValueError as exc:
+            return "", str(exc)
+
+        webhook_url = str(params.get("webhook") or params.get("webhook_url") or self.notify_default_webhook or "").strip() or None
+        command = str(params.get("command") or params.get("cmd") or self.notify_default_command or "").strip() or None
+
+        timeout_raw = params.get("timeout_secs", self.notify_default_timeout)
+        try:
+            timeout_secs = int(timeout_raw)
+        except Exception:
+            return "", f"Invalid timeout_secs: {timeout_raw!r}"
+        if timeout_secs <= 0:
+            timeout_secs = self.notify_default_timeout
+
+        fail_on_error_raw = params.get("fail_on_error", self.notify_default_fail_on_error)
+        try:
+            fail_on_error = parse_bool(fail_on_error_raw)
+        except ValueError as exc:
+            return "", str(exc)
+
+        ok, summary = self.notifier.notify(
+            title=title,
+            message=message,
+            level=level,
+            channels=channels,
+            webhook_url=webhook_url,
+            command=command,
+            timeout_secs=timeout_secs,
+            fail_on_error=fail_on_error,
+        )
+        if ok:
+            return summary, None
+        return "", summary
 
     async def _op_http_request(self, params: Dict[str, Any]) -> tuple[str, Optional[str]]:
         """Make an HTTP request."""

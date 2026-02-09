@@ -24,6 +24,7 @@ Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, S3,
 
 - Python 3.11+
 - tmux (any version with `wait-for` support)
+- For remote `tmux.open`/`tmux.config`: remote host only needs `tmux` and a normal shell over SSH
 - Optional: `rsync`, `rclone`
 
 ## Installation
@@ -119,6 +120,11 @@ Or edit `~/.config/tmux-trainsh/config.toml` directly:
 
 ```toml
 [tmux]
+auto_bridge = true
+bridge_outside_tmux = true
+auto_enter_tmux = true
+prefer_bridge_exec = true
+bridge_remote_status = "off" # keep | off | bottom
 options = [
   "set -g mouse on",
   "set -g history-limit 50000",
@@ -130,6 +136,33 @@ options = [
   # Add any custom tmux options here
 ]
 ```
+
+### Auto bridge splits
+
+When `tmux.open` runs, train can automatically create local tmux splits and attach each split to the matching session:
+
+- Local host: `tmux attach -t <session>`
+- Remote host: `ssh -tt <host> 'tmux attach -t <session> || tmux new-session -A -s <session>'`
+
+Behavior:
+- If `train recipe run/resume` is launched outside tmux and `auto_enter_tmux = true`, train auto-starts a tmux session and runs the command inside it.
+- If `train` is launched inside tmux, splits are created in the current tmux window.
+- If launched outside tmux and `bridge_outside_tmux = true`, train creates a detached local bridge session (`train_<job_name>_<index>`) for these splits.
+- Local hosts also attach bridge panes to the local recipe tmux session.
+- Local and remote tmux lifecycle/IO are handled via tmux CLI calls.
+- If `prefer_bridge_exec = true`, execute commands prefer the already-attached bridge pane, reducing repeated external SSH auth prompts.
+- Once a command is sent to a remote tmux session, it continues running on the remote host even if the local `train` process stops.
+- `bridge_remote_status` controls remote tmux status bar in bridge panes:
+  - `off`: hide remote status while attached (default, avoids double top bars)
+  - `bottom`: show remote status at bottom
+  - `keep`: keep remote tmux config unchanged
+- `train recipe resume` rebuilds/reuses these bridge splits from saved state.
+
+Session naming (unified):
+- Auto-enter live shell: `train_<job_name>_<index>`
+- Detached bridge session: `train_<job_name>_<index>`
+- Recipe window session: `train_<job_name>_<index>`
+- Window `index` follows `tmux.open` execution order (`0, 1, 2, ...`)
 
 ### Apply tmux config in recipes
 
@@ -146,6 +179,8 @@ tmux.config @gpu
 tmux.open @gpu as work
 @work > python train.py
 ```
+
+If no tmux server is running on the remote host, `tmux.config` still writes `~/.tmux.conf`; it will take effect when a tmux session is created/attached.
 
 ## Recipe DSL
 
@@ -178,6 +213,7 @@ tmux.open @gpu as work
 @work > python train.py --model $MODEL &
 
 wait @work idle timeout=2h
+notify "Training finished"
 
 # Transfers reference the host (for SSH connection info)
 @gpu:$WORKDIR/model -> @output:/models/$MODEL/
@@ -208,7 +244,37 @@ All definitions must appear before workflow commands. Names cannot be duplicated
 | `user@hostname -p PORT` | SSH host with port |
 | `user@hostname -i KEY` | SSH host with identity file |
 | `user@hostname -J JUMP` | SSH host with jump host |
+| `user@hostname -o ProxyCommand='CMD'` | SSH host via custom ProxyCommand (e.g. HTTPS tunnel client) |
 | `name` | Reference to hosts.toml config |
+
+Cloudflared Access examples:
+
+```bash
+# Inline host spec
+host case = root@172.16.0.88 -o ProxyCommand='cloudflared access ssh --hostname ssh-access.example.com'
+```
+
+```toml
+# hosts.toml (primary + fallback candidates)
+[[hosts]]
+name = "case"
+type = "ssh"
+hostname = "primary.example.com"
+port = 22
+username = "root"
+env_vars = { connection_candidates = ["ssh://backup.example.com:22", "cloudflared://ssh-access.example.com"] }
+```
+
+```toml
+# hosts.toml (structured candidates, same as interactive `train host add`)
+[[hosts]]
+name = "case"
+type = "ssh"
+hostname = "primary.example.com"
+port = 22
+username = "root"
+env_vars = { connection_candidates = [{ type = "ssh", hostname = "backup.example.com", port = 22 }, { type = "cloudflared", hostname = "ssh-access.example.com" }] }
+```
 
 **Storage spec formats:**
 
@@ -293,7 +359,7 @@ tmux.close @work
 
 | Command | Description |
 |---------|-------------|
-| `tmux.open @host as name` | Create tmux session named "name" on host |
+| `tmux.open @host as name` | Create tmux session named "name" on host and auto-bridge it to local splits |
 | `tmux.close @session` | Close tmux session |
 | `tmux.config @host` | Apply tmux configuration to remote host |
 | `vast.pick @host [options]` | Interactively select Vast.ai instance |
@@ -301,8 +367,28 @@ tmux.close @work
 | `vast.stop [id]` | Stop Vast.ai instance |
 | `vast.wait [options]` | Wait for instance to be ready |
 | `vast.cost [id]` | Show usage cost |
-| `notify "message"` | Send notification |
+| `notify "message"` | Send styled notification |
 | `sleep DURATION` | Sleep for duration |
+
+**notify syntax:**
+
+- `notify "done"`
+- `notify training complete`
+- `notify "$MODEL finished"`
+
+Styling and delivery are configured globally in `~/.config/tmux-trainsh/config.toml`:
+
+```toml
+[notifications]
+enabled = true
+channels = ["log", "system"]          # log | system | webhook | command
+webhook_url = ""                      # used when channels include webhook
+command = ""                          # used when channels include command
+timeout_secs = 5
+fail_on_error = false
+```
+
+`system` channel uses macOS `osascript` native notification.
 
 **vast.pick options:**
 
@@ -360,6 +446,7 @@ tmux.close @work
 | `train recipe list` | List recipes |
 | `train recipe show <name>` | Show recipe details |
 | `train recipe status` | View running sessions |
+| `train recipe status --last` | Show latest running job details and attach commands |
 | `train recipe status --all` | Include completed sessions |
 
 ### Occasional
@@ -367,6 +454,7 @@ tmux.close @work
 | Command | Description |
 |---------|-------------|
 | `train host add` | Add new host (SSH/Colab) |
+| `train host edit <name>` | Edit existing host config |
 | `train host browse <name>` | Browse files on host |
 | `train host test <name>` | Test connection |
 | `train storage list` | List storage backends |
@@ -376,7 +464,7 @@ tmux.close @work
 | `train recipe new <name>` | Create new recipe |
 | `train recipe edit <name>` | Edit recipe in editor |
 | `train recipe run <name>` | Run a recipe (same as `train run`) |
-| `train recipe resume <name>` | Resume a failed/interrupted recipe |
+| `train recipe resume <name>` | Resume a failed/interrupted recipe (rebuilds tmux bridge splits) |
 | `train recipe resume <name> --check` | Check remote status only |
 | `train recipe logs` | View execution logs |
 | `train recipe logs --last` | Show last execution |
