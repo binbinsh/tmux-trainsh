@@ -309,17 +309,74 @@ class EncryptedFileBackend(SecretsBackend):
 
 
 # ---------------------------------------------------------------------------
+# Backend: System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)
+# ---------------------------------------------------------------------------
+
+class KeyringBackend(SecretsBackend):
+    """Store each secret in the OS keyring (service='trainsh', username=key)."""
+
+    SERVICE = "trainsh"
+
+    def __init__(self) -> None:
+        import keyring as _kr
+        self._kr = _kr
+
+    def get(self, key: str) -> Optional[str]:
+        val = self._kr.get_password(self.SERVICE, key)
+        return val if val else None
+
+    def set(self, key: str, value: str) -> None:
+        self._kr.set_password(self.SERVICE, key, value)
+
+    def delete(self, key: str) -> None:
+        try:
+            self._kr.delete_password(self.SERVICE, key)
+        except self._kr.errors.PasswordDeleteError:
+            pass
+
+    def list_set_keys(self) -> List[str]:
+        # keyring API doesn't support enumeration; check predefined keys
+        from ..constants import SecretKeys
+        predefined = [
+            SecretKeys.VAST_API_KEY,
+            SecretKeys.HF_TOKEN,
+            SecretKeys.OPENAI_API_KEY,
+            SecretKeys.ANTHROPIC_API_KEY,
+            SecretKeys.GITHUB_TOKEN,
+            SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
+            SecretKeys.R2_ACCESS_KEY,
+            SecretKeys.R2_SECRET_KEY,
+            SecretKeys.B2_KEY_ID,
+            SecretKeys.B2_APPLICATION_KEY,
+            SecretKeys.AWS_ACCESS_KEY_ID,
+            SecretKeys.AWS_SECRET_ACCESS_KEY,
+        ]
+        return [k for k in predefined if self.get(k) is not None]
+
+
+# ---------------------------------------------------------------------------
 # Backend loading / selection
 # ---------------------------------------------------------------------------
 
 _BACKEND_NAMES = {
     "1password": "1Password (op CLI)",
+    "keyring": "System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)",
     "encrypted_file": "Encrypted file (~/.config/tmux-trainsh/secrets.enc)",
 }
 
 
 def _op_available() -> bool:
     return shutil.which("op") is not None
+
+
+def _keyring_available() -> bool:
+    try:
+        import keyring
+        kr = keyring.get_keyring()
+        # Reject the fail backend (no real keyring found)
+        return "fail" not in type(kr).__name__.lower()
+    except Exception:
+        return False
 
 
 def _op_desktop_connectable() -> bool:
@@ -337,6 +394,8 @@ def _instantiate_backend(name: str, cfg: dict) -> SecretsBackend:
         vault = secrets_cfg.get("vault")
         sa_token = secrets_cfg.get("sa_token")
         return OnePasswordBackend(vault=vault, sa_token=sa_token)
+    if name == "keyring":
+        return KeyringBackend()
     if name == "encrypted_file":
         return EncryptedFileBackend()
     raise ValueError(f"Unknown secrets backend: {name!r}")
@@ -357,7 +416,8 @@ def prompt_backend_selection() -> SecretsBackend:
 
     print("\nNo secrets backend configured. Choose one:")
     print("  [1] 1Password (recommended if you use 1Password)")
-    print("  [2] Encrypted file (~/.config/tmux-trainsh/secrets.enc)")
+    print("  [2] System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)")
+    print("  [3] Encrypted file (~/.config/tmux-trainsh/secrets.enc)")
 
     choice = prompt_input("> ")
     if choice == "1":
@@ -371,6 +431,12 @@ def prompt_backend_selection() -> SecretsBackend:
             return _select_and_save("encrypted_file")
         return _select_and_save("1password", vault=vault, sa_token=sa_token)
     elif choice == "2":
+        if not _keyring_available():
+            print("Warning: No system keyring found. Install 'keyring' package: pip install keyring")
+            print("Falling back to encrypted file backend.\n")
+            return _select_and_save("encrypted_file")
+        return _select_and_save("keyring")
+    elif choice == "3":
         return _select_and_save("encrypted_file")
     else:
         print("Invalid choice, defaulting to encrypted file.\n")
