@@ -17,6 +17,7 @@ Subcommands:
   run <name>       - Execute a recipe
   resume <name>    - Resume a failed/interrupted recipe
   show <name>      - Show recipe details
+  syntax           - Show full DSL syntax reference
   new <name>       - Create a new recipe from template
   edit <name>      - Open recipe in editor
   rm <name>        - Remove a recipe
@@ -969,6 +970,12 @@ def cmd_resume(args: List[str]) -> None:
         sys.exit(1)
 
 
+def cmd_syntax(args: List[str]) -> None:
+    """Show full DSL syntax reference."""
+    from ..core.dsl_parser import generate_syntax_reference
+    print(generate_syntax_reference())
+
+
 def cmd_jobs(args: List[str]) -> None:
     """List all job states."""
     from ..core.job_state import JobStateManager
@@ -1019,6 +1026,7 @@ def main(args: List[str]) -> Optional[str]:
         "show": cmd_show,
         "run": cmd_run,
         "resume": cmd_resume,
+        "syntax": cmd_syntax,
         "new": cmd_new,
         "edit": cmd_edit,
         "rm": cmd_rm,

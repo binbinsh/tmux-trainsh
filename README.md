@@ -1,5 +1,3 @@
-# tmux-trainsh
-
 ```
    ████████╗██████╗  █████╗ ██╗███╗   ██╗███████╗██╗  ██╗
    ╚══██╔══╝██╔══██╗██╔══██╗██║████╗  ██║██╔════╝██║  ██║
@@ -9,7 +7,7 @@
       ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
 
    ════════════════════════════════════════════════════════
-     🖥️  TMUX   ══▶   ☁️  GPU   ══▶   💾  STORAGE
+     [TMUX]  ════>  [GPU]  ══════>  [STORAGE]
    ════════════════════════════════════════════════════════
 ```
 
@@ -223,9 +221,7 @@ vast.stop
 tmux.close @work
 ```
 
-### Syntax Reference
-
-#### Definitions
+### Definitions
 
 All definitions must appear before workflow commands. Names cannot be duplicated across var/host/storage.
 
@@ -235,7 +231,7 @@ All definitions must appear before workflow commands. Names cannot be duplicated
 | Host | `host NAME = spec` | `@NAME` | Define a remote host |
 | Storage | `storage NAME = spec` | `@NAME` | Define a storage backend |
 
-**Host spec formats:**
+### Host Spec Formats
 
 | Spec | Description |
 |------|-------------|
@@ -276,7 +272,7 @@ username = "root"
 env_vars = { connection_candidates = [{ type = "ssh", hostname = "backup.example.com", port = 22 }, { type = "cloudflared", hostname = "ssh-access.example.com" }] }
 ```
 
-**Storage spec formats:**
+### Storage Spec Formats
 
 | Spec | Description |
 |------|-------------|
@@ -286,7 +282,7 @@ env_vars = { connection_candidates = [{ type = "ssh", hostname = "backup.example
 | `s3:bucket` | Amazon S3 |
 | `name` | Reference to storages.toml config |
 
-#### Execute Commands
+### Execute Commands
 
 Run commands in a tmux session (created with `tmux.open`):
 
@@ -308,7 +304,7 @@ Run commands in a tmux session (created with `tmux.open`):
 
 **train exec:** `@name` resolves to an existing tmux session first. If none exists, it runs directly on the host named `name` without creating a tmux session.
 
-#### Wait Commands
+### Wait Commands
 
 Wait for conditions in a session:
 
@@ -326,7 +322,7 @@ wait @session idle timeout=DURATION
 | `port=PORT` | Wait for port to be open |
 | `idle` | Wait for no child processes (command finished) |
 
-#### Transfer Commands
+### Transfer Commands
 
 Transfer files between endpoints:
 
@@ -336,7 +332,7 @@ Transfer files between endpoints:
 ./local/path -> @dst:path
 ```
 
-#### Control Commands
+### Control Commands
 
 **tmux session commands:**
 
@@ -404,20 +400,20 @@ fail_on_error = false
 - `poll=DURATION` - Poll interval (default: 10s)
 - `stop_on_fail=BOOL` - Stop instance on timeout
 
-#### Duration Format
+### Duration Format
 
 - `30s` - 30 seconds
 - `5m` - 5 minutes
 - `2h` - 2 hours
 - `300` - 300 seconds (raw number)
 
-#### Comments
+### Comments
 
 ```
 # This is a comment
 ```
 
-#### Variable Interpolation
+### Variable Interpolation
 
 - `$NAME` - Reference a variable
 - `${NAME}` - Reference a variable (alternative)
@@ -429,6 +425,10 @@ fail_on_error = false
 
 | Command | Description |
 |---------|-------------|
+| `train run <name>` | Run a recipe |
+| `train run <name> --host gpu=vast:123` | Override host |
+| `train run <name> --var MODEL=llama-7b` | Override variable |
+| `train run <name> --pick-host gpu` | Pick Vast.ai host |
 | `train exec '<dsl>'` | Execute DSL commands directly |
 | `train exec '@session > cmd'` | Run in tmux session; falls back to host if no session exists |
 | `train exec '@src:path -> @dst:path'` | Transfer files |
@@ -439,10 +439,6 @@ fail_on_error = false
 | `train transfer <src> <dst> --delete` | Sync with deletions |
 | `train transfer <src> <dst> --exclude '*.ckpt'` | Exclude patterns |
 | `train transfer <src> <dst> --dry-run` | Preview transfer |
-| `train run <name>` | Run a recipe |
-| `train run <name> --host gpu=vast:123` | Override host |
-| `train run <name> --var MODEL=llama-7b` | Override variable |
-| `train run <name> --pick-host gpu` | Pick Vast.ai host |
 | `train recipe list` | List recipes |
 | `train recipe show <name>` | Show recipe details |
 | `train recipe status` | View running sessions |
@@ -457,10 +453,7 @@ fail_on_error = false
 | `train host edit <name>` | Edit existing host config |
 | `train host browse <name>` | Browse files on host |
 | `train host test <name>` | Test connection |
-| `train storage list` | List storage backends |
-| `train storage show <name>` | Show storage details |
-| `train storage add` | Add storage backend |
-| `train storage test <name>` | Test connection |
+| `train recipe syntax` | Show full DSL syntax reference |
 | `train recipe new <name>` | Create new recipe |
 | `train recipe edit <name>` | Edit recipe in editor |
 | `train recipe run <name>` | Run a recipe (same as `train run`) |
@@ -470,10 +463,13 @@ fail_on_error = false
 | `train recipe logs --last` | Show last execution |
 | `train recipe logs <job-id>` | Show logs for a specific job |
 | `train recipe jobs` | View job history |
+| `train storage list` | List storage backends |
+| `train storage show <name>` | Show storage details |
+| `train storage add` | Add storage backend |
+| `train storage test <name>` | Test connection |
 | `train secrets list` | List stored secrets |
 | `train secrets set <key>` | Set a secret |
 | `train secrets get <key>` | Get a secret |
-| `train secrets delete <key>` | Delete a secret |
 | `train config show` | Show configuration |
 | `train config get <key>` | Get config value |
 | `train config set <key> <val>` | Set config value |
@@ -499,8 +495,9 @@ fail_on_error = false
 | Command | Description |
 |---------|-------------|
 | `train host rm <name>` | Remove a host |
-| `train storage rm <name>` | Remove storage |
 | `train recipe rm <name>` | Remove a recipe |
+| `train storage rm <name>` | Remove storage |
+| `train secrets delete <key>` | Delete a secret |
 | `train config reset` | Reset configuration |
 | `train vast rm <id>` | Remove instance |
 | `train pricing rates` | Show exchange rates |
@@ -510,9 +507,9 @@ fail_on_error = false
 | `train pricing colab` | Show Colab pricing |
 | `train pricing vast` | Show Vast.ai costs |
 | `train pricing convert 10 USD CNY` | Convert currency |
-| `train help` | Show top-level help |
+| `train update` | Check for updates |
+| `train help` | Show help |
 | `train version` | Show version |
-| `train <command> --help` | Show command help |
 
 ## License
 

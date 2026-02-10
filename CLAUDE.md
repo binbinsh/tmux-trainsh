@@ -93,20 +93,31 @@ python tests/test_commands.py
 
 ## Documentation Updates
 
-**IMPORTANT:** When making code changes, always update documentation to stay in sync:
+Documentation is auto-generated from two registries. **Do not edit README sections manually.**
 
-1. **`trainsh/main.py`** - Update `help_text` variable when:
-   - Adding/removing/renaming commands
-   - Changing command syntax or options
-   - Adding new DSL features
+### Single Sources of Truth
 
-2. **`README.md`** - Update when:
-   - Adding/removing/renaming commands (update Commands tables)
-   - Changing CLI syntax or options
-   - Adding new features or DSL syntax
-   - Changing configuration file structure
+1. **`DSL_SYNTAX`** in `trainsh/core/dsl_parser.py` — all recipe DSL documentation.
+   - When adding/changing DSL features, update this list.
+   - `generate_syntax_reference()` renders it as markdown.
+   - `train recipe syntax` prints it to the terminal.
 
-3. **Keep in sync:**
-   - `help_text` in `main.py` should be a concise summary of README content
-   - Command tables in README should match actual CLI commands
-   - DSL syntax in both files should match `core/dsl_parser.py` implementation
+2. **`COMMANDS_REGISTRY`** in `trainsh/main.py` — all CLI commands and subcommands.
+   - When adding/removing/renaming commands, update this list.
+   - `generate_commands_markdown()` renders the Commands section for README.
+   - `usage` and `help_text` are auto-generated from this registry.
+
+### Workflow
+
+```bash
+# After changing DSL_SYNTAX or COMMANDS_REGISTRY:
+python scripts/update_readme.py          # Regenerate README.md sections
+python scripts/update_readme.py --check  # Verify README is up to date (used by pre-commit)
+```
+
+### Pre-commit Hook
+
+Install with `bash scripts/install-hooks.sh`. The hook (`scripts/pre-commit-check.sh`) validates:
+1. Every `CONTROL_COMMANDS` entry exists in `DSL_SYNTAX`
+2. Every routed command in `main.py` exists in `COMMANDS_REGISTRY`
+3. README.md is not stale (runs `update_readme.py --check`)

@@ -23,6 +23,283 @@ CONTROL_COMMANDS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# DSL_SYNTAX – single source of truth for all recipe DSL documentation.
+# Each entry is a dict with keys: title, description (optional), content.
+# generate_syntax_reference() renders them as markdown.
+# ---------------------------------------------------------------------------
+
+DSL_SYNTAX: List[Dict] = [
+    {
+        "title": "Quick Example",
+        "content": """\
+```
+# Variables
+var MODEL = llama-7b
+var WORKDIR = /workspace/train
+
+# Hosts (machines)
+host gpu = placeholder
+host backup = myserver
+
+# Storage
+storage output = r2:my-bucket
+
+# Workflow
+vast.pick @gpu num_gpus=1 min_gpu_ram=24
+vast.wait timeout=5m
+
+# Create a tmux session "work" on the gpu host
+tmux.open @gpu as work
+
+# Commands reference the session name, not the host
+@work > cd $WORKDIR && git clone https://github.com/user/repo
+@work > pip install -r requirements.txt
+@work > python train.py --model $MODEL &
+
+wait @work idle timeout=2h
+notify "Training finished"
+
+# Transfers reference the host (for SSH connection info)
+@gpu:$WORKDIR/model -> @output:/models/$MODEL/
+@gpu:$WORKDIR/model -> @backup:/backup/
+
+vast.stop
+tmux.close @work
+```""",
+    },
+    {
+        "title": "Definitions",
+        "description": "All definitions must appear before workflow commands. Names cannot be duplicated across var/host/storage.",
+        "content": """\
+| Type | Syntax | Reference | Description |
+|------|--------|-----------|-------------|
+| Variable | `var NAME = value` | `$NAME` | Define a variable |
+| Host | `host NAME = spec` | `@NAME` | Define a remote host |
+| Storage | `storage NAME = spec` | `@NAME` | Define a storage backend |""",
+    },
+    {
+        "title": "Host Spec Formats",
+        "id": "host-spec",
+        "content": """\
+| Spec | Description |
+|------|-------------|
+| `placeholder` | Placeholder, must be filled by `vast.pick` |
+| `user@hostname` | SSH host |
+| `user@hostname -p PORT` | SSH host with port |
+| `user@hostname -i KEY` | SSH host with identity file |
+| `user@hostname -J JUMP` | SSH host with jump host |
+| `user@hostname -o ProxyCommand='CMD'` | SSH host via custom ProxyCommand (e.g. HTTPS tunnel client) |
+| `name` | Reference to hosts.toml config |
+
+Cloudflared Access examples:
+
+```bash
+# Inline host spec
+host case = root@172.16.0.88 -o ProxyCommand='cloudflared access ssh --hostname ssh-access.example.com'
+```
+
+```toml
+# hosts.toml (primary + fallback candidates)
+[[hosts]]
+name = "case"
+type = "ssh"
+hostname = "primary.example.com"
+port = 22
+username = "root"
+env_vars = { connection_candidates = ["ssh://backup.example.com:22", "cloudflared://ssh-access.example.com"] }
+```
+
+```toml
+# hosts.toml (structured candidates, same as interactive `train host add`)
+[[hosts]]
+name = "case"
+type = "ssh"
+hostname = "primary.example.com"
+port = 22
+username = "root"
+env_vars = { connection_candidates = [{ type = "ssh", hostname = "backup.example.com", port = 22 }, { type = "cloudflared", hostname = "ssh-access.example.com" }] }
+```""",
+    },
+    {
+        "title": "Storage Spec Formats",
+        "id": "storage-spec",
+        "content": """\
+| Spec | Description |
+|------|-------------|
+| `placeholder` | Placeholder, must be filled at runtime |
+| `r2:bucket` | Cloudflare R2 |
+| `b2:bucket` | Backblaze B2 |
+| `s3:bucket` | Amazon S3 |
+| `name` | Reference to storages.toml config |""",
+    },
+    {
+        "title": "Execute Commands",
+        "id": "execute",
+        "description": "Run commands in a tmux session (created with `tmux.open`):",
+        "content": """\
+```
+@session > command
+@session > command &
+@session timeout=2h > command
+```
+
+| Syntax | Description |
+|--------|-------------|
+| `@session > cmd` | Run command, wait for completion |
+| `@session > cmd &` | Run command in background |
+| `@session timeout=DURATION > cmd` | Run with custom timeout (default: 10m) |
+
+**Note:** The `@session` references a session name from `tmux.open @host as session`, not the host directly.
+
+**Multiline:** Use shell line continuations (`\\`) or heredocs (`<< 'EOF'`) to span commands across lines; the DSL treats them as a single execute step.
+
+**train exec:** `@name` resolves to an existing tmux session first. If none exists, it runs directly on the host named `name` without creating a tmux session.""",
+    },
+    {
+        "title": "Wait Commands",
+        "id": "wait",
+        "description": "Wait for conditions in a session:",
+        "content": """\
+```
+wait @session "pattern" timeout=DURATION
+wait @session file=PATH timeout=DURATION
+wait @session port=PORT timeout=DURATION
+wait @session idle timeout=DURATION
+```
+
+| Condition | Description |
+|-----------|-------------|
+| `"pattern"` | Wait for regex pattern in terminal output |
+| `file=PATH` | Wait for file to exist |
+| `port=PORT` | Wait for port to be open |
+| `idle` | Wait for no child processes (command finished) |""",
+    },
+    {
+        "title": "Transfer Commands",
+        "id": "transfer",
+        "description": "Transfer files between endpoints:",
+        "content": """\
+```
+@src:path -> @dst:path
+@src:path -> ./local/path
+./local/path -> @dst:path
+```""",
+    },
+    {
+        "title": "Control Commands",
+        "id": "control",
+        "description": """\
+**tmux session commands:**
+
+The recipe system separates two concepts:
+- **Host**: The machine where commands run (defined with `host NAME = spec`)
+- **Session**: A persistent tmux session on that host (created with `tmux.open @host as session_name`)
+
+Commands are sent to **sessions**, not hosts directly. This allows multiple sessions on the same host.
+
+```
+# WRONG - missing session name
+tmux.open @gpu
+@gpu > python train.py
+
+# CORRECT - create named session, then use session name
+tmux.open @gpu as work
+@work > python train.py
+tmux.close @work
+```""",
+        "content": """\
+| Command | Description |
+|---------|-------------|
+| `tmux.open @host as name` | Create tmux session named "name" on host and auto-bridge it to local splits |
+| `tmux.close @session` | Close tmux session |
+| `tmux.config @host` | Apply tmux configuration to remote host |
+| `vast.pick @host [options]` | Interactively select Vast.ai instance |
+| `vast.start [id]` | Start Vast.ai instance |
+| `vast.stop [id]` | Stop Vast.ai instance |
+| `vast.wait [options]` | Wait for instance to be ready |
+| `vast.cost [id]` | Show usage cost |
+| `notify "message"` | Send styled notification |
+| `sleep DURATION` | Sleep for duration |
+
+**notify syntax:**
+
+- `notify "done"`
+- `notify training complete`
+- `notify "$MODEL finished"`
+
+Styling and delivery are configured globally in `~/.config/tmux-trainsh/config.toml`:
+
+```toml
+[notifications]
+enabled = true
+channels = ["log", "system"]          # log | system | webhook | command
+webhook_url = ""                      # used when channels include webhook
+command = ""                          # used when channels include command
+timeout_secs = 5
+fail_on_error = false
+```
+
+`system` channel uses macOS `osascript` native notification.
+
+**vast.pick options:**
+
+- `num_gpus=N` - Minimum GPU count
+- `min_gpu_ram=N` - Minimum GPU memory (GB)
+- `gpu=NAME` - GPU model (e.g., RTX_4090)
+- `max_dph=N` - Maximum $/hour
+- `limit=N` - Max instances to show
+
+**vast.wait options:**
+
+- `timeout=DURATION` - Max wait time (default: 10m)
+- `poll=DURATION` - Poll interval (default: 10s)
+- `stop_on_fail=BOOL` - Stop instance on timeout""",
+    },
+    {
+        "title": "Duration Format",
+        "id": "duration",
+        "content": """\
+- `30s` - 30 seconds
+- `5m` - 5 minutes
+- `2h` - 2 hours
+- `300` - 300 seconds (raw number)""",
+    },
+    {
+        "title": "Comments",
+        "id": "comments",
+        "content": """\
+```
+# This is a comment
+```""",
+    },
+    {
+        "title": "Variable Interpolation",
+        "id": "interpolation",
+        "content": """\
+- `$NAME` - Reference a variable
+- `${NAME}` - Reference a variable (alternative)
+- `${secret:NAME}` - Reference a secret from secrets store""",
+    },
+]
+
+
+def generate_syntax_reference() -> str:
+    """Render DSL_SYNTAX as a markdown reference."""
+    lines: List[str] = []
+    lines.append("Recipe files (`.recipe`) define automated training workflows with a simple DSL.")
+    lines.append("")
+    for section in DSL_SYNTAX:
+        lines.append(f"### {section['title']}")
+        lines.append("")
+        if section.get("description"):
+            lines.append(section["description"])
+            lines.append("")
+        lines.append(section["content"])
+        lines.append("")
+    return "\n".join(lines)
+
+
 @dataclass
 class DSLStep:
     """Parsed DSL step."""
