@@ -47,6 +47,7 @@ storage output = r2:my-bucket
 
 # Workflow
 vast.pick @gpu num_gpus=1 min_gpu_ram=24
+vast.start
 vast.wait timeout=5m
 
 # Create a tmux session "work" on the gpu host

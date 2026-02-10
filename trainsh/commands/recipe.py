@@ -63,11 +63,15 @@ def _maybe_auto_enter_tmux(
     command_prefix = ""
     if os.environ.get("TERM", "").lower() in {"", "dumb", "unknown"}:
         command_prefix = "TERM=xterm-256color "
+    inner_cmd_str = shlex.join(inner_cmd)
+    # Run the recipe command; if it fails, pause so the user can read the error
+    # before the tmux session exits.
     command = (
         f"{command_prefix}TRAINSH_TMUX_BOOTSTRAP=1 "
         f"TRAINSH_JOB_ID={shlex.quote(job_id)} "
         f"TRAINSH_SESSION_INDEX_START={next_session_index} "
-        f"{shlex.join(inner_cmd)}"
+        f"{inner_cmd_str}"
+        f" || {{ echo; echo '>>> Recipe failed. Press Enter to exit...'; read _; }}"
     )
 
     print(f"Not in tmux; auto-starting session: {session_name}")

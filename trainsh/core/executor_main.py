@@ -598,23 +598,35 @@ class DSLExecutor:
         return WindowInfo(name=name, host=host, remote_session=None)
 
     def _interpolate(self, text: str) -> str:
-        """Interpolate variables and secrets."""
-        # First handle ${VAR} and ${secret:NAME}
-        def replace_braced(match):
-            ref = match.group(1)
-            if ref.startswith('secret:'):
-                secret_name = ref[7:]
-                return self.secrets.get(secret_name) or ""
-            return self.ctx.variables.get(ref, match.group(0))
+        """Interpolate variables and secrets.
 
-        text = re.sub(r'\$\{([^}]+)\}', replace_braced, text)
+        Runs multiple passes so chained references resolve correctly:
+        e.g. var TOKEN = ${secret:GH}  →  var REPO = https://${TOKEN}@…
+        """
+        for _ in range(10):  # guard against infinite loops
+            prev = text
 
-        # Then handle $VAR shorthand in control command arguments
-        def replace_simple(match):
-            name = match.group(1)
-            return self.ctx.variables.get(name, match.group(0))
+            # Handle ${VAR} and ${secret:NAME}
+            def replace_braced(match):
+                ref = match.group(1)
+                if ref.startswith('secret:'):
+                    secret_name = ref[7:]
+                    return self.secrets.get(secret_name) or ""
+                return self.ctx.variables.get(ref, match.group(0))
 
-        return re.sub(r'\$(\w+)', replace_simple, text)
+            text = re.sub(r'\$\{([^}]+)\}', replace_braced, text)
+
+            # Handle $VAR shorthand in control command arguments
+            def replace_simple(match):
+                name = match.group(1)
+                return self.ctx.variables.get(name, match.group(0))
+
+            text = re.sub(r'\$(\w+)', replace_simple, text)
+
+            if text == prev:
+                break  # nothing changed, fully resolved
+
+        return text
 
     def _parse_endpoint(self, spec: str) -> 'TransferEndpoint':
         """Parse transfer endpoint via helper."""
