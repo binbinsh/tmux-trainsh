@@ -53,8 +53,16 @@ def cmd_list(args: List[str]) -> None:
     print("-" * 40)
 
     found = 0
+    backend = secrets._get_backend()
     for key in predefined:
-        exists = secrets.exists(key)
+        if backend is not None:
+            try:
+                value = backend.get(key)
+            except Exception:
+                value = None
+            exists = value is not None and value != ""
+        else:
+            exists = False
         status = "[set]" if exists else "[not set]"
         print(f"  {key:<30} {status}")
         if exists:
