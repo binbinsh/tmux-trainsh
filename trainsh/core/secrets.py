@@ -93,9 +93,10 @@ class OnePasswordBackend(SecretsBackend):
 
     ITEM_TITLE = "tmux-trainsh"
 
-    def __init__(self, vault: Optional[str] = None):
+    def __init__(self, vault: Optional[str] = None, sa_token: Optional[str] = None):
         self._vault = vault or os.environ.get("OP_VAULT", "Private")
-        self._sa_mode = bool(os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"))
+        # Service account token: explicit arg > env var > config
+        self._sa_token = sa_token or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
 
     # -- helpers -----------------------------------------------------------
 
@@ -103,12 +104,16 @@ class OnePasswordBackend(SecretsBackend):
         cmd = ["op", *args]
         if self._vault:
             cmd += ["--vault", self._vault]
+        env = None
+        if self._sa_token:
+            env = {**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": self._sa_token}
         return subprocess.run(
             cmd,
             input=stdin,
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
 
     def _ensure_item(self) -> None:
@@ -296,10 +301,21 @@ def _op_available() -> bool:
     return shutil.which("op") is not None
 
 
+def _op_desktop_connectable() -> bool:
+    """Check if `op` can connect to the desktop app."""
+    r = subprocess.run(
+        ["op", "account", "list", "--format=json"],
+        capture_output=True, text=True, timeout=10,
+    )
+    return r.returncode == 0
+
+
 def _instantiate_backend(name: str, cfg: dict) -> SecretsBackend:
     if name == "1password":
-        vault = cfg.get("secrets", {}).get("vault")
-        return OnePasswordBackend(vault=vault)
+        secrets_cfg = cfg.get("secrets", {})
+        vault = secrets_cfg.get("vault")
+        sa_token = secrets_cfg.get("sa_token")
+        return OnePasswordBackend(vault=vault, sa_token=sa_token)
     if name == "encrypted_file":
         return EncryptedFileBackend()
     raise ValueError(f"Unknown secrets backend: {name!r}")
@@ -329,7 +345,10 @@ def prompt_backend_selection() -> SecretsBackend:
             print("Falling back to encrypted file backend.\n")
             return _select_and_save("encrypted_file")
         vault = prompt_input("1Password vault name [Private]: ", default="Private")
-        return _select_and_save("1password", vault=vault)
+        sa_token = _resolve_op_auth(vault)
+        if sa_token is False:
+            return _select_and_save("encrypted_file")
+        return _select_and_save("1password", vault=vault, sa_token=sa_token)
     elif choice == "2":
         return _select_and_save("encrypted_file")
     else:
@@ -337,21 +356,73 @@ def prompt_backend_selection() -> SecretsBackend:
         return _select_and_save("encrypted_file")
 
 
-def _select_and_save(name: str, vault: Optional[str] = None) -> SecretsBackend:
+def _resolve_op_auth(vault: Optional[str] = None):
+    """Determine 1Password auth method: desktop app or service account token.
+
+    Returns:
+        str  — service account token (use SA mode)
+        None — desktop app connection works (use desktop mode)
+        False — user declined, caller should fall back to another backend
+    """
+    from ..cli_utils import prompt_input
+
+    # Already have a service account token in env — use it directly
+    env_token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
+    if env_token:
+        print("Using OP_SERVICE_ACCOUNT_TOKEN from environment.")
+        return env_token
+
+    # Try connecting to the desktop app
+    if _op_desktop_connectable():
+        return None
+
+    # Desktop app not available — offer service account setup
+    print("\nCannot connect to 1Password desktop app.")
+    print("You can use a Service Account token instead (no desktop app required).")
+    print("Create one at: https://my.1password.com/developer-tools/infrastructure-secrets/serviceaccount")
+    print("")
+    print("  [1] Enter a Service Account token")
+    print("  [2] Fall back to encrypted file backend")
+    sa_choice = prompt_input("> ")
+    if sa_choice == "1":
+        token = prompt_input("Service Account token: ")
+        if not token:
+            print("No token provided. Falling back to encrypted file backend.\n")
+            return False
+        # Validate token works
+        r = subprocess.run(
+            ["op", "vault", "list", "--format=json"],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": token},
+        )
+        if r.returncode != 0:
+            print(f"Token validation failed: {r.stderr.strip()}")
+            print("Falling back to encrypted file backend.\n")
+            return False
+        print("Service account token validated successfully.")
+        return token
+    return False
+
+
+def _select_and_save(name: str, vault: Optional[str] = None, sa_token: Optional[str] = None) -> SecretsBackend:
     cfg = _load_config()
     cfg.setdefault("secrets", {})
     cfg["secrets"]["backend"] = name
     if vault:
         cfg["secrets"]["vault"] = vault
+    if sa_token:
+        cfg["secrets"]["sa_token"] = sa_token
+    else:
+        cfg["secrets"].pop("sa_token", None)
     _save_config(cfg)
     return _instantiate_backend(name, cfg)
 
 
-def set_backend(name: str, vault: Optional[str] = None) -> SecretsBackend:
+def set_backend(name: str, vault: Optional[str] = None, sa_token: Optional[str] = None) -> SecretsBackend:
     """Explicitly switch to a named backend."""
     if name not in _BACKEND_NAMES:
         raise ValueError(f"Unknown backend {name!r}. Choose from: {list(_BACKEND_NAMES)}")
-    return _select_and_save(name, vault=vault)
+    return _select_and_save(name, vault=vault, sa_token=sa_token)
 
 
 def get_configured_backend_name() -> Optional[str]:

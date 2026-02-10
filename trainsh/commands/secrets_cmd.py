@@ -175,6 +175,7 @@ def cmd_backend(args: List[str]) -> None:
         sys.exit(1)
 
     vault = None
+    sa_token = None
     if name == "1password":
         if not _op_available():
             print("Warning: 'op' CLI not found on PATH.")
@@ -184,9 +185,15 @@ def cmd_backend(args: List[str]) -> None:
                 print("Cancelled.")
                 return
         vault = prompt_input("1Password vault name [Private]: ", default="Private")
+        from ..core.secrets import _resolve_op_auth
+        sa_token = _resolve_op_auth(vault)
+        if sa_token is False:
+            print("Falling back to encrypted file backend.")
+            name = "encrypted_file"
+            sa_token = None
 
     try:
-        set_backend(name, vault=vault)
+        set_backend(name, vault=vault, sa_token=sa_token)
         label = _BACKEND_NAMES[name]
         print(f"Switched to: {label}")
     except Exception as e:
