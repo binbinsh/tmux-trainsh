@@ -192,7 +192,7 @@ class TestResolveOpAuth(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", return_value="3")
+    @patch("trainsh.cli_utils.prompt_input", return_value="2")
     def test_returns_false_when_user_declines(self, _inp, _desk):
         env = {k: v for k, v in os.environ.items()
                if k != "OP_SERVICE_ACCOUNT_TOKEN"}
@@ -202,7 +202,7 @@ class TestResolveOpAuth(unittest.TestCase):
 
     @patch("trainsh.core.secrets.subprocess.run")
     @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", side_effect=["2", "ops_MANUAL"])
+    @patch("trainsh.cli_utils.prompt_input", side_effect=["1", "ops_MANUAL"])
     def test_returns_token_when_user_provides_valid(self, _inp, _desk, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
         env = {k: v for k, v in os.environ.items()
@@ -213,32 +213,11 @@ class TestResolveOpAuth(unittest.TestCase):
 
     @patch("trainsh.core.secrets.subprocess.run")
     @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", side_effect=["2", "ops_BAD"])
+    @patch("trainsh.cli_utils.prompt_input", side_effect=["1", "ops_BAD"])
     def test_returns_false_when_token_invalid(self, _inp, _desk, mock_run):
         mock_run.return_value = MagicMock(
             returncode=1, stdout="", stderr="invalid token"
         )
-        env = {k: v for k, v in os.environ.items()
-               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
-        with patch.dict(os.environ, env, clear=True):
-            result = secrets_mod._resolve_op_auth("v")
-        self.assertIs(result, False)
-
-    @patch.object(secrets_mod, "_op_signin_and_create_sa", return_value="ops_CREATED")
-    @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", return_value="1")
-    def test_option1_delegates_to_signin_and_create_sa(self, _inp, _desk, mock_sa):
-        env = {k: v for k, v in os.environ.items()
-               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
-        with patch.dict(os.environ, env, clear=True):
-            result = secrets_mod._resolve_op_auth("v")
-        self.assertEqual(result, "ops_CREATED")
-        mock_sa.assert_called_once_with("v")
-
-    @patch.object(secrets_mod, "_op_signin_and_create_sa", return_value=None)
-    @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", return_value="1")
-    def test_option1_fallback_when_signin_fails(self, _inp, _desk, mock_sa):
         env = {k: v for k, v in os.environ.items()
                if k != "OP_SERVICE_ACCOUNT_TOKEN"}
         with patch.dict(os.environ, env, clear=True):
@@ -468,6 +447,82 @@ class TestOpWithRecovery(unittest.TestCase):
         r = backend._op_with_recovery("item", "list")
         self.assertEqual(r.returncode, 1)
         self.assertIn("cannot connect", r.stderr)
+
+
+class TestEnsureVault(unittest.TestCase):
+    """_ensure_vault creates the vault if it doesn't exist."""
+
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_vault_exists_no_create(self, mock_run):
+        """No vault creation when vault already exists."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+        backend = OnePasswordBackend(vault="trainsh", sa_token="ops_T")
+        backend._ensure_vault()
+        # Only the vault get call, no create
+        self.assertEqual(mock_run.call_count, 1)
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("vault", cmd)
+        self.assertIn("get", cmd)
+
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_vault_missing_creates_it(self, mock_run):
+        """Creates vault when 'isn't a vault' error is returned."""
+        get_fail = MagicMock(
+            returncode=1, stdout="",
+            stderr="\"trainsh\" isn't a vault in this account."
+        )
+        create_ok = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.side_effect = [get_fail, create_ok]
+        backend = OnePasswordBackend(vault="trainsh", sa_token="ops_T")
+        backend._ensure_vault()
+        self.assertEqual(mock_run.call_count, 2)
+        create_cmd = mock_run.call_args_list[1][0][0]
+        self.assertIn("vault", create_cmd)
+        self.assertIn("create", create_cmd)
+        self.assertIn("trainsh", create_cmd)
+
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_vault_create_failure_raises(self, mock_run):
+        """RuntimeError raised when vault creation fails."""
+        get_fail = MagicMock(
+            returncode=1, stdout="",
+            stderr="\"trainsh\" isn't a vault in this account."
+        )
+        create_fail = MagicMock(
+            returncode=1, stdout="", stderr="permission denied"
+        )
+        mock_run.side_effect = [get_fail, create_fail]
+        backend = OnePasswordBackend(vault="trainsh", sa_token="ops_T")
+        with self.assertRaises(RuntimeError) as ctx:
+            backend._ensure_vault()
+        self.assertIn("permission denied", str(ctx.exception))
+
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_vault_other_error_ignored(self, mock_run):
+        """Non-'isn't a vault' errors are silently ignored (not a missing vault)."""
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="network timeout"
+        )
+        backend = OnePasswordBackend(vault="trainsh", sa_token="ops_T")
+        backend._ensure_vault()
+        # Only one call — no create attempted
+        self.assertEqual(mock_run.call_count, 1)
+
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_vault_create_passes_sa_token(self, mock_run):
+        """SA token is passed in env when creating vault."""
+        get_fail = MagicMock(
+            returncode=1, stdout="",
+            stderr="\"trainsh\" isn't a vault in this account."
+        )
+        create_ok = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.side_effect = [get_fail, create_ok]
+        backend = OnePasswordBackend(vault="trainsh", sa_token="ops_TOK")
+        backend._ensure_vault()
+        create_kwargs = mock_run.call_args_list[1]
+        env = create_kwargs.kwargs.get("env") or create_kwargs[1].get("env")
+        self.assertIsNotNone(env)
+        self.assertEqual(env["OP_SERVICE_ACCOUNT_TOKEN"], "ops_TOK")
 
 
 if __name__ == "__main__":

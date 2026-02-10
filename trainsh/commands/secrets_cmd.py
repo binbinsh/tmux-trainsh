@@ -184,7 +184,7 @@ def cmd_backend(args: List[str]) -> None:
             if confirm is None or confirm.lower() != "y":
                 print("Cancelled.")
                 return
-        vault = prompt_input("1Password vault name [Private]: ", default="Private")
+        vault = prompt_input("1Password vault name [trainsh]: ", default="trainsh")
         from ..core.secrets import _resolve_op_auth
         sa_token = _resolve_op_auth(vault)
         if sa_token is False:
