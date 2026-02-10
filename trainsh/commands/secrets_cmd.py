@@ -13,6 +13,7 @@ Subcommands:
   set <key>        - Set a secret (prompts for value)
   get <key>        - Get a secret value
   delete <key>     - Delete a secret
+  backend          - Show or switch secrets backend
 
 Predefined keys:
   VAST_API_KEY           - Vast.ai API key
@@ -25,7 +26,7 @@ Predefined keys:
 
 def cmd_list(args: List[str]) -> None:
     """List configured secrets."""
-    from ..core.secrets import get_secrets_manager
+    from ..core.secrets import get_secrets_manager, get_configured_backend_name
     from ..constants import SecretKeys
 
     secrets = get_secrets_manager()
@@ -38,6 +39,15 @@ def cmd_list(args: List[str]) -> None:
         SecretKeys.GITHUB_TOKEN,
         SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
     ]
+
+    backend_name = get_configured_backend_name()
+    if backend_name:
+        from ..core.secrets import _BACKEND_NAMES
+        label = _BACKEND_NAMES.get(backend_name, backend_name)
+        print(f"Backend: {label}")
+    else:
+        print("Backend: [not configured]")
+    print()
 
     print("Configured secrets:")
     print("-" * 40)
@@ -129,6 +139,61 @@ def cmd_delete(args: List[str]) -> None:
     print(f"Deleted {key}")
 
 
+def cmd_backend(args: List[str]) -> None:
+    """Show or switch the secrets backend."""
+    from ..core.secrets import (
+        get_configured_backend_name,
+        set_backend,
+        _BACKEND_NAMES,
+        _op_available,
+    )
+
+    current = get_configured_backend_name()
+
+    if not args:
+        # Show current backend
+        if current:
+            label = _BACKEND_NAMES.get(current, current)
+            print(f"Current backend: {label}")
+        else:
+            print("No backend configured.")
+        print()
+        print("Available backends:")
+        for name, label in _BACKEND_NAMES.items():
+            marker = " (active)" if name == current else ""
+            print(f"  {name:<20} {label}{marker}")
+        print()
+        print("Switch with: train secrets backend <name>")
+        print("  e.g.  train secrets backend encrypted_file")
+        print("        train secrets backend 1password")
+        return
+
+    name = args[0].lower()
+    if name not in _BACKEND_NAMES:
+        print(f"Unknown backend: {name}")
+        print(f"Choose from: {', '.join(_BACKEND_NAMES)}")
+        sys.exit(1)
+
+    vault = None
+    if name == "1password":
+        if not _op_available():
+            print("Warning: 'op' CLI not found on PATH.")
+            print("Install from https://1password.com/downloads/command-line/")
+            confirm = prompt_input("Continue anyway? (y/N): ")
+            if confirm is None or confirm.lower() != "y":
+                print("Cancelled.")
+                return
+        vault = prompt_input("1Password vault name [Private]: ", default="Private")
+
+    try:
+        set_backend(name, vault=vault)
+        label = _BACKEND_NAMES[name]
+        print(f"Switched to: {label}")
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for secrets command."""
     if not args or args[0] in ("-h", "--help", "help"):
@@ -143,6 +208,7 @@ def main(args: List[str]) -> Optional[str]:
         "set": cmd_set,
         "get": cmd_get,
         "delete": cmd_delete,
+        "backend": cmd_backend,
     }
 
     if subcommand not in commands:

@@ -1,107 +1,411 @@
 # tmux-trainsh secrets management
-# Uses keyring CLI for cross-platform secret storage
+# Multi-backend: 1Password (op CLI) or encrypted file (Fernet)
 
+import base64
+import getpass
+import json
 import os
 import shutil
 import subprocess
-from typing import List, Optional
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Dict, List, Optional
 
-from ..constants import KEYRING_SERVICE, SecretKeys
-
-
-def _keyring_available() -> bool:
-    """Check if keyring CLI is available."""
-    return shutil.which("keyring") is not None
+from ..constants import CONFIG_DIR, CONFIG_FILE, SecretKeys
 
 
-def _keyring_get(service: str, key: str) -> Optional[str]:
-    """Get a secret using keyring CLI."""
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
+
+def _load_config() -> dict:
+    """Load config.toml, returning an empty dict if missing."""
+    if not CONFIG_FILE.exists():
+        return {}
     try:
-        result = subprocess.run(
-            ["keyring", "get", service, key],
+        import tomllib
+    except ModuleNotFoundError:          # Python < 3.11
+        try:
+            import tomli as tomllib      # type: ignore[no-redef]
+        except ImportError:
+            return {}
+    with open(CONFIG_FILE, "rb") as f:
+        return tomllib.load(f)
+
+
+def _save_config(cfg: dict) -> None:
+    """Write *cfg* back to config.toml (minimal TOML writer)."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = []
+    # Write top-level keys first (non-dict values)
+    for k, v in cfg.items():
+        if not isinstance(v, dict):
+            lines.append(f"{k} = {_toml_value(v)}")
+    if lines:
+        lines.append("")
+
+    # Write sections (dict values)
+    for section, values in cfg.items():
+        if isinstance(values, dict):
+            lines.append(f"[{section}]")
+            for k, v in values.items():
+                lines.append(f"{k} = {_toml_value(v)}")
+            lines.append("")
+
+    CONFIG_FILE.write_text("\n".join(lines))
+
+
+def _toml_value(v: object) -> str:
+    if isinstance(v, str):
+        return f'"{v}"'
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    return f'"{v}"'
+
+
+# ---------------------------------------------------------------------------
+# Backend ABC
+# ---------------------------------------------------------------------------
+
+class SecretsBackend(ABC):
+    @abstractmethod
+    def get(self, key: str) -> Optional[str]: ...
+
+    @abstractmethod
+    def set(self, key: str, value: str) -> None: ...
+
+    @abstractmethod
+    def delete(self, key: str) -> None: ...
+
+    @abstractmethod
+    def list_set_keys(self) -> List[str]: ...
+
+
+# ---------------------------------------------------------------------------
+# Backend: 1Password (op CLI)
+# ---------------------------------------------------------------------------
+
+class OnePasswordBackend(SecretsBackend):
+    """Store secrets as fields on a single 1Password item."""
+
+    ITEM_TITLE = "tmux-trainsh"
+
+    def __init__(self, vault: Optional[str] = None):
+        self._vault = vault or os.environ.get("OP_VAULT", "Private")
+        self._sa_mode = bool(os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"))
+
+    # -- helpers -----------------------------------------------------------
+
+    def _op(self, *args: str, stdin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+        cmd = ["op", *args]
+        if self._vault:
+            cmd += ["--vault", self._vault]
+        return subprocess.run(
+            cmd,
+            input=stdin,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
         )
-        if result.returncode == 0:
-            return result.stdout.strip()
+
+    def _ensure_item(self) -> None:
+        """Create the item if it doesn't exist yet."""
+        r = self._op("item", "get", self.ITEM_TITLE, "--format=json")
+        if r.returncode != 0:
+            r2 = self._op(
+                "item", "create",
+                "--category=login",
+                f"--title={self.ITEM_TITLE}",
+            )
+            if r2.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to create 1Password item: {r2.stderr.strip()}"
+                )
+
+    # -- public API --------------------------------------------------------
+
+    def get(self, key: str) -> Optional[str]:
+        r = self._op(
+            "item", "get", self.ITEM_TITLE,
+            "--fields", f"label={key}",
+            "--reveal",
+        )
+        if r.returncode != 0:
+            return None
+        val = r.stdout.strip()
+        return val if val else None
+
+    def set(self, key: str, value: str) -> None:
+        self._ensure_item()
+        # Try edit first (field already exists)
+        r = self._op(
+            "item", "edit", self.ITEM_TITLE,
+            f"{key}[password]={value}",
+        )
+        if r.returncode != 0:
+            # Field doesn't exist yet — edit will create it if item exists
+            # Some op versions need a different approach; try again
+            r2 = self._op(
+                "item", "edit", self.ITEM_TITLE,
+                f"{key}[password]={value}",
+            )
+            if r2.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to store secret in 1Password: {r2.stderr.strip()}"
+                )
+
+    def delete(self, key: str) -> None:
+        # Set field to empty to effectively "delete"
+        self._op("item", "edit", self.ITEM_TITLE, f"{key}[password]=")
+
+    def list_set_keys(self) -> List[str]:
+        r = self._op("item", "get", self.ITEM_TITLE, "--format=json")
+        if r.returncode != 0:
+            return []
+        try:
+            data = json.loads(r.stdout)
+            keys: list[str] = []
+            for field in data.get("fields", []):
+                label = field.get("label", "")
+                value = field.get("value", "")
+                if label and value and label not in ("username", "password"):
+                    keys.append(label)
+            return keys
+        except (json.JSONDecodeError, KeyError):
+            return []
+
+
+# ---------------------------------------------------------------------------
+# Backend: Encrypted file (Fernet)
+# ---------------------------------------------------------------------------
+
+_ENC_FILE = CONFIG_DIR / "secrets.enc"
+_SALT_LEN = 16
+_KDF_ITERATIONS = 480_000
+
+
+class EncryptedFileBackend(SecretsBackend):
+    """Fernet-encrypted JSON file at ~/.config/tmux-trainsh/secrets.enc."""
+
+    def __init__(self) -> None:
+        self._fernet: Optional[object] = None   # lazily created
+        self._password: Optional[str] = None
+
+    # -- crypto helpers ----------------------------------------------------
+
+    def _derive_key(self, password: str, salt: bytes) -> bytes:
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        from cryptography.hazmat.primitives import hashes
+
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=_KDF_ITERATIONS,
+        )
+        return base64.urlsafe_b64encode(kdf.derive(password.encode()))
+
+    def _get_fernet(self) -> "Fernet":          # type: ignore[name-defined]
+        from cryptography.fernet import Fernet
+
+        if self._fernet is not None:
+            return self._fernet                  # type: ignore[return-value]
+
+        if _ENC_FILE.exists():
+            raw = _ENC_FILE.read_bytes()
+            salt = raw[:_SALT_LEN]
+        else:
+            salt = os.urandom(_SALT_LEN)
+
+        if self._password is None:
+            self._password = getpass.getpass("Secrets password: ")
+
+        key = self._derive_key(self._password, salt)
+        self._fernet = Fernet(key)
+
+        # If file doesn't exist yet, persist the salt with an empty store
+        if not _ENC_FILE.exists():
+            self._write_store(salt, {})
+
+        return self._fernet                      # type: ignore[return-value]
+
+    def _read_store(self) -> Dict[str, str]:
+        if not _ENC_FILE.exists():
+            return {}
+        raw = _ENC_FILE.read_bytes()
+        salt = raw[:_SALT_LEN]             # noqa: F841 — kept for clarity
+        token = raw[_SALT_LEN:]
+        fernet = self._get_fernet()
+        try:
+            plaintext = fernet.decrypt(token)
+        except Exception:
+            raise RuntimeError(
+                "Wrong password or corrupted secrets file. "
+                "Delete ~/.config/tmux-trainsh/secrets.enc to reset."
+            )
+        return json.loads(plaintext)
+
+    def _write_store(self, salt: bytes, store: Dict[str, str]) -> None:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        fernet = self._get_fernet()
+        token = fernet.encrypt(json.dumps(store).encode())
+        _ENC_FILE.write_bytes(salt + token)
+        _ENC_FILE.chmod(0o600)
+
+    def _save(self, store: Dict[str, str]) -> None:
+        if _ENC_FILE.exists():
+            salt = _ENC_FILE.read_bytes()[:_SALT_LEN]
+        else:
+            salt = os.urandom(_SALT_LEN)
+        self._write_store(salt, store)
+
+    # -- public API --------------------------------------------------------
+
+    def get(self, key: str) -> Optional[str]:
+        store = self._read_store()
+        return store.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        store = self._read_store()
+        store[key] = value
+        self._save(store)
+
+    def delete(self, key: str) -> None:
+        store = self._read_store()
+        store.pop(key, None)
+        self._save(store)
+
+    def list_set_keys(self) -> List[str]:
+        return list(self._read_store().keys())
+
+
+# ---------------------------------------------------------------------------
+# Backend loading / selection
+# ---------------------------------------------------------------------------
+
+_BACKEND_NAMES = {
+    "1password": "1Password (op CLI)",
+    "encrypted_file": "Encrypted file (~/.config/tmux-trainsh/secrets.enc)",
+}
+
+
+def _op_available() -> bool:
+    return shutil.which("op") is not None
+
+
+def _instantiate_backend(name: str, cfg: dict) -> SecretsBackend:
+    if name == "1password":
+        vault = cfg.get("secrets", {}).get("vault")
+        return OnePasswordBackend(vault=vault)
+    if name == "encrypted_file":
+        return EncryptedFileBackend()
+    raise ValueError(f"Unknown secrets backend: {name!r}")
+
+
+def _load_backend() -> Optional[SecretsBackend]:
+    """Load the configured backend from config.toml, or return None."""
+    cfg = _load_config()
+    backend_name = cfg.get("secrets", {}).get("backend")
+    if not backend_name:
         return None
-    except Exception:
-        return None
+    return _instantiate_backend(backend_name, cfg)
 
 
-def _keyring_set(service: str, key: str, value: str) -> bool:
-    """Set a secret using keyring CLI."""
-    try:
-        result = subprocess.run(
-            ["keyring", "set", service, key],
-            input=value,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+def prompt_backend_selection() -> SecretsBackend:
+    """Interactively ask the user to choose a secrets backend."""
+    from ..cli_utils import prompt_input
+
+    print("\nNo secrets backend configured. Choose one:")
+    print("  [1] 1Password (recommended if you use 1Password)")
+    print("  [2] Encrypted file (~/.config/tmux-trainsh/secrets.enc)")
+
+    choice = prompt_input("> ")
+    if choice == "1":
+        if not _op_available():
+            print("Warning: 'op' CLI not found on PATH. Install it from https://1password.com/downloads/command-line/")
+            print("Falling back to encrypted file backend.\n")
+            return _select_and_save("encrypted_file")
+        vault = prompt_input("1Password vault name [Private]: ", default="Private")
+        return _select_and_save("1password", vault=vault)
+    elif choice == "2":
+        return _select_and_save("encrypted_file")
+    else:
+        print("Invalid choice, defaulting to encrypted file.\n")
+        return _select_and_save("encrypted_file")
 
 
-def _keyring_delete(service: str, key: str) -> bool:
-    """Delete a secret using keyring CLI."""
-    try:
-        result = subprocess.run(
-            ["keyring", "del", service, key],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+def _select_and_save(name: str, vault: Optional[str] = None) -> SecretsBackend:
+    cfg = _load_config()
+    cfg.setdefault("secrets", {})
+    cfg["secrets"]["backend"] = name
+    if vault:
+        cfg["secrets"]["vault"] = vault
+    _save_config(cfg)
+    return _instantiate_backend(name, cfg)
 
+
+def set_backend(name: str, vault: Optional[str] = None) -> SecretsBackend:
+    """Explicitly switch to a named backend."""
+    if name not in _BACKEND_NAMES:
+        raise ValueError(f"Unknown backend {name!r}. Choose from: {list(_BACKEND_NAMES)}")
+    return _select_and_save(name, vault=vault)
+
+
+def get_configured_backend_name() -> Optional[str]:
+    cfg = _load_config()
+    return cfg.get("secrets", {}).get("backend")
+
+
+# ---------------------------------------------------------------------------
+# SecretsManager (main public API)
+# ---------------------------------------------------------------------------
 
 class SecretsManager:
     """
-    Cross-platform secrets management using system keyring CLI.
+    Multi-backend secrets manager.
 
-    On macOS: Uses Keychain
-    On Linux: Uses Secret Service (GNOME Keyring, KWallet, etc.)
-    On Windows: Uses Windows Credential Manager
-
-    Falls back to environment variables if keyring is not available.
+    Resolution order for get():
+      1. In-memory cache
+      2. Environment variable (os.environ)
+      3. Active backend (1Password or encrypted file)
     """
 
-    def __init__(self, service: str = KEYRING_SERVICE):
-        self.service = service
+    def __init__(self) -> None:
         self._cache: dict[str, str] = {}
-        self._keyring_available = _keyring_available()
+        self._backend: Optional[SecretsBackend] = None
+        self._backend_loaded = False
+
+    def _get_backend(self) -> Optional[SecretsBackend]:
+        if not self._backend_loaded:
+            self._backend = _load_backend()
+            self._backend_loaded = True
+        return self._backend
+
+    def _require_backend(self) -> SecretsBackend:
+        backend = self._get_backend()
+        if backend is None:
+            backend = prompt_backend_selection()
+            self._backend = backend
+            self._backend_loaded = True
+        return backend
 
     def get(self, key: str) -> Optional[str]:
-        """
-        Get a secret value.
-
-        Checks in order:
-        1. Cache
-        2. Environment variable
-        3. Keyring
-
-        Args:
-            key: The secret key name
-
-        Returns:
-            The secret value, or None if not found
-        """
-        # Check cache first
         if key in self._cache:
             return self._cache[key]
 
-        # Check environment variable
         env_value = os.environ.get(key)
         if env_value:
             return env_value
 
-        # Check keyring
-        if self._keyring_available:
-            value = _keyring_get(self.service, key)
+        backend = self._get_backend()
+        if backend is not None:
+            try:
+                value = backend.get(key)
+            except Exception:
+                value = None
             if value:
                 self._cache[key] = value
                 return value
@@ -109,55 +413,20 @@ class SecretsManager:
         return None
 
     def set(self, key: str, value: str) -> None:
-        """
-        Store a secret value.
-
-        Args:
-            key: The secret key name
-            value: The secret value
-        """
-        if not self._keyring_available:
-            raise RuntimeError(
-                "keyring CLI not available. Install with: uv tool install keyring"
-            )
-
-        if not _keyring_set(self.service, key, value):
-            raise RuntimeError("Failed to store secret")
-
+        backend = self._require_backend()
+        backend.set(key, value)
         self._cache[key] = value
 
     def delete(self, key: str) -> None:
-        """
-        Delete a secret.
-
-        Args:
-            key: The secret key name
-        """
-        # Drop from cache
         self._cache.pop(key, None)
-
-        if self._keyring_available:
-            _keyring_delete(self.service, key)
+        backend = self._get_backend()
+        if backend is not None:
+            backend.delete(key)
 
     def exists(self, key: str) -> bool:
-        """
-        Check if a secret exists.
-
-        Args:
-            key: The secret key name
-
-        Returns:
-            True if the secret exists
-        """
         return self.get(key) is not None
 
     def list_keys(self) -> List[str]:
-        """
-        List all predefined secret keys and their status.
-
-        Returns:
-            List of key names that have values set
-        """
         predefined = [
             SecretKeys.VAST_API_KEY,
             SecretKeys.HF_TOKEN,
@@ -172,49 +441,43 @@ class SecretsManager:
             SecretKeys.AWS_ACCESS_KEY_ID,
             SecretKeys.AWS_SECRET_ACCESS_KEY,
         ]
-
         return [key for key in predefined if self.exists(key)]
 
+    # Convenience accessors (kept for backward compat)
     def get_vast_api_key(self) -> Optional[str]:
-        """Get Vast.ai API key."""
         return self.get(SecretKeys.VAST_API_KEY)
 
     def set_vast_api_key(self, key: str) -> None:
-        """Set Vast.ai API key."""
         self.set(SecretKeys.VAST_API_KEY, key)
 
     def get_hf_token(self) -> Optional[str]:
-        """Get HuggingFace token."""
         return self.get(SecretKeys.HF_TOKEN)
 
     def set_hf_token(self, token: str) -> None:
-        """Set HuggingFace token."""
         self.set(SecretKeys.HF_TOKEN, token)
 
     def get_github_token(self) -> Optional[str]:
-        """Get GitHub token."""
         return self.get(SecretKeys.GITHUB_TOKEN)
 
     def set_github_token(self, token: str) -> None:
-        """Set GitHub token."""
         self.set(SecretKeys.GITHUB_TOKEN, token)
 
     def clear_cache(self) -> None:
-        """Clear the in-memory cache."""
         self._cache.clear()
 
     @property
     def is_available(self) -> bool:
-        """Check if keyring is available."""
-        return self._keyring_available
+        return self._get_backend() is not None
 
 
-# Global instance
+# ---------------------------------------------------------------------------
+# Global singleton
+# ---------------------------------------------------------------------------
+
 _secrets_manager: Optional[SecretsManager] = None
 
 
 def get_secrets_manager() -> SecretsManager:
-    """Get the global secrets manager instance."""
     global _secrets_manager
     if _secrets_manager is None:
         _secrets_manager = SecretsManager()
