@@ -825,7 +825,8 @@ class RecipeExecutor:
 
         try:
             settings = load_pricing_settings()
-            display_curr = params.get("currency", settings.display_currency)
+            from ..utils.vast_formatter import get_currency_settings
+            display_curr = params.get("currency", get_currency_settings().display_currency)
             rates = settings.exchange_rates
 
             # Calculate for Vast.ai instances

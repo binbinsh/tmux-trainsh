@@ -46,32 +46,52 @@ def cmd_rates(args: argparse.Namespace) -> None:
 
 def cmd_currency(args: argparse.Namespace) -> None:
     """Get or set display currency."""
-    settings = load_pricing_settings()
+    from ..config import get_config_value, set_config_value
+
+    # Auto-migrate: if pricing.json has display_currency and config.toml doesn't,
+    # copy it over and remove from pricing.json.
+    config_currency = get_config_value("ui.currency", "")
+    if not config_currency:
+        import json
+        from ..services.pricing import PRICING_FILE
+        if PRICING_FILE.exists():
+            try:
+                with open(PRICING_FILE, "r") as f:
+                    pdata = json.load(f)
+                old_curr = pdata.get("display_currency", "")
+                if old_curr and old_curr != "USD":
+                    set_config_value("ui.currency", old_curr)
+                    config_currency = old_curr
+                    # Remove from pricing.json
+                    pdata.pop("display_currency", None)
+                    with open(PRICING_FILE, "w") as f:
+                        json.dump(pdata, f, indent=2)
+                    print(f"Migrated display currency '{old_curr}' from pricing.json to config.toml")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    display_currency = config_currency or "USD"
 
     if args.set:
         try:
             Currency(args.set.upper())
-            settings.display_currency = args.set.upper()
-            save_pricing_settings(settings)
+            set_config_value("ui.currency", args.set.upper())
             print(f"Display currency set to: {args.set.upper()}")
         except ValueError:
             print(f"Invalid currency: {args.set}")
             print("Valid currencies: USD, JPY, HKD, CNY, EUR, GBP, KRW, TWD")
             raise SystemExit(1)
     else:
-        print(f"Display currency: {settings.display_currency}")
+        print(f"Display currency: {display_currency}")
         print("\nAvailable currencies:")
         for curr in Currency:
-            marker = " *" if curr.value == settings.display_currency else ""
+            marker = " *" if curr.value == display_currency else ""
             print(f"  {curr.value:4} - {curr.label} ({curr.symbol}){marker}")
 
 
 def cmd_colab(args: argparse.Namespace) -> None:
     """Show or configure Colab pricing."""
-    from ..config import load_config
-
     settings = load_pricing_settings()
-    config = load_config()
 
     if args.subscription:
         # Parse subscription: "name:price:currency:units"
@@ -107,8 +127,10 @@ def cmd_colab(args: argparse.Namespace) -> None:
 
     print(f"\nGPU Hourly Prices:")
     print("-" * 50)
-    # Read display currency from config.toml (ui.currency), fallback to pricing.json
-    display_curr = config.get("ui", {}).get("currency", settings.display_currency)
+    # Read display currency from config.toml via get_currency_settings()
+    from ..utils.vast_formatter import get_currency_settings
+    currency_settings = get_currency_settings()
+    display_curr = currency_settings.display_currency
     for p in prices:
         converted = settings.exchange_rates.convert(p.price_usd_per_hour, "USD", display_curr)
         print(f"  {p.gpu_name:8} {p.units_per_hour:>6.2f} units/hr  "
@@ -118,12 +140,11 @@ def cmd_colab(args: argparse.Namespace) -> None:
 def cmd_vast(args: argparse.Namespace) -> None:
     """Show Vast.ai instance pricing."""
     from ..services.vast_api import get_vast_client
-    from ..config import load_config
+    from ..utils.vast_formatter import get_currency_settings
 
     settings = load_pricing_settings()
-    config = load_config()
-    # Read display currency from config.toml (ui.currency), fallback to pricing.json
-    display_curr = config.get("ui", {}).get("currency", settings.display_currency)
+    currency_settings = get_currency_settings()
+    display_curr = currency_settings.display_currency
     rates = settings.exchange_rates
 
     client = get_vast_client()

@@ -100,7 +100,7 @@ def get_default_config() -> Dict[str, Any]:
             "auto_attach_ssh_key": True,
         },
         "ui": {
-            "currency": "USD",
+            "currency": "",
         },
         "tmux": {
             # Auto-create local tmux splits that attach to recipe windows

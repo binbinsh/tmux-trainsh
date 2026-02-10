@@ -257,8 +257,6 @@ class PricingSettings:
     colab_gpu_pricing: List[Dict[str, Any]] = field(default_factory=list)
     vast_rates: VastPricingRates = field(default_factory=VastPricingRates)
     exchange_rates: ExchangeRates = field(default_factory=ExchangeRates)
-    display_currency: str = "USD"
-
     def __post_init__(self):
         if not self.colab_gpu_pricing:
             self.colab_gpu_pricing = [
@@ -306,9 +304,6 @@ def load_pricing_settings() -> PricingSettings:
                 updated_at=er.get("updated_at", ""),
             )
 
-        if "display_currency" in data:
-            settings.display_currency = data["display_currency"]
-
         return settings
     except (json.JSONDecodeError, KeyError):
         return PricingSettings()
@@ -323,7 +318,6 @@ def save_pricing_settings(settings: PricingSettings) -> None:
         "colab_gpu_pricing": settings.colab_gpu_pricing,
         "vast_rates": asdict(settings.vast_rates),
         "exchange_rates": asdict(settings.exchange_rates),
-        "display_currency": settings.display_currency,
     }
 
     with open(PRICING_FILE, "w") as f:

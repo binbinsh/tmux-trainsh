@@ -640,7 +640,6 @@ class VastControlHelper:
 
     def cmd_vast_cost(self, args: List[str]) -> tuple[bool, str]:
         """Handle: vast.cost <instance_id>"""
-        from ..config import load_config
         from ..services.pricing import format_currency, load_pricing_settings
         from ..services.vast_api import VastAPIError, get_vast_client
 
@@ -683,8 +682,9 @@ class VastControlHelper:
             cost_usd = hourly_usd * (duration_secs / 3600.0)
 
             settings = load_pricing_settings()
-            config = load_config()
-            display_curr = config.get("ui", {}).get("currency", settings.display_currency)
+            from ..utils.vast_formatter import get_currency_settings
+            currency_settings = get_currency_settings()
+            display_curr = currency_settings.display_currency
             rates = settings.exchange_rates
 
             usage_str = self.format_duration(duration_secs)

@@ -28,10 +28,10 @@ class CurrencySettings:
 
 
 def get_currency_settings() -> CurrencySettings:
-    """Load currency settings from config."""
+    """Load currency settings from config.toml (single source of truth)."""
     settings = load_pricing_settings()
     config = load_config()
-    display_curr = config.get("ui", {}).get("currency", settings.display_currency)
+    display_curr = config.get("ui", {}).get("currency") or "USD"
     return CurrencySettings(
         display_currency=display_curr,
         rates=settings.exchange_rates,
