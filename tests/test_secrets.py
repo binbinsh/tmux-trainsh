@@ -192,7 +192,7 @@ class TestResolveOpAuth(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", return_value="2")
+    @patch("trainsh.cli_utils.prompt_input", return_value="3")
     def test_returns_false_when_user_declines(self, _inp, _desk):
         env = {k: v for k, v in os.environ.items()
                if k != "OP_SERVICE_ACCOUNT_TOKEN"}
@@ -202,7 +202,7 @@ class TestResolveOpAuth(unittest.TestCase):
 
     @patch("trainsh.core.secrets.subprocess.run")
     @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", side_effect=["1", "ops_MANUAL"])
+    @patch("trainsh.cli_utils.prompt_input", side_effect=["2", "ops_MANUAL"])
     def test_returns_token_when_user_provides_valid(self, _inp, _desk, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
         env = {k: v for k, v in os.environ.items()
@@ -213,11 +213,32 @@ class TestResolveOpAuth(unittest.TestCase):
 
     @patch("trainsh.core.secrets.subprocess.run")
     @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
-    @patch("trainsh.cli_utils.prompt_input", side_effect=["1", "ops_BAD"])
+    @patch("trainsh.cli_utils.prompt_input", side_effect=["2", "ops_BAD"])
     def test_returns_false_when_token_invalid(self, _inp, _desk, mock_run):
         mock_run.return_value = MagicMock(
             returncode=1, stdout="", stderr="invalid token"
         )
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            result = secrets_mod._resolve_op_auth("v")
+        self.assertIs(result, False)
+
+    @patch.object(secrets_mod, "_op_signin_and_create_sa", return_value="ops_CREATED")
+    @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
+    @patch("trainsh.cli_utils.prompt_input", return_value="1")
+    def test_option1_delegates_to_signin_and_create_sa(self, _inp, _desk, mock_sa):
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            result = secrets_mod._resolve_op_auth("v")
+        self.assertEqual(result, "ops_CREATED")
+        mock_sa.assert_called_once_with("v")
+
+    @patch.object(secrets_mod, "_op_signin_and_create_sa", return_value=None)
+    @patch.object(secrets_mod, "_op_desktop_connectable", return_value=False)
+    @patch("trainsh.cli_utils.prompt_input", return_value="1")
+    def test_option1_fallback_when_signin_fails(self, _inp, _desk, mock_sa):
         env = {k: v for k, v in os.environ.items()
                if k != "OP_SERVICE_ACCOUNT_TOKEN"}
         with patch.dict(os.environ, env, clear=True):
@@ -330,6 +351,123 @@ class TestSetBackend(unittest.TestCase):
         loaded = _load_config()
         self.assertEqual(loaded["secrets"]["backend"], "1password")
         self.assertEqual(loaded["secrets"]["sa_token"], "ops_SET")
+
+
+class TestSaveSaToken(unittest.TestCase):
+    """_save_sa_token persists token to config.toml."""
+
+    def setUp(self):
+        _clean_config()
+
+    def test_saves_token_to_existing_config(self):
+        _save_config({"secrets": {"backend": "1password", "vault": "v"}})
+        secrets_mod._save_sa_token("ops_SAVED")
+        loaded = _load_config()
+        self.assertEqual(loaded["secrets"]["sa_token"], "ops_SAVED")
+        # Existing keys preserved
+        self.assertEqual(loaded["secrets"]["backend"], "1password")
+
+    def test_saves_token_to_empty_config(self):
+        secrets_mod._save_sa_token("ops_NEW")
+        loaded = _load_config()
+        self.assertEqual(loaded["secrets"]["sa_token"], "ops_NEW")
+
+
+class TestAutoResolveOpAuth(unittest.TestCase):
+    """_auto_resolve_op_auth recovers SA token at op-call time."""
+
+    def setUp(self):
+        _clean_config()
+
+    def test_returns_env_token(self):
+        with patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": "ops_ENV"}):
+            result = secrets_mod._auto_resolve_op_auth("v")
+        self.assertEqual(result, "ops_ENV")
+
+    def test_returns_saved_config_token(self):
+        _save_config({"secrets": {"backend": "1password", "sa_token": "ops_CFG"}})
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            result = secrets_mod._auto_resolve_op_auth("v")
+        self.assertEqual(result, "ops_CFG")
+
+    @patch.object(secrets_mod, "_resolve_op_auth", return_value="ops_INTERACTIVE")
+    def test_interactive_fallback_saves_token(self, _resolve):
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            result = secrets_mod._auto_resolve_op_auth("v")
+        self.assertEqual(result, "ops_INTERACTIVE")
+        loaded = _load_config()
+        self.assertEqual(loaded["secrets"]["sa_token"], "ops_INTERACTIVE")
+
+    @patch.object(secrets_mod, "_resolve_op_auth", return_value=False)
+    def test_returns_none_when_interactive_declines(self, _resolve):
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            result = secrets_mod._auto_resolve_op_auth("v")
+        self.assertIsNone(result)
+
+
+class TestOpWithRecovery(unittest.TestCase):
+    """_op_with_recovery retries with SA token on desktop-app failure."""
+
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_success_no_recovery(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            backend = OnePasswordBackend(vault="v", sa_token=None)
+        r = backend._op_with_recovery("item", "list")
+        self.assertEqual(r.returncode, 0)
+        # Only one call — no recovery needed
+        self.assertEqual(mock_run.call_count, 1)
+
+    @patch.object(secrets_mod, "_auto_resolve_op_auth", return_value="ops_REC")
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_recovery_on_desktop_failure(self, mock_run, _auto):
+        fail = MagicMock(returncode=1, stdout="",
+                         stderr="cannot connect to 1Password app")
+        success = MagicMock(returncode=0, stdout="ok", stderr="")
+        mock_run.side_effect = [fail, success]
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            backend = OnePasswordBackend(vault="v", sa_token=None)
+        r = backend._op_with_recovery("item", "list")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(backend._sa_token, "ops_REC")
+
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_non_desktop_error_not_recovered(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="item not found"
+        )
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            backend = OnePasswordBackend(vault="v", sa_token=None)
+        r = backend._op_with_recovery("item", "get", "missing")
+        self.assertEqual(r.returncode, 1)
+        # Only one call — not a desktop-app error, no recovery attempted
+        self.assertEqual(mock_run.call_count, 1)
+
+    @patch.object(secrets_mod, "_auto_resolve_op_auth", return_value=None)
+    @patch("trainsh.core.secrets.subprocess.run")
+    def test_recovery_fails_returns_original(self, mock_run, _auto):
+        fail = MagicMock(returncode=1, stdout="",
+                         stderr="cannot connect to 1Password app")
+        mock_run.return_value = fail
+        env = {k: v for k, v in os.environ.items()
+               if k != "OP_SERVICE_ACCOUNT_TOKEN"}
+        with patch.dict(os.environ, env, clear=True):
+            backend = OnePasswordBackend(vault="v", sa_token=None)
+        r = backend._op_with_recovery("item", "list")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("cannot connect", r.stderr)
 
 
 if __name__ == "__main__":

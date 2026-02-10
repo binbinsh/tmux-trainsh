@@ -116,12 +116,25 @@ class OnePasswordBackend(SecretsBackend):
             env=env,
         )
 
+    def _op_with_recovery(self, *args: str, stdin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+        """Run an op command; on desktop-app failure, try to sign in or set up a service account."""
+        r = self._op(*args, stdin=stdin)
+        if r.returncode == 0:
+            return r
+        if "cannot connect to 1Password app" not in r.stderr:
+            return r
+        # Desktop app unavailable — attempt recovery
+        token = _auto_resolve_op_auth(self._vault)
+        if token:
+            self._sa_token = token
+            return self._op(*args, stdin=stdin)
+        return r
+
     def _ensure_item(self) -> None:
         """Create the item if it doesn't exist yet."""
-        r = self._op("item", "get", self.ITEM_TITLE, "--format=json")
+        r = self._op_with_recovery("item", "get", self.ITEM_TITLE, "--format=json")
         if r.returncode != 0:
-            r2 = self._op(
-                "item", "create",
+            r2 = self._op("item", "create",
                 "--category=login",
                 f"--title={self.ITEM_TITLE}",
             )
@@ -376,15 +389,20 @@ def _resolve_op_auth(vault: Optional[str] = None):
     if _op_desktop_connectable():
         return None
 
-    # Desktop app not available — offer service account setup
+    # Desktop app not available — offer options
     print("\nCannot connect to 1Password desktop app.")
-    print("You can use a Service Account token instead (no desktop app required).")
-    print("Create one at: https://my.1password.com/developer-tools/infrastructure-secrets/serviceaccount")
     print("")
-    print("  [1] Enter a Service Account token")
-    print("  [2] Fall back to encrypted file backend")
+    print("  [1] Sign in with 1Password account (creates a service account automatically)")
+    print("  [2] Enter an existing Service Account token")
+    print("  [3] Fall back to encrypted file backend")
     sa_choice = prompt_input("> ")
     if sa_choice == "1":
+        token = _op_signin_and_create_sa(vault)
+        if token:
+            return token
+        print("Falling back to encrypted file backend.\n")
+        return False
+    if sa_choice == "2":
         token = prompt_input("Service Account token: ")
         if not token:
             print("No token provided. Falling back to encrypted file backend.\n")
@@ -402,6 +420,116 @@ def _resolve_op_auth(vault: Optional[str] = None):
         print("Service account token validated successfully.")
         return token
     return False
+
+
+def _auto_resolve_op_auth(vault: Optional[str] = None) -> Optional[str]:
+    """Non-interactive SA token recovery at op-call time.
+
+    Checks env, then saved config. If a saved token exists, returns it.
+    Otherwise falls back to the interactive prompt flow, saving the
+    resulting token to config for future use.
+
+    Returns a service account token string, or None on failure.
+    """
+    # 1. env var
+    env_token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
+    if env_token:
+        return env_token
+
+    # 2. config (may have been saved by a previous session)
+    cfg = _load_config()
+    saved = cfg.get("secrets", {}).get("sa_token")
+    if saved:
+        return saved
+
+    # 3. interactive recovery
+    print("\n1Password desktop app is not available.")
+    result = _resolve_op_auth(vault)
+    if result is False or result is None:
+        return None
+    # Persist the token so subsequent calls don't prompt again
+    _save_sa_token(result)
+    return result
+
+
+def _op_signin_and_create_sa(vault: Optional[str] = None) -> Optional[str]:
+    """Sign in to 1Password interactively, then create a service account.
+
+    Returns the service account token, or None on failure.
+    """
+    print("\nSigning in to 1Password...")
+    print("Run: eval $(op signin)")
+
+    # op signin needs a TTY for password input — run with inherited stdio
+    try:
+        r = subprocess.run(
+            ["op", "signin", "--raw"],
+            capture_output=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        print("Sign-in timed out.")
+        return None
+
+    if r.returncode != 0:
+        # Try op account add first if no account configured
+        print("No account configured. Adding account...")
+        r_add = subprocess.run(
+            ["op", "account", "add"],
+            capture_output=False,
+            timeout=120,
+        )
+        if r_add.returncode != 0:
+            print("Failed to add 1Password account.")
+            return None
+        # Try signin again
+        r = subprocess.run(
+            ["op", "signin", "--raw"],
+            capture_output=False,
+            timeout=120,
+        )
+        if r.returncode != 0:
+            print("Failed to sign in to 1Password.")
+            return None
+
+    # Now create a service account
+    sa_name = "tmux-trainsh"
+    target_vault = vault or "Private"
+    print(f"\nCreating service account '{sa_name}' with access to vault '{target_vault}'...")
+    r_sa = subprocess.run(
+        ["op", "service-account", "create", sa_name,
+         f"--vault={target_vault}:read_items,write_items",
+         "--raw"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r_sa.returncode != 0:
+        stderr = r_sa.stderr.strip()
+        if "already exists" in stderr.lower():
+            print(f"Service account '{sa_name}' already exists.")
+            print("Enter its token, or create a new one at:")
+            print("  https://my.1password.com/developer-tools/infrastructure-secrets/serviceaccount")
+            from ..cli_utils import prompt_input
+            token = prompt_input("Service Account token: ")
+            return token if token else None
+        print(f"Failed to create service account: {stderr}")
+        return None
+
+    token = r_sa.stdout.strip()
+    if not token:
+        print("Service account created but no token returned.")
+        return None
+
+    print("Service account created successfully.")
+    print("Token saved to config — no desktop app needed for future use.")
+    return token
+
+
+def _save_sa_token(token: str) -> None:
+    """Persist a service account token to config.toml."""
+    cfg = _load_config()
+    cfg.setdefault("secrets", {})
+    cfg["secrets"]["sa_token"] = token
+    _save_config(cfg)
 
 
 def _select_and_save(name: str, vault: Optional[str] = None, sa_token: Optional[str] = None) -> SecretsBackend:
