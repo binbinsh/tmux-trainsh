@@ -89,9 +89,7 @@ class SecretsBackend(ABC):
 # ---------------------------------------------------------------------------
 
 class OnePasswordBackend(SecretsBackend):
-    """Store secrets as fields on a single 1Password item."""
-
-    ITEM_TITLE = "tmux-trainsh"
+    """Store each secret as its own 1Password item (title=key, password=value)."""
 
     def __init__(self, vault: Optional[str] = None, sa_token: Optional[str] = None):
         self._vault = vault or os.environ.get("OP_VAULT", "trainsh")
@@ -130,45 +128,36 @@ class OnePasswordBackend(SecretsBackend):
             return self._op(*args, stdin=stdin)
         return r
 
+    def _op_raw(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """Run an op command without appending --vault."""
+        env = None
+        if self._sa_token:
+            env = {**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": self._sa_token}
+        return subprocess.run(
+            ["op", *args],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+
     def _ensure_vault(self) -> None:
         """Create the vault if it doesn't exist yet."""
-        r = self._op("vault", "get", self._vault, "--format=json")
+        r = self._op_raw("vault", "get", self._vault, "--format=json")
         if r.returncode == 0:
             return
         if "isn't a vault" not in r.stderr:
             return
-        r2 = subprocess.run(
-            ["op", "vault", "create", self._vault],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": self._sa_token}
-            if self._sa_token else None,
-        )
+        r2 = self._op_raw("vault", "create", self._vault)
         if r2.returncode != 0:
             raise RuntimeError(
                 f"Failed to create 1Password vault '{self._vault}': {r2.stderr.strip()}"
             )
         print(f"Created 1Password vault '{self._vault}'.")
 
-    def _ensure_item(self) -> None:
-        """Create the vault and item if they don't exist yet."""
-        self._ensure_vault()
-        r = self._op_with_recovery("item", "get", self.ITEM_TITLE, "--format=json")
-        if r.returncode != 0:
-            r2 = self._op("item", "create",
-                "--category=login",
-                f"--title={self.ITEM_TITLE}",
-            )
-            if r2.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to create 1Password item: {r2.stderr.strip()}"
-                )
-
     # -- public API --------------------------------------------------------
 
     def get(self, key: str) -> Optional[str]:
-        r = self._op(
-            "item", "get", self.ITEM_TITLE,
-            "--fields", f"label={key}",
+        r = self._op_with_recovery(
+            "item", "get", key,
+            "--fields", "label=password",
             "--reveal",
         )
         if r.returncode != 0:
@@ -177,18 +166,23 @@ class OnePasswordBackend(SecretsBackend):
         return val if val else None
 
     def set(self, key: str, value: str) -> None:
-        self._ensure_item()
-        # Try edit first (field already exists)
-        r = self._op(
-            "item", "edit", self.ITEM_TITLE,
-            f"{key}[password]={value}",
-        )
-        if r.returncode != 0:
-            # Field doesn't exist yet — edit will create it if item exists
-            # Some op versions need a different approach; try again
+        self._ensure_vault()
+        # Check if item already exists
+        r = self._op("item", "get", key, "--format=json")
+        if r.returncode == 0:
+            # Item exists — update password field
+            r2 = self._op("item", "edit", key, f"password={value}")
+            if r2.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to update secret in 1Password: {r2.stderr.strip()}"
+                )
+        else:
+            # Create new item with key as title
             r2 = self._op(
-                "item", "edit", self.ITEM_TITLE,
-                f"{key}[password]={value}",
+                "item", "create",
+                "--category=password",
+                f"--title={key}",
+                f"password={value}",
             )
             if r2.returncode != 0:
                 raise RuntimeError(
@@ -196,22 +190,16 @@ class OnePasswordBackend(SecretsBackend):
                 )
 
     def delete(self, key: str) -> None:
-        # Set field to empty to effectively "delete"
-        self._op("item", "edit", self.ITEM_TITLE, f"{key}[password]=")
+        self._op("item", "delete", key)
 
     def list_set_keys(self) -> List[str]:
-        r = self._op("item", "get", self.ITEM_TITLE, "--format=json")
+        r = self._op("item", "list", "--format=json")
         if r.returncode != 0:
             return []
         try:
-            data = json.loads(r.stdout)
-            keys: list[str] = []
-            for field in data.get("fields", []):
-                label = field.get("label", "")
-                value = field.get("value", "")
-                if label and value and label not in ("username", "password"):
-                    keys.append(label)
-            return keys
+            items = json.loads(r.stdout)
+            return [item["title"] for item in items
+                    if item.get("title")]
         except (json.JSONDecodeError, KeyError):
             return []
 
@@ -321,17 +309,74 @@ class EncryptedFileBackend(SecretsBackend):
 
 
 # ---------------------------------------------------------------------------
+# Backend: System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)
+# ---------------------------------------------------------------------------
+
+class KeyringBackend(SecretsBackend):
+    """Store each secret in the OS keyring (service='trainsh', username=key)."""
+
+    SERVICE = "trainsh"
+
+    def __init__(self) -> None:
+        import keyring as _kr
+        self._kr = _kr
+
+    def get(self, key: str) -> Optional[str]:
+        val = self._kr.get_password(self.SERVICE, key)
+        return val if val else None
+
+    def set(self, key: str, value: str) -> None:
+        self._kr.set_password(self.SERVICE, key, value)
+
+    def delete(self, key: str) -> None:
+        try:
+            self._kr.delete_password(self.SERVICE, key)
+        except self._kr.errors.PasswordDeleteError:
+            pass
+
+    def list_set_keys(self) -> List[str]:
+        # keyring API doesn't support enumeration; check predefined keys
+        from ..constants import SecretKeys
+        predefined = [
+            SecretKeys.VAST_API_KEY,
+            SecretKeys.HF_TOKEN,
+            SecretKeys.OPENAI_API_KEY,
+            SecretKeys.ANTHROPIC_API_KEY,
+            SecretKeys.GITHUB_TOKEN,
+            SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
+            SecretKeys.R2_ACCESS_KEY,
+            SecretKeys.R2_SECRET_KEY,
+            SecretKeys.B2_KEY_ID,
+            SecretKeys.B2_APPLICATION_KEY,
+            SecretKeys.AWS_ACCESS_KEY_ID,
+            SecretKeys.AWS_SECRET_ACCESS_KEY,
+        ]
+        return [k for k in predefined if self.get(k) is not None]
+
+
+# ---------------------------------------------------------------------------
 # Backend loading / selection
 # ---------------------------------------------------------------------------
 
 _BACKEND_NAMES = {
     "1password": "1Password (op CLI)",
+    "keyring": "System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)",
     "encrypted_file": "Encrypted file (~/.config/tmux-trainsh/secrets.enc)",
 }
 
 
 def _op_available() -> bool:
     return shutil.which("op") is not None
+
+
+def _keyring_available() -> bool:
+    try:
+        import keyring
+        kr = keyring.get_keyring()
+        # Reject the fail backend (no real keyring found)
+        return "fail" not in type(kr).__name__.lower()
+    except Exception:
+        return False
 
 
 def _op_desktop_connectable() -> bool:
@@ -349,6 +394,8 @@ def _instantiate_backend(name: str, cfg: dict) -> SecretsBackend:
         vault = secrets_cfg.get("vault")
         sa_token = secrets_cfg.get("sa_token")
         return OnePasswordBackend(vault=vault, sa_token=sa_token)
+    if name == "keyring":
+        return KeyringBackend()
     if name == "encrypted_file":
         return EncryptedFileBackend()
     raise ValueError(f"Unknown secrets backend: {name!r}")
@@ -369,7 +416,8 @@ def prompt_backend_selection() -> SecretsBackend:
 
     print("\nNo secrets backend configured. Choose one:")
     print("  [1] 1Password (recommended if you use 1Password)")
-    print("  [2] Encrypted file (~/.config/tmux-trainsh/secrets.enc)")
+    print("  [2] System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)")
+    print("  [3] Encrypted file (~/.config/tmux-trainsh/secrets.enc)")
 
     choice = prompt_input("> ")
     if choice == "1":
@@ -383,6 +431,12 @@ def prompt_backend_selection() -> SecretsBackend:
             return _select_and_save("encrypted_file")
         return _select_and_save("1password", vault=vault, sa_token=sa_token)
     elif choice == "2":
+        if not _keyring_available():
+            print("Warning: No system keyring found. Install 'keyring' package: pip install keyring")
+            print("Falling back to encrypted file backend.\n")
+            return _select_and_save("encrypted_file")
+        return _select_and_save("keyring")
+    elif choice == "3":
         return _select_and_save("encrypted_file")
     else:
         print("Invalid choice, defaulting to encrypted file.\n")

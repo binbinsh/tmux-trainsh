@@ -453,16 +453,14 @@ class TestEnsureVault(unittest.TestCase):
     """_ensure_vault creates the vault if it doesn't exist."""
 
     @patch("trainsh.core.secrets.subprocess.run")
-    def test_vault_exists_no_create(self, mock_run):
-        """No vault creation when vault already exists."""
+    def test_vault_get_no_vault_flag(self, mock_run):
+        """_op_raw must not append --vault (unlike _op)."""
         mock_run.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
         backend = OnePasswordBackend(vault="trainsh", sa_token="ops_T")
         backend._ensure_vault()
-        # Only the vault get call, no create
-        self.assertEqual(mock_run.call_count, 1)
         cmd = mock_run.call_args[0][0]
-        self.assertIn("vault", cmd)
-        self.assertIn("get", cmd)
+        self.assertEqual(cmd, ["op", "vault", "get", "trainsh", "--format=json"])
+        self.assertNotIn("--vault", cmd[1:cmd.index("get")])
 
     @patch("trainsh.core.secrets.subprocess.run")
     def test_vault_missing_creates_it(self, mock_run):

@@ -191,6 +191,11 @@ def cmd_backend(args: List[str]) -> None:
             print("Falling back to encrypted file backend.")
             name = "encrypted_file"
             sa_token = None
+    elif name == "keyring":
+        from ..core.secrets import _keyring_available
+        if not _keyring_available():
+            print("No system keyring found. Install 'keyring' package: pip install keyring")
+            sys.exit(1)
 
     try:
         set_backend(name, vault=vault, sa_token=sa_token)
