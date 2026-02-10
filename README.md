@@ -421,7 +421,9 @@ fail_on_error = false
 
 ## Commands
 
-### Frequent
+### train run
+
+Run a recipe (alias for "recipe run")
 
 | Command | Description |
 |---------|-------------|
@@ -429,30 +431,54 @@ fail_on_error = false
 | `train run <name> --host gpu=vast:123` | Override host |
 | `train run <name> --var MODEL=llama-7b` | Override variable |
 | `train run <name> --pick-host gpu` | Pick Vast.ai host |
+
+### train exec
+
+Execute DSL commands directly
+
+| Command | Description |
+|---------|-------------|
 | `train exec '<dsl>'` | Execute DSL commands directly |
 | `train exec '@session > cmd'` | Run in tmux session; falls back to host if no session exists |
 | `train exec '@src:path -> @dst:path'` | Transfer files |
+
+### train host
+
+Host management (SSH, Colab, Vast.ai)
+
+| Command | Description |
+|---------|-------------|
 | `train host list` | List configured hosts |
 | `train host show <name>` | Show host details |
 | `train host ssh <name>` | SSH into host |
+| `train host add` | Add new host (SSH/Colab) |
+| `train host edit <name>` | Edit existing host config |
+| `train host browse <name>` | Browse files on host |
+| `train host test <name>` | Test connection |
+| `train host rm <name>` | Remove a host |
+
+### train transfer
+
+File transfer between hosts/storage
+
+| Command | Description |
+|---------|-------------|
 | `train transfer <src> <dst>` | Transfer files |
 | `train transfer <src> <dst> --delete` | Sync with deletions |
 | `train transfer <src> <dst> --exclude '*.ckpt'` | Exclude patterns |
 | `train transfer <src> <dst> --dry-run` | Preview transfer |
+
+### train recipe
+
+Recipe management (list, show, edit, etc.)
+
+| Command | Description |
+|---------|-------------|
 | `train recipe list` | List recipes |
 | `train recipe show <name>` | Show recipe details |
 | `train recipe status` | View running sessions |
 | `train recipe status --last` | Show latest running job details and attach commands |
 | `train recipe status --all` | Include completed sessions |
-
-### Occasional
-
-| Command | Description |
-|---------|-------------|
-| `train host add` | Add new host (SSH/Colab) |
-| `train host edit <name>` | Edit existing host config |
-| `train host browse <name>` | Browse files on host |
-| `train host test <name>` | Test connection |
 | `train recipe syntax` | Show full DSL syntax reference |
 | `train recipe new <name>` | Create new recipe |
 | `train recipe edit <name>` | Edit recipe in editor |
@@ -463,23 +489,62 @@ fail_on_error = false
 | `train recipe logs --last` | Show last execution |
 | `train recipe logs <job-id>` | Show logs for a specific job |
 | `train recipe jobs` | View job history |
+| `train recipe rm <name>` | Remove a recipe |
+
+### train storage
+
+Storage backend management (R2, B2, S3, etc.)
+
+| Command | Description |
+|---------|-------------|
 | `train storage list` | List storage backends |
 | `train storage show <name>` | Show storage details |
 | `train storage add` | Add storage backend |
 | `train storage test <name>` | Test connection |
+| `train storage rm <name>` | Remove storage |
+
+### train secrets
+
+Manage API keys and credentials
+
+| Command | Description |
+|---------|-------------|
 | `train secrets list` | List stored secrets |
 | `train secrets set <key>` | Set a secret |
 | `train secrets get <key>` | Get a secret |
+| `train secrets delete <key>` | Delete a secret |
+
+### train config
+
+Configuration and settings
+
+| Command | Description |
+|---------|-------------|
 | `train config show` | Show configuration |
 | `train config get <key>` | Get config value |
 | `train config set <key> <val>` | Set config value |
 | `train config tmux-setup` | Apply tmux configuration to ~/.tmux.conf |
 | `train config tmux-edit` | Edit tmux options in $EDITOR |
 | `train config tmux-list` | List current tmux options |
+| `train config reset` | Reset configuration |
+
+### train colab
+
+Google Colab integration
+
+| Command | Description |
+|---------|-------------|
 | `train colab list` | List Colab connections |
 | `train colab connect` | Add Colab connection |
 | `train colab run <cmd>` | Run command on Colab |
 | `train colab ssh` | SSH into Colab |
+
+### train vast
+
+Vast.ai instance management
+
+| Command | Description |
+|---------|-------------|
 | `train vast list` | List your instances |
 | `train vast show <id>` | Show instance details |
 | `train vast ssh <id>` | SSH into instance |
@@ -489,17 +554,14 @@ fail_on_error = false
 | `train vast search` | Search for GPU offers |
 | `train vast keys` | List SSH keys |
 | `train vast attach-key [path]` | Attach local SSH key |
+| `train vast rm <id>` | Remove instance |
 
-### Rare
+### train pricing
+
+Currency exchange rates and cost calculator
 
 | Command | Description |
 |---------|-------------|
-| `train host rm <name>` | Remove a host |
-| `train recipe rm <name>` | Remove a recipe |
-| `train storage rm <name>` | Remove storage |
-| `train secrets delete <key>` | Delete a secret |
-| `train config reset` | Reset configuration |
-| `train vast rm <id>` | Remove instance |
 | `train pricing rates` | Show exchange rates |
 | `train pricing rates --refresh` | Refresh exchange rates |
 | `train pricing currency` | Show display currency |
@@ -507,9 +569,24 @@ fail_on_error = false
 | `train pricing colab` | Show Colab pricing |
 | `train pricing vast` | Show Vast.ai costs |
 | `train pricing convert 10 USD CNY` | Convert currency |
-| `train update` | Check for updates |
-| `train help` | Show help |
-| `train version` | Show version |
+
+### train update
+
+Check for updates
+
+`train update`
+
+### train help
+
+Show help
+
+`train help`
+
+### train version
+
+Show version
+
+`train version`
 
 ## License
 

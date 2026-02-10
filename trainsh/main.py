@@ -302,56 +302,25 @@ def _generate_help_text() -> str:
 
 def generate_commands_markdown() -> str:
     """Render COMMANDS_REGISTRY as markdown tables for README."""
-    # Group subcommands by frequency
-    frequent: List[str] = []
-    occasional: List[str] = []
-    rare: List[str] = []
+    header = "| Command | Description |\n|---------|-------------|"
+    sections: List[str] = []
 
     for entry in COMMANDS_REGISTRY:
         cmd = entry["command"]
         subs = entry.get("subcommands", [])
 
+        sections.append(f"### train {cmd}\n")
+        sections.append(entry["description"])
+        sections.append("")
+
         if not subs:
-            # Commands without subcommands (help, version, update)
-            freq = entry.get("frequency", "rare")
-            row = f"| `train {cmd}` | {entry['description']} |"
-            if freq == "frequent":
-                frequent.append(row)
-            elif freq == "occasional":
-                occasional.append(row)
-            else:
-                rare.append(row)
+            sections.append(f"`train {cmd}`")
+            sections.append("")
             continue
 
+        sections.append(header)
         for sc in subs:
-            sub_freq = sc.get("frequency", entry.get("frequency", "occasional"))
-            row = f"| `train {cmd} {sc['name']}` | {sc['description']} |"
-            if sub_freq == "frequent":
-                frequent.append(row)
-            elif sub_freq == "occasional":
-                occasional.append(row)
-            else:
-                rare.append(row)
-
-    header = "| Command | Description |\n|---------|-------------|"
-    sections = []
-
-    if frequent:
-        sections.append("### Frequent\n")
-        sections.append(header)
-        sections.extend(frequent)
-        sections.append("")
-
-    if occasional:
-        sections.append("### Occasional\n")
-        sections.append(header)
-        sections.extend(occasional)
-        sections.append("")
-
-    if rare:
-        sections.append("### Rare\n")
-        sections.append(header)
-        sections.extend(rare)
+            sections.append(f"| `train {cmd} {sc['name']}` | {sc['description']} |")
         sections.append("")
 
     return "\n".join(sections)
