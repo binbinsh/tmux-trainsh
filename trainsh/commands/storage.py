@@ -25,20 +25,20 @@ Supported storage types:
   - gcs            Google Cloud Storage
   - smb            SMB/CIFS
 
-Storages are stored in: ~/.config/tmux-trainsh/storages.toml
+Storages are stored in: ~/.config/tmux-trainsh/storages.yaml
 '''
 
 
 def load_storages() -> dict:
     """Load storages from configuration."""
     from ..constants import STORAGES_FILE
-    import tomllib
+    import yaml
 
     if not STORAGES_FILE.exists():
         return {}
 
-    with open(STORAGES_FILE, "rb") as f:
-        data = tomllib.load(f)
+    with open(STORAGES_FILE, "r") as f:
+        data = yaml.safe_load(f) or {}
 
     storages = {}
     for storage_data in data.get("storages", []):
@@ -49,55 +49,22 @@ def load_storages() -> dict:
     return storages
 
 
-def _storage_to_toml(storage) -> str:
-    """Convert a storage to TOML table format."""
-    lines = ["[[storages]]"]
-    d = storage.to_dict()
-
-    # First output all non-dict top-level attributes
-    for key, value in d.items():
-        if value is None or isinstance(value, dict):
-            continue
-        if isinstance(value, bool):
-            lines.append(f'{key} = {"true" if value else "false"}')
-        elif isinstance(value, str):
-            lines.append(f'{key} = "{value}"')
-        elif isinstance(value, (int, float)):
-            lines.append(f'{key} = {value}')
-
-    # Then handle nested config dict (exclude is_default if present)
-    config = d.get("config", {})
-    if config:
-        lines.append(f"[storages.config]")
-        for k, v in config.items():
-            # Skip is_default in config - it's a top-level attribute
-            if k == "is_default":
-                continue
-            if v is None:
-                continue
-            if isinstance(v, str):
-                lines.append(f'{k} = "{v}"')
-            elif isinstance(v, bool):
-                lines.append(f'{k} = {"true" if v else "false"}')
-            else:
-                lines.append(f'{k} = {v}')
-
-    return "\n".join(lines)
+def _storage_to_dict(storage) -> dict:
+    """Convert a storage to a filtered dict (no None values)."""
+    return {k: v for k, v in storage.to_dict().items() if v is not None}
 
 
 def save_storages(storages: dict) -> None:
     """Save storages to configuration."""
     from ..constants import STORAGES_FILE, CONFIG_DIR
+    import yaml
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    toml_lines = []
-    for storage in storages.values():
-        toml_lines.append(_storage_to_toml(storage))
-        toml_lines.append("")
+    data = {"storages": [_storage_to_dict(s) for s in storages.values()]}
 
     with open(STORAGES_FILE, "w") as f:
-        f.write("\n".join(toml_lines))
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
 def cmd_list(args: List[str]) -> None:

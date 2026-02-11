@@ -1,8 +1,8 @@
 # tmux-trainsh job state management
 # Persists recipe execution state for resume capability
 
-import json
 import os
+import yaml
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
@@ -73,14 +73,14 @@ class JobStateManager:
     def _get_path(self, job_id: str, timestamp: Optional[str] = None) -> Path:
         """Get the file path for a job state."""
         if timestamp:
-            return JOBS_DIR / f"{timestamp}_{job_id}.json"
+            return JOBS_DIR / f"{timestamp}_{job_id}.yaml"
         # Find existing file with timestamp prefix
-        matches = list(JOBS_DIR.glob(f"*_{job_id}.json"))
+        matches = list(JOBS_DIR.glob(f"*_{job_id}.yaml"))
         if matches:
             return matches[0]
         # New file with current timestamp
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return JOBS_DIR / f"{ts}_{job_id}.json"
+        return JOBS_DIR / f"{ts}_{job_id}.yaml"
 
     def save(self, state: JobState) -> None:
         """Save job state to disk."""
@@ -88,27 +88,21 @@ class JobStateManager:
         # Find existing file or create new one
         path = self._get_path(state.job_id)
         with open(path, "w") as f:
-            json.dump(asdict(state), f, indent=2)
+            yaml.dump(asdict(state), f, default_flow_style=False, sort_keys=False)
 
     def load(self, job_id: str) -> Optional[JobState]:
         """Load job state from disk."""
-        # Find file with timestamp prefix
-        matches = list(JOBS_DIR.glob(f"*_{job_id}.json"))
-        if not matches:
-            # Try old format without timestamp
-            old_path = JOBS_DIR / f"{job_id}.json"
-            if old_path.exists():
-                matches = [old_path]
+        matches = list(JOBS_DIR.glob(f"*_{job_id}.yaml"))
         if not matches:
             return None
         path = matches[0]
         with open(path, "r") as f:
-            data = json.load(f)
+            data = yaml.safe_load(f) or {}
         return JobState(**data)
 
     def delete(self, job_id: str) -> None:
         """Delete job state file."""
-        matches = list(JOBS_DIR.glob(f"*_{job_id}.json"))
+        matches = list(JOBS_DIR.glob(f"*_{job_id}.yaml"))
         for path in matches:
             path.unlink()
 
@@ -118,16 +112,16 @@ class JobStateManager:
         latest: Optional[JobState] = None
         latest_time = ""
 
-        for path in JOBS_DIR.glob("*.json"):
+        for path in JOBS_DIR.glob("*.yaml"):
             try:
                 with open(path, "r") as f:
-                    data = json.load(f)
+                    data = yaml.safe_load(f) or {}
                 state = JobState(**data)
                 if state.recipe_path == recipe_path:
                     if state.updated_at > latest_time:
                         latest = state
                         latest_time = state.updated_at
-            except (json.JSONDecodeError, TypeError, KeyError):
+            except (yaml.YAMLError, TypeError, KeyError):
                 continue
 
         return latest
@@ -142,13 +136,13 @@ class JobStateManager:
     def list_all(self, limit: int = 20) -> List[JobState]:
         """List all job states, sorted by updated_at descending."""
         states = []
-        for path in JOBS_DIR.glob("*.json"):
+        for path in JOBS_DIR.glob("*.yaml"):
             try:
                 with open(path, "r") as f:
-                    data = json.load(f)
+                    data = yaml.safe_load(f) or {}
                 state = JobState(**data)
                 states.append(state)
-            except (json.JSONDecodeError, TypeError, KeyError):
+            except (yaml.YAMLError, TypeError, KeyError):
                 continue
 
         states.sort(key=lambda s: s.updated_at, reverse=True)
@@ -165,7 +159,7 @@ class JobStateManager:
         cutoff = datetime.now() - timedelta(days=days)
         count = 0
 
-        for path in JOBS_DIR.glob("*.json"):
+        for path in JOBS_DIR.glob("*.yaml"):
             state = self.load(path.stem)
             if state and state.status in ("completed", "cancelled"):
                 updated = datetime.fromisoformat(state.updated_at)

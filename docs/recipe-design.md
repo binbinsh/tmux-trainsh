@@ -1,6 +1,6 @@
 # Recipe System Design
 
-> Status note (current CLI): this document includes legacy TOML design details.
+> Status note (current CLI): this document includes legacy design details.
 > The actively maintained runtime in this repo is the Python `.recipe` DSL described in `README.md`.
 > Current tmux behavior in runtime:
 > - `tmux.open @host as name` creates detached tmux sessions (local/remote).
@@ -17,7 +17,7 @@ The Recipe system replaces the fixed 6-step Task/Session workflow with a flexibl
 - **Operation groups**: Compositions of atomic operations or other groups
 - **Dependency graphs**: Steps can depend on other steps, enabling parallel execution
 - **Execution control**: Pause, resume, cancel, and retry steps
-- **Persistence**: Save/load recipes as TOML files
+- **Persistence**: Save/load recipes as YAML files
 
 ## Core Concepts
 
@@ -33,12 +33,12 @@ A Step is the basic execution unit in a Recipe. Each step:
 
 Recipes define **requirements** for a target host, not a specific host. The actual host is selected at runtime:
 
-```toml
-[target]
-type = "colab" # any | local | vast | colab | custom
-min_gpus = 1
-min_memory_gb = 16
-gpu_type = "T4"
+```yaml
+target:
+  type: colab   # any | local | vast | colab | custom
+  min_gpus: 1
+  min_memory_gb: 16
+  gpu_type: T4
 ```
 
 Operations can use `${target}` as the host_id, or leave host_id empty to default to the recipe target.
@@ -96,10 +96,12 @@ By default, local rsync transfers use the Vast SSH key configured in Settings. P
 
 Example (copy from Vast to local without starting the instance):
 
-```toml
-[[step]]
-id = "pull_data"
-vast_copy = { src = "C.6003036:/workspace/", dst = "local:./data" }
+```yaml
+steps:
+  - id: pull_data
+    vast_copy:
+      src: "C.6003036:/workspace/"
+      dst: "local:./data"
 ```
 
 #### Tmux
@@ -117,7 +119,7 @@ vast_copy = { src = "C.6003036:/workspace/", dst = "local:./data" }
 |---------|-------------|
 | `tmux.open @host as name` | Create detached/persistent tmux session on host |
 | `tmux.close @session` | Close tmux session |
-| `tmux.config @host` | Apply tmux configuration from config.toml to remote host |
+| `tmux.config @host` | Apply tmux configuration from config.yaml to remote host |
 
 The `tmux.config` command reads `tmux.options` from your local config and writes them to `~/.tmux.conf` on the remote host.
 If a tmux server is already active, it also runs `source-file` to reload immediately; otherwise, the config is applied on next tmux start/attach.
@@ -179,21 +181,24 @@ tmux.open @gpu as work
 
 A group runs multiple operations in sequence or parallel:
 
-```toml
-[[step]]
-id = "setup"
-group = { mode = "sequential", steps = ["install_deps", "setup_env", "download_data"] }
+```yaml
+steps:
+  - id: setup
+    group:
+      mode: sequential
+      steps: [install_deps, setup_env, download_data]
 ```
 
 ### Dependency Graph
 
 Steps can declare dependencies:
 
-```toml
-[[step]]
-id = "train"
-depends_on = ["sync_code", "sync_data"]
-run_commands = { commands = "python train.py" }
+```yaml
+steps:
+  - id: train
+    depends_on: [sync_code, sync_data]
+    run_commands:
+      commands: "python train.py"
 ```
 
 The execution engine:
@@ -216,15 +221,17 @@ Pending → Running → Success
 
 Variables can be set and referenced:
 
-```toml
-[variables]
-model_name = "llama-7b"
-epochs = "100"
-host = "vast-h100"
+```yaml
+variables:
+  model_name: llama-7b
+  epochs: "100"
+  host: vast-h100
 
-[[step]]
-id = "train"
-run_commands = { host_id = "${host}", commands = "python train.py --model ${model_name} --epochs ${epochs}" }
+steps:
+  - id: train
+    run_commands:
+      host_id: "${host}"
+      commands: "python train.py --model ${model_name} --epochs ${epochs}"
 ```
 
 Special variables:
@@ -233,43 +240,50 @@ Special variables:
 - `${env.VAR}` - Environment variable
 - `${now}` - Current timestamp
 
-## TOML Schema
+## YAML Schema
 
-```toml
-[recipe]
-name = "train-llama"
-version = "1.0.0"
-description = "Train LLaMA model on Vast.ai"
+```yaml
+recipe:
+  name: train-llama
+  version: "1.0.0"
+  description: "Train LLaMA model on Vast.ai"
 
-[target]
-type = "vast"
+target:
+  type: vast
 
-[variables]
-model = "llama-7b"
-local_project = "/Users/me/projects/llm-train"
-remote_workdir = "/workspace/train"
+variables:
+  model: llama-7b
+  local_project: /Users/me/projects/llm-train
+  remote_workdir: /workspace/train
 
-[[step]]
-id = "start_instance"
-name = "Start Vast Instance"
-vast_start = {}
+steps:
+  - id: start_instance
+    name: Start Vast Instance
+    vast_start: {}
 
-[[step]]
-id = "wait_online"
-name = "Wait for Host Online"
-depends_on = ["start_instance"]
-wait_condition = { condition = { host_online = { host_id = "${target}" } }, timeout_secs = 300, poll_interval_secs = 10 }
+  - id: wait_online
+    name: Wait for Host Online
+    depends_on: [start_instance]
+    wait_condition:
+      condition:
+        host_online:
+          host_id: "${target}"
+      timeout_secs: 300
+      poll_interval_secs: 10
 
-[[step]]
-id = "sync_code"
-name = "Sync Source Code"
-depends_on = ["wait_online"]
-rsync_upload = { host_id = "${target}", local_path = "${local_project}", remote_path = "${remote_workdir}", excludes = ["*.pth", "wandb/", "__pycache__/"] }
+  - id: sync_code
+    name: Sync Source Code
+    depends_on: [wait_online]
+    rsync_upload:
+      host_id: "${target}"
+      local_path: "${local_project}"
+      remote_path: "${remote_workdir}"
+      excludes: ["*.pth", "wandb/", "__pycache__/"]
 ```
 
 ## Execution State (Interactive)
 
-Interactive executions are persisted as JSON under the app data directory:
+Interactive executions are persisted as YAML under the app data directory:
 
 `<data_dir>/recipe_executions/interactive-<execution_id>.json`
 
@@ -278,7 +292,7 @@ Example (abridged):
 ```json
 {
   "id": "exec-123",
-  "recipe_path": "train-llama.toml",
+  "recipe_path": "train-llama.yaml",
   "recipe_name": "train-llama",
   "terminal_id": null,
   "terminal": {
@@ -328,7 +342,7 @@ src-tauri/src/
   recipe/
     mod.rs           # Module exports
     types.rs         # Recipe, Step, Operation types
-    parser.rs        # TOML parsing
+    parser.rs        # YAML parsing
     execution.rs     # Shared step execution helpers
     interactive.rs   # Interactive execution + persistence + resume
     operations/
@@ -433,29 +447,28 @@ recipe:execution_cancelled { execution_id }
 
 The existing Session system can be expressed as a Recipe:
 
-```toml
-[recipe]
-name = "session-${name}"
+```yaml
+recipe:
+  name: "session-${name}"
 
-[[step]]
-id = "sync_source"
-rsync_upload = { ... }
+steps:
+  - id: sync_source
+    rsync_upload: {}
 
-[[step]]
-id = "sync_data"
-depends_on = ["sync_source"]
-rsync_upload = { ... }
-when = "${data.enabled}"
+  - id: sync_data
+    depends_on: [sync_source]
+    rsync_upload: {}
+    when: "${data.enabled}"
 
-[[step]]
-id = "install_deps"
-depends_on = ["sync_source", "sync_data"]
-run_commands = { commands = "pip install -r requirements.txt" }
+  - id: install_deps
+    depends_on: [sync_source, sync_data]
+    run_commands:
+      commands: "pip install -r requirements.txt"
 
-[[step]]
-id = "run"
-depends_on = ["install_deps"]
-tmux_new = { command = "${run.command}" }
+  - id: run
+    depends_on: [install_deps]
+    tmux_new:
+      command: "${run.command}"
 ```
 
 This allows gradual migration.

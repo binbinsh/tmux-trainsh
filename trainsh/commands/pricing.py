@@ -48,29 +48,7 @@ def cmd_currency(args: argparse.Namespace) -> None:
     """Get or set display currency."""
     from ..config import get_config_value, set_config_value
 
-    # Auto-migrate: if pricing.json has display_currency and config.toml doesn't,
-    # copy it over and remove from pricing.json.
-    config_currency = get_config_value("ui.currency", "")
-    if not config_currency:
-        import json
-        from ..services.pricing import PRICING_FILE
-        if PRICING_FILE.exists():
-            try:
-                with open(PRICING_FILE, "r") as f:
-                    pdata = json.load(f)
-                old_curr = pdata.get("display_currency", "")
-                if old_curr and old_curr != "USD":
-                    set_config_value("ui.currency", old_curr)
-                    config_currency = old_curr
-                    # Remove from pricing.json
-                    pdata.pop("display_currency", None)
-                    with open(PRICING_FILE, "w") as f:
-                        json.dump(pdata, f, indent=2)
-                    print(f"Migrated display currency '{old_curr}' from pricing.json to config.toml")
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    display_currency = config_currency or "USD"
+    display_currency = get_config_value("ui.currency", "") or "USD"
 
     if args.set:
         try:
@@ -127,7 +105,7 @@ def cmd_colab(args: argparse.Namespace) -> None:
 
     print(f"\nGPU Hourly Prices:")
     print("-" * 50)
-    # Read display currency from config.toml via get_currency_settings()
+    # Read display currency from config.yaml via get_currency_settings()
     from ..utils.vast_formatter import get_currency_settings
     currency_settings = get_currency_settings()
     display_curr = currency_settings.display_currency

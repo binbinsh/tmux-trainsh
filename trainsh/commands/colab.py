@@ -1,7 +1,7 @@
 # tmux-trainsh colab command
 # Google Colab integration
 
-import json
+import yaml
 import sys
 from typing import Optional, List
 
@@ -27,7 +27,7 @@ Example Colab setup code:
   launch_ssh_cloudflared(password="your_password")
 '''
 
-COLAB_FILE = CONFIG_DIR / "colab.json"
+COLAB_FILE = CONFIG_DIR / "colab.yaml"
 
 
 def _load_colab_data() -> dict:
@@ -35,16 +35,16 @@ def _load_colab_data() -> dict:
         return {}
     try:
         with open(COLAB_FILE, "r") as f:
-            return json.load(f) or {}
-    except json.JSONDecodeError:
-        print(f"Error: Invalid JSON in {COLAB_FILE}")
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError:
+        print(f"Error: Invalid YAML in {COLAB_FILE}")
         raise SystemExit(1)
 
 
 def _save_colab_data(data: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(COLAB_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
 def cmd_list(args: List[str]) -> None:

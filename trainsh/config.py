@@ -2,7 +2,7 @@
 
 import os
 from typing import Any, Dict
-import tomllib
+import yaml
 
 from .constants import CONFIG_DIR, CONFIG_FILE
 
@@ -24,55 +24,12 @@ def load_config() -> Dict[str, Any]:
     if not CONFIG_FILE.exists():
         return get_default_config()
 
-    with open(CONFIG_FILE, "rb") as f:
-        config = tomllib.load(f)
+    with open(CONFIG_FILE, "r") as f:
+        config = yaml.safe_load(f) or {}
 
     # Merge with defaults
     defaults = get_default_config()
     return merge_dicts(defaults, config)
-
-
-def _format_toml_value(value: Any) -> str:
-    """Format a Python value as TOML."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    elif isinstance(value, str):
-        return f'"{value}"'
-    elif isinstance(value, (int, float)):
-        return str(value)
-    elif isinstance(value, list):
-        items = ", ".join(_format_toml_value(v) for v in value)
-        return f"[{items}]"
-    else:
-        return str(value)
-
-
-def _dict_to_toml(data: Dict[str, Any], prefix: str = "") -> str:
-    """Convert a dictionary to TOML format."""
-    lines = []
-
-    # First, handle non-dict values
-    for key, value in data.items():
-        if not isinstance(value, dict):
-            lines.append(f"{key} = {_format_toml_value(value)}")
-
-    # Then handle nested dicts as sections
-    for key, value in data.items():
-        if isinstance(value, dict):
-            section_name = f"{prefix}{key}" if prefix else key
-            lines.append("")
-            lines.append(f"[{section_name}]")
-            for k, v in value.items():
-                if isinstance(v, dict):
-                    # Handle nested sections
-                    lines.append("")
-                    lines.append(f"[{section_name}.{k}]")
-                    for kk, vv in v.items():
-                        lines.append(f"{kk} = {_format_toml_value(vv)}")
-                else:
-                    lines.append(f"{k} = {_format_toml_value(v)}")
-
-    return "\n".join(lines)
 
 
 def save_config(config: Dict[str, Any]) -> None:
@@ -84,18 +41,13 @@ def save_config(config: Dict[str, Any]) -> None:
     """
     ensure_config_dir()
 
-    toml_str = _dict_to_toml(config)
     with open(CONFIG_FILE, "w") as f:
-        f.write(toml_str)
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
 def get_default_config() -> Dict[str, Any]:
     """Get the default configuration."""
     return {
-        "version": 1,
-        "defaults": {
-            "ssh_key_path": "~/.ssh/id_rsa",
-        },
         "vast": {
             "auto_attach_ssh_key": True,
         },

@@ -8,9 +8,9 @@ APP_NAME = "tmux-trainsh"
 
 # Config directory
 CONFIG_DIR = Path(os.path.expanduser("~/.config/tmux-trainsh"))
-CONFIG_FILE = CONFIG_DIR / "config.toml"
-HOSTS_FILE = CONFIG_DIR / "hosts.toml"
-STORAGES_FILE = CONFIG_DIR / "storages.toml"
+CONFIG_FILE = CONFIG_DIR / "config.yaml"
+HOSTS_FILE = CONFIG_DIR / "hosts.yaml"
+STORAGES_FILE = CONFIG_DIR / "storages.yaml"
 RECIPES_DIR = CONFIG_DIR / "recipes"
 LOGS_DIR = CONFIG_DIR / "logs"
 

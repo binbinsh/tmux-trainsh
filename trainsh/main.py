@@ -288,9 +288,9 @@ def _generate_help_text() -> str:
         "",
         "CONFIG FILES",
         "  ~/.config/tmux-trainsh/",
-        "  ├── config.toml         Main settings",
-        "  ├── hosts.toml          SSH hosts",
-        "  ├── storages.toml       Storage backends",
+        "  ├── config.yaml         Main settings",
+        "  ├── hosts.yaml          SSH hosts",
+        "  ├── storages.yaml       Storage backends",
         "  └── recipes/            Recipe files (.recipe)",
         "",
         'Use "train <command> --help" for command-specific help.',
@@ -334,7 +334,7 @@ help_text = _generate_help_text()
 def option_text() -> str:
     return '''\
 --config
-default=~/.config/tmux-trainsh/config.toml
+default=~/.config/tmux-trainsh/config.yaml
 Path to configuration file.
 
 --verbose -v

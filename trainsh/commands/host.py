@@ -26,20 +26,20 @@ Host types:
 
 For Vast.ai instances, use: train vast
 
-Hosts are stored in: ~/.config/tmux-trainsh/hosts.toml
+Hosts are stored in: ~/.config/tmux-trainsh/hosts.yaml
 '''
 
 
 def load_hosts() -> dict:
     """Load hosts from configuration."""
     from ..constants import HOSTS_FILE
-    import tomllib
+    import yaml
 
     if not HOSTS_FILE.exists():
         return {}
 
-    with open(HOSTS_FILE, "rb") as f:
-        data = tomllib.load(f)
+    with open(HOSTS_FILE, "r") as f:
+        data = yaml.safe_load(f) or {}
 
     hosts = {}
     for host_data in data.get("hosts", []):
@@ -50,64 +50,22 @@ def load_hosts() -> dict:
     return hosts
 
 
-def _host_to_toml(host) -> str:
-    """Convert a host to TOML table format."""
-    def _format_toml_key(key: str) -> str:
-        if re.match(r"^[A-Za-z0-9_-]+$", key):
-            return key
-        escaped = key.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-
-    def _format_toml_string(value: str) -> str:
-        escaped = (
-            value.replace("\\", "\\\\")
-            .replace('"', '\\"')
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t")
-        )
-        return f'"{escaped}"'
-
-    def _format_toml_value(value):
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, str):
-            return _format_toml_string(value)
-        if isinstance(value, (int, float)):
-            return str(value)
-        if isinstance(value, list):
-            return "[" + ", ".join(_format_toml_value(item) for item in value) + "]"
-        if isinstance(value, dict):
-            items = []
-            for k, v in value.items():
-                if v is None:
-                    continue
-                items.append(f"{_format_toml_key(str(k))} = {_format_toml_value(v)}")
-            return "{ " + ", ".join(items) + " }"
-        return _format_toml_string(str(value))
-
-    lines = ["[[hosts]]"]
-    d = host.to_dict()
-    for key, value in d.items():
-        if value is None:
-            continue
-        lines.append(f"{key} = {_format_toml_value(value)}")
-    return "\n".join(lines)
+def _host_to_dict(host) -> dict:
+    """Convert a host to a filtered dict (no None values)."""
+    return {k: v for k, v in host.to_dict().items() if v is not None}
 
 
 def save_hosts(hosts: dict) -> None:
     """Save hosts to configuration."""
     from ..constants import HOSTS_FILE, CONFIG_DIR
+    import yaml
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    toml_lines = []
-    for host in hosts.values():
-        toml_lines.append(_host_to_toml(host))
-        toml_lines.append("")
+    data = {"hosts": [_host_to_dict(h) for h in hosts.values()]}
 
     with open(HOSTS_FILE, "w") as f:
-        f.write("\n".join(toml_lines))
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
 def _prompt_int(prompt: str, default: int) -> Optional[int]:

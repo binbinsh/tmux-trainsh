@@ -65,9 +65,9 @@ Config files are stored in `~/.config/tmux-trainsh/`:
 
 ```
 ~/.config/tmux-trainsh/
-├── config.toml        # Main settings
-├── hosts.toml         # SSH hosts (including Colab)
-├── storages.toml      # Storage backends
+├── config.yaml        # Main settings
+├── hosts.yaml         # SSH hosts (including Colab)
+├── storages.yaml      # Storage backends
 ├── jobs/              # Job state and execution logs
 └── recipes/           # Recipe files
 ```
@@ -114,53 +114,25 @@ train config tmux-list
 train config tmux-setup
 ```
 
-Or edit `~/.config/tmux-trainsh/config.toml` directly:
+Or edit `~/.config/tmux-trainsh/config.yaml` directly:
 
-```toml
-[tmux]
-auto_bridge = true
-bridge_outside_tmux = true
-auto_enter_tmux = true
-prefer_bridge_exec = true
-bridge_remote_status = "off" # keep | off | bottom
-options = [
-  "set -g mouse on",
-  "set -g history-limit 50000",
-  "set -g base-index 1",
-  "set -g status-position top",
-  "set -g status-left \"[#S] \"",
-  "set -g status-right \"#H:#{pane_current_path}\"",
-  "bind -n MouseDown1Status select-window -t =",
-  # Add any custom tmux options here
-]
+```yaml
+tmux:
+  auto_bridge: true
+  bridge_outside_tmux: true
+  auto_enter_tmux: true
+  prefer_bridge_exec: true
+  bridge_remote_status: "off"   # keep | off | bottom
+  options:
+    - "set -g mouse on"
+    - "set -g history-limit 50000"
+    - "set -g base-index 1"
+    - "set -g status-position top"
+    - "set -g status-left \"[#S] \""
+    - "set -g status-right \"#H:#{pane_current_path}\""
+    - "bind -n MouseDown1Status select-window -t ="
+    # Add any custom tmux options here
 ```
-
-### Auto bridge splits
-
-When `tmux.open` runs, train can automatically create local tmux splits and attach each split to the matching session:
-
-- Local host: `tmux attach -t <session>`
-- Remote host: `ssh -tt <host> 'tmux attach -t <session> || tmux new-session -A -s <session>'`
-
-Behavior:
-- If `train recipe run/resume` is launched outside tmux and `auto_enter_tmux = true`, train auto-starts a tmux session and runs the command inside it.
-- If `train` is launched inside tmux, splits are created in the current tmux window.
-- If launched outside tmux and `bridge_outside_tmux = true`, train creates a detached local bridge session (`train_<job_name>_<index>`) for these splits.
-- Local hosts also attach bridge panes to the local recipe tmux session.
-- Local and remote tmux lifecycle/IO are handled via tmux CLI calls.
-- If `prefer_bridge_exec = true`, execute commands prefer the already-attached bridge pane, reducing repeated external SSH auth prompts.
-- Once a command is sent to a remote tmux session, it continues running on the remote host even if the local `train` process stops.
-- `bridge_remote_status` controls remote tmux status bar in bridge panes:
-  - `off`: hide remote status while attached (default, avoids double top bars)
-  - `bottom`: show remote status at bottom
-  - `keep`: keep remote tmux config unchanged
-- `train recipe resume` rebuilds/reuses these bridge splits from saved state.
-
-Session naming (unified):
-- Auto-enter live shell: `train_<job_name>_<index>`
-- Detached bridge session: `train_<job_name>_<index>`
-- Recipe window session: `train_<job_name>_<index>`
-- Window `index` follows `tmux.open` execution order (`0, 1, 2, ...`)
 
 ### Apply tmux config in recipes
 
@@ -242,7 +214,7 @@ All definitions must appear before workflow commands. Names cannot be duplicated
 | `user@hostname -i KEY` | SSH host with identity file |
 | `user@hostname -J JUMP` | SSH host with jump host |
 | `user@hostname -o ProxyCommand='CMD'` | SSH host via custom ProxyCommand (e.g. HTTPS tunnel client) |
-| `name` | Reference to hosts.toml config |
+| `name` | Reference to hosts.yaml config |
 
 Cloudflared Access examples:
 
@@ -251,26 +223,35 @@ Cloudflared Access examples:
 host case = root@172.16.0.88 -o ProxyCommand='cloudflared access ssh --hostname ssh-access.example.com'
 ```
 
-```toml
-# hosts.toml (primary + fallback candidates)
-[[hosts]]
-name = "case"
-type = "ssh"
-hostname = "primary.example.com"
-port = 22
-username = "root"
-env_vars = { connection_candidates = ["ssh://backup.example.com:22", "cloudflared://ssh-access.example.com"] }
+```yaml
+# hosts.yaml (primary + fallback candidates)
+hosts:
+  - name: case
+    type: ssh
+    hostname: primary.example.com
+    port: 22
+    username: root
+    env_vars:
+      connection_candidates:
+        - "ssh://backup.example.com:22"
+        - "cloudflared://ssh-access.example.com"
 ```
 
-```toml
-# hosts.toml (structured candidates, same as interactive `train host add`)
-[[hosts]]
-name = "case"
-type = "ssh"
-hostname = "primary.example.com"
-port = 22
-username = "root"
-env_vars = { connection_candidates = [{ type = "ssh", hostname = "backup.example.com", port = 22 }, { type = "cloudflared", hostname = "ssh-access.example.com" }] }
+```yaml
+# hosts.yaml (structured candidates, same as interactive `train host add`)
+hosts:
+  - name: case
+    type: ssh
+    hostname: primary.example.com
+    port: 22
+    username: root
+    env_vars:
+      connection_candidates:
+        - type: ssh
+          hostname: backup.example.com
+          port: 22
+        - type: cloudflared
+          hostname: ssh-access.example.com
 ```
 
 ### Storage Spec Formats
@@ -281,7 +262,7 @@ env_vars = { connection_candidates = [{ type = "ssh", hostname = "backup.example
 | `r2:bucket` | Cloudflare R2 |
 | `b2:bucket` | Backblaze B2 |
 | `s3:bucket` | Amazon S3 |
-| `name` | Reference to storages.toml config |
+| `name` | Reference to storages.yaml config |
 
 ### Execute Commands
 
@@ -373,16 +354,18 @@ tmux.close @work
 - `notify training complete`
 - `notify "$MODEL finished"`
 
-Styling and delivery are configured globally in `~/.config/tmux-trainsh/config.toml`:
+Styling and delivery are configured globally in `~/.config/tmux-trainsh/config.yaml`:
 
-```toml
-[notifications]
-enabled = true
-channels = ["log", "system"]          # log | system | webhook | command
-webhook_url = ""                      # used when channels include webhook
-command = ""                          # used when channels include command
-timeout_secs = 5
-fail_on_error = false
+```yaml
+notifications:
+  enabled: true
+  channels:                             # log | system | webhook | command
+    - log
+    - system
+  webhook_url: ""                       # used when channels include webhook
+  command: ""                           # used when channels include command
+  timeout_secs: 5
+  fail_on_error: false
 ```
 
 `system` channel uses macOS `osascript` native notification.
