@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 _tmp = tempfile.TemporaryDirectory()
 _TMP_DIR = Path(_tmp.name) / ".config" / "tmux-trainsh"
 _TMP_DIR.mkdir(parents=True, exist_ok=True)
-_TMP_CONFIG = _TMP_DIR / "config.toml"
+_TMP_CONFIG = _TMP_DIR / "config.yaml"
 
 
 def _clean_config():
@@ -333,7 +333,7 @@ class TestSetBackend(unittest.TestCase):
 
 
 class TestSaveSaToken(unittest.TestCase):
-    """_save_sa_token persists token to config.toml."""
+    """_save_sa_token persists token to config.yaml."""
 
     def setUp(self):
         _clean_config()

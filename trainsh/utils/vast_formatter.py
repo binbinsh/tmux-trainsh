@@ -28,7 +28,7 @@ class CurrencySettings:
 
 
 def get_currency_settings() -> CurrencySettings:
-    """Load currency settings from config.toml (single source of truth)."""
+    """Load currency settings from config.yaml (single source of truth)."""
     settings = load_pricing_settings()
     config = load_config()
     display_curr = config.get("ui", {}).get("currency") or "USD"

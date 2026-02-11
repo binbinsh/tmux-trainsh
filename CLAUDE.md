@@ -28,7 +28,7 @@ python tests/test_commands.py
 ```
 trainsh/
 ├── main.py              # CLI entry point, command routing
-├── config.py            # TOML config loading/saving
+├── config.py            # YAML config loading/saving
 ├── constants.py         # Paths, defaults, secret key names
 ├── commands/            # CLI subcommands (host, vast, storage, recipe, etc.)
 ├── core/
@@ -64,11 +64,11 @@ trainsh/
 ### Configuration
 
 All config stored in `~/.config/tmux-trainsh/`:
-- `config.toml` - Main settings
-- `hosts.toml` - SSH host definitions
-- `storages.toml` - Storage backend configs
+- `config.yaml` - Main settings
+- `hosts.yaml` - SSH host definitions
+- `storages.yaml` - Storage backend configs
 - `recipes/` - Recipe files
-- `jobs/` - Job state for resume
+- `jobs/` - Job state for resume (YAML)
 
 ### Secrets
 

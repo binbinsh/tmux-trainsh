@@ -19,51 +19,20 @@ from ..constants import CONFIG_DIR, CONFIG_FILE, SecretKeys
 # ---------------------------------------------------------------------------
 
 def _load_config() -> dict:
-    """Load config.toml, returning an empty dict if missing."""
+    """Load config.yaml, returning an empty dict if missing."""
     if not CONFIG_FILE.exists():
         return {}
-    try:
-        import tomllib
-    except ModuleNotFoundError:          # Python < 3.11
-        try:
-            import tomli as tomllib      # type: ignore[no-redef]
-        except ImportError:
-            return {}
-    with open(CONFIG_FILE, "rb") as f:
-        return tomllib.load(f)
+    import yaml
+    with open(CONFIG_FILE, "r") as f:
+        return yaml.safe_load(f) or {}
 
 
 def _save_config(cfg: dict) -> None:
-    """Write *cfg* back to config.toml (minimal TOML writer)."""
+    """Write *cfg* back to config.yaml."""
+    import yaml
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-    lines: list[str] = []
-    # Write top-level keys first (non-dict values)
-    for k, v in cfg.items():
-        if not isinstance(v, dict):
-            lines.append(f"{k} = {_toml_value(v)}")
-    if lines:
-        lines.append("")
-
-    # Write sections (dict values)
-    for section, values in cfg.items():
-        if isinstance(values, dict):
-            lines.append(f"[{section}]")
-            for k, v in values.items():
-                lines.append(f"{k} = {_toml_value(v)}")
-            lines.append("")
-
-    CONFIG_FILE.write_text("\n".join(lines))
-
-
-def _toml_value(v: object) -> str:
-    if isinstance(v, str):
-        return f'"{v}"'
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, int):
-        return str(v)
-    return f'"{v}"'
+    with open(CONFIG_FILE, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +61,7 @@ class OnePasswordBackend(SecretsBackend):
     """Store each secret as its own 1Password item (title=key, password=value)."""
 
     def __init__(self, vault: Optional[str] = None, sa_token: Optional[str] = None):
-        self._vault = vault or os.environ.get("OP_VAULT", "trainsh")
+        self._vault = vault or os.environ.get("OP_VAULT", "Development")
         # Service account token: explicit arg > env var > config
         self._sa_token = sa_token or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
 
@@ -402,7 +371,7 @@ def _instantiate_backend(name: str, cfg: dict) -> SecretsBackend:
 
 
 def _load_backend() -> Optional[SecretsBackend]:
-    """Load the configured backend from config.toml, or return None."""
+    """Load the configured backend from config.yaml, or return None."""
     cfg = _load_config()
     backend_name = cfg.get("secrets", {}).get("backend")
     if not backend_name:
@@ -425,7 +394,7 @@ def prompt_backend_selection() -> SecretsBackend:
             print("Warning: 'op' CLI not found on PATH. Install it from https://1password.com/downloads/command-line/")
             print("Falling back to encrypted file backend.\n")
             return _select_and_save("encrypted_file")
-        vault = prompt_input("1Password vault name [trainsh]: ", default="trainsh")
+        vault = prompt_input("1Password vault name [Development]: ", default="Development")
         sa_token = _resolve_op_auth(vault)
         if sa_token is False:
             return _select_and_save("encrypted_file")
@@ -526,7 +495,7 @@ def _auto_resolve_op_auth(vault: Optional[str] = None) -> Optional[str]:
 
 
 def _save_sa_token(token: str) -> None:
-    """Persist a service account token to config.toml."""
+    """Persist a service account token to config.yaml."""
     cfg = _load_config()
     cfg.setdefault("secrets", {})
     cfg["secrets"]["sa_token"] = token
@@ -643,7 +612,7 @@ class SecretsManager:
         ]
         return [key for key in predefined if self.exists(key)]
 
-    # Convenience accessors (kept for backward compat)
+    # Convenience accessors
     def get_vast_api_key(self) -> Optional[str]:
         return self.get(SecretKeys.VAST_API_KEY)
 

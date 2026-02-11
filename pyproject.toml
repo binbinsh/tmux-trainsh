@@ -1,11 +1,11 @@
 [project]
 name = "tmux-trainsh"
-version = "260210.1821"
+version = "260211.1420"
 description = "GPU training workflow automation with tmux"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["cryptography>=42"]
+dependencies = ["cryptography>=42", "pyyaml>=6.0"]
 
 [project.scripts]
 train = "trainsh.main:cli"

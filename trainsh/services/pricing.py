@@ -1,8 +1,9 @@
 # Pricing module for tmux-trainsh
 # Provides currency exchange rates and cost calculations
 
-import os
 import json
+import os
+import yaml
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
@@ -247,7 +248,7 @@ def calculate_host_cost(
 # Pricing Store (persistent settings)
 # ============================================================
 
-PRICING_FILE = CONFIG_DIR / "pricing.json"
+PRICING_FILE = CONFIG_DIR / "pricing.yaml"
 
 
 @dataclass
@@ -272,7 +273,7 @@ def load_pricing_settings() -> PricingSettings:
 
     try:
         with open(PRICING_FILE, "r") as f:
-            data = json.load(f)
+            data = yaml.safe_load(f) or {}
 
         settings = PricingSettings()
 
@@ -305,7 +306,7 @@ def load_pricing_settings() -> PricingSettings:
             )
 
         return settings
-    except (json.JSONDecodeError, KeyError):
+    except (yaml.YAMLError, KeyError):
         return PricingSettings()
 
 
@@ -321,7 +322,7 @@ def save_pricing_settings(settings: PricingSettings) -> None:
     }
 
     with open(PRICING_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
 # ============================================================

@@ -660,9 +660,6 @@ def _show_execution_details(reader, job_id: str) -> None:
     jobs_dir = get_jobs_dir()
     # Find log file with timestamp prefix
     log_files = list(jobs_dir.glob(f"*_{job_id}.jsonl.gz")) + list(jobs_dir.glob(f"*_{job_id}.jsonl"))
-    if not log_files:
-        # Try old format without timestamp
-        log_files = list(jobs_dir.glob(f"{job_id}.jsonl.gz")) + list(jobs_dir.glob(f"{job_id}.jsonl"))
     if log_files:
         print(f"\nLog file: {log_files[0]}")
 

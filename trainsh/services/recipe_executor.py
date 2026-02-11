@@ -1154,19 +1154,19 @@ print('Drive unmounted')
 
 def load_recipe_from_file(path: str) -> Recipe:
     """
-    Load a recipe from a TOML file.
+    Load a recipe from a YAML file.
 
     Args:
-        path: Path to the TOML file
+        path: Path to the YAML file
 
     Returns:
         Recipe object
     """
-    import tomllib
+    import yaml
     import os
 
-    with open(os.path.expanduser(path), "rb") as f:
-        data = tomllib.load(f)
+    with open(os.path.expanduser(path), "r") as f:
+        data = yaml.safe_load(f) or {}
 
     return Recipe.from_dict(data)
 
@@ -1176,7 +1176,7 @@ def run_recipe(recipe_path: str, log_callback: Optional[Callable[[str], None]] =
     Load and execute a recipe file.
 
     Args:
-        recipe_path: Path to the recipe TOML file
+        recipe_path: Path to the recipe YAML file
         log_callback: Optional log callback
 
     Returns:

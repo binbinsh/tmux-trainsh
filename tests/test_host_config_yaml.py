@@ -1,12 +1,12 @@
-import tomllib
+import yaml
 import unittest
 
-from trainsh.commands.host import _host_to_toml
+from trainsh.commands.host import _host_to_dict
 from trainsh.core.models import AuthMethod, Host, HostType
 
 
-class HostTomlSerializationTests(unittest.TestCase):
-    def test_host_to_toml_preserves_env_vars_and_lists(self):
+class HostYamlSerializationTests(unittest.TestCase):
+    def test_host_to_dict_preserves_env_vars_and_lists(self):
         host = Host(
             name="case",
             type=HostType.SSH,
@@ -24,8 +24,10 @@ class HostTomlSerializationTests(unittest.TestCase):
             tags=["gpu", "prod"],
         )
 
-        rendered = _host_to_toml(host)
-        parsed = tomllib.loads(rendered)
+        d = _host_to_dict(host)
+        # Round-trip through YAML
+        rendered = yaml.dump({"hosts": [d]}, default_flow_style=False, sort_keys=False)
+        parsed = yaml.safe_load(rendered)
         parsed_host = parsed["hosts"][0]
 
         self.assertEqual(parsed_host["env_vars"]["connection_candidates"][0], "ssh://backup.example.com:22")
@@ -36,7 +38,7 @@ class HostTomlSerializationTests(unittest.TestCase):
         )
         self.assertEqual(parsed_host["tags"], ["gpu", "prod"])
 
-    def test_host_to_toml_preserves_structured_connection_candidates(self):
+    def test_host_to_dict_preserves_structured_connection_candidates(self):
         host = Host(
             name="case",
             type=HostType.SSH,
@@ -52,8 +54,10 @@ class HostTomlSerializationTests(unittest.TestCase):
             },
         )
 
-        rendered = _host_to_toml(host)
-        parsed = tomllib.loads(rendered)
+        d = _host_to_dict(host)
+        # Round-trip through YAML
+        rendered = yaml.dump({"hosts": [d]}, default_flow_style=False, sort_keys=False)
+        parsed = yaml.safe_load(rendered)
         parsed_candidates = parsed["hosts"][0]["env_vars"]["connection_candidates"]
 
         self.assertEqual(parsed_candidates[0]["type"], "ssh")

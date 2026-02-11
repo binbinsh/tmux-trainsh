@@ -6,13 +6,14 @@ import subprocess
 import sys
 import urllib.request
 import urllib.error
+import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Tuple
 
 from ..constants import CONFIG_DIR
 
-CACHE_FILE = CONFIG_DIR / "update_cache.json"
+CACHE_FILE = CONFIG_DIR / "update_cache.yaml"
 CACHE_TTL_HOURS = 24
 PYPI_PACKAGE = "tmux-trainsh"
 PYPI_URL = f"https://pypi.org/pypi/{PYPI_PACKAGE}/json"
@@ -57,8 +58,9 @@ def load_cache() -> dict:
     """Load cache from disk."""
     if CACHE_FILE.exists():
         try:
-            return json.loads(CACHE_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
+            with open(CACHE_FILE, "r") as f:
+                return yaml.safe_load(f) or {}
+        except (yaml.YAMLError, OSError):
             pass
     return {}
 
@@ -67,7 +69,8 @@ def save_cache(data: dict) -> None:
     """Save cache to disk."""
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CACHE_FILE.write_text(json.dumps(data))
+        with open(CACHE_FILE, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     except OSError:
         pass
 
