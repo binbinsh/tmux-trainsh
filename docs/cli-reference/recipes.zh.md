@@ -21,6 +21,7 @@ train recipes --help
 Subcommands:
   list             - List available recipes and bundled examples
   show <name>      - Show recipe details
+  syntax           - Show full DSL syntax reference
   new <name>       - Create a new recipe from template
   edit <name>      - Open recipe in editor
   rm <name>        - Remove a recipe

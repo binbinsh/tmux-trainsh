@@ -23,6 +23,7 @@ Subcommands:
   set <key>        - Set a secret (prompts for value)
   get <key>        - Get a secret value
   delete <key>     - Delete a secret
+  backend          - Show or switch secrets backend
 
 Predefined keys:
   VAST_API_KEY           - Vast.ai API key

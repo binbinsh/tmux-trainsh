@@ -35,5 +35,5 @@ Supported storage types:
   - gcs            Google Cloud Storage
   - smb            SMB/CIFS
 
-Storages are stored in: ~/.config/tmux-trainsh/storages.toml
+Storages are stored in: ~/.config/tmux-trainsh/storages.yaml
 ```

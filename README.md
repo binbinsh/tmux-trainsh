@@ -231,8 +231,8 @@ Python recipes use a few core building blocks:
 
 Common host and storage specs remain the same:
 
-- Host specs: `placeholder`, `user@hostname`, `user@hostname -p PORT`, `user@hostname -i KEY`, `user@hostname -J JUMP`, `user@hostname -o ProxyCommand='CMD'`, or a host name from `hosts.toml`.
-- Storage specs: `placeholder`, `r2:bucket`, `b2:bucket`, `s3:bucket`, or a storage name from `storages.toml`.
+- Host specs: `placeholder`, `user@hostname`, `user@hostname -p PORT`, `user@hostname -i KEY`, `user@hostname -J JUMP`, `user@hostname -o ProxyCommand='CMD'`, or a host name from `hosts.yaml`.
+- Storage specs: `placeholder`, `r2:bucket`, `b2:bucket`, `s3:bucket`, or a storage name from `storages.yaml`.
 
 Cloudflared Access example:
 

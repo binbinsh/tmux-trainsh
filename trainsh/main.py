@@ -3,7 +3,7 @@
 # License: MIT
 
 import sys
-from typing import Optional, List, Dict
+from typing import Optional
 
 BANNER = r'''
    ████████╗██████╗  █████╗ ██╗███╗   ██╗███████╗██╗  ██╗
@@ -18,6 +18,7 @@ BANNER = r'''
    ════════════════════════════════════════════════════════
 '''
 
+usage = '''[command] [args...]
 
 Commands:
   help      - Browse help topics
@@ -39,190 +40,11 @@ Commands:
   update    - Check for updates
 '''
 
-COMMANDS_REGISTRY: List[Dict] = [
-    {
-        "command": "run",
-        "description": "Run a recipe (alias for \"recipe run\")",
-        "help_summary": "Run a recipe",
-        "frequency": "frequent",
-        "subcommands": [
-            {"name": "<name>", "description": "Run a recipe"},
-            {"name": "<name> --host gpu=vast:123", "description": "Override host"},
-            {"name": "<name> --var MODEL=llama-7b", "description": "Override variable"},
-            {"name": "<name> --pick-host gpu", "description": "Pick Vast.ai host"},
-        ],
-    },
-    {
-        "command": "exec",
-        "description": "Execute DSL commands directly",
-        "help_summary": "Execute DSL commands directly",
-        "frequency": "frequent",
-        "subcommands": [
-            {"name": "'<dsl>'", "description": "Execute DSL commands directly"},
-            {"name": "'@session > cmd'", "description": "Run in tmux session; falls back to host if no session exists"},
-            {"name": "'@src:path -> @dst:path'", "description": "Transfer files"},
-        ],
-    },
-    {
-        "command": "host",
-        "description": "Host management (SSH, Colab, Vast.ai)",
-        "help_summary": "Host management (SSH, Colab, Vast.ai)",
-        "frequency": "mixed",
-        "subcommands": [
-            {"name": "list", "description": "List configured hosts", "frequency": "frequent"},
-            {"name": "show <name>", "description": "Show host details", "frequency": "frequent"},
-            {"name": "ssh <name>", "description": "SSH into host", "frequency": "frequent"},
-            {"name": "add", "description": "Add new host (SSH/Colab)", "frequency": "occasional"},
-            {"name": "edit <name>", "description": "Edit existing host config", "frequency": "occasional"},
-            {"name": "browse <name>", "description": "Browse files on host", "frequency": "occasional"},
-            {"name": "test <name>", "description": "Test connection", "frequency": "occasional"},
-            {"name": "rm <name>", "description": "Remove a host", "frequency": "rare"},
-        ],
-    },
-    {
-        "command": "transfer",
-        "description": "File transfer between hosts/storage",
-        "help_summary": "File transfer between hosts/storage",
-        "frequency": "frequent",
-        "subcommands": [
-            {"name": "<src> <dst>", "description": "Transfer files"},
-            {"name": "<src> <dst> --delete", "description": "Sync with deletions"},
-            {"name": "<src> <dst> --exclude '*.ckpt'", "description": "Exclude patterns"},
-            {"name": "<src> <dst> --dry-run", "description": "Preview transfer"},
-        ],
-    },
-    {
-        "command": "recipe",
-        "description": "Recipe management (list, show, edit, etc.)",
-        "help_summary": "Recipe management",
-        "frequency": "mixed",
-        "subcommands": [
-            {"name": "list", "description": "List recipes", "frequency": "frequent"},
-            {"name": "show <name>", "description": "Show recipe details", "frequency": "frequent"},
-            {"name": "status", "description": "View running sessions", "frequency": "frequent"},
-            {"name": "status --last", "description": "Show latest running job details and attach commands", "frequency": "frequent"},
-            {"name": "status --all", "description": "Include completed sessions", "frequency": "frequent"},
-            {"name": "syntax", "description": "Show full DSL syntax reference", "frequency": "occasional"},
-            {"name": "new <name>", "description": "Create new recipe", "frequency": "occasional"},
-            {"name": "edit <name>", "description": "Edit recipe in editor", "frequency": "occasional"},
-            {"name": "run <name>", "description": "Run a recipe (same as `train run`)", "frequency": "occasional"},
-            {"name": "resume <name>", "description": "Resume a failed/interrupted recipe (rebuilds tmux bridge splits)", "frequency": "occasional"},
-            {"name": "resume <name> --check", "description": "Check remote status only", "frequency": "occasional"},
-            {"name": "logs", "description": "View execution logs", "frequency": "occasional"},
-            {"name": "logs --last", "description": "Show last execution", "frequency": "occasional"},
-            {"name": "logs <job-id>", "description": "Show logs for a specific job", "frequency": "occasional"},
-            {"name": "jobs", "description": "View job history", "frequency": "occasional"},
-            {"name": "rm <name>", "description": "Remove a recipe", "frequency": "rare"},
-        ],
-    },
-    {
-        "command": "storage",
-        "description": "Storage backend management (R2, B2, S3, etc.)",
-        "help_summary": "Storage backend management (R2, B2, S3)",
-        "frequency": "mixed",
-        "subcommands": [
-            {"name": "list", "description": "List storage backends", "frequency": "occasional"},
-            {"name": "show <name>", "description": "Show storage details", "frequency": "occasional"},
-            {"name": "add", "description": "Add storage backend", "frequency": "occasional"},
-            {"name": "test <name>", "description": "Test connection", "frequency": "occasional"},
-            {"name": "rm <name>", "description": "Remove storage", "frequency": "rare"},
-        ],
-    },
-    {
-        "command": "secrets",
-        "description": "Manage API keys and credentials",
-        "help_summary": "Manage API keys and credentials",
-        "frequency": "mixed",
-        "subcommands": [
-            {"name": "list", "description": "List stored secrets", "frequency": "occasional"},
-            {"name": "set <key>", "description": "Set a secret", "frequency": "occasional"},
-            {"name": "get <key>", "description": "Get a secret", "frequency": "occasional"},
-            {"name": "delete <key>", "description": "Delete a secret", "frequency": "rare"},
-        ],
-    },
-    {
-        "command": "config",
-        "description": "Configuration and settings",
-        "help_summary": "Configuration and settings",
-        "frequency": "mixed",
-        "subcommands": [
-            {"name": "show", "description": "Show configuration", "frequency": "occasional"},
-            {"name": "get <key>", "description": "Get config value", "frequency": "occasional"},
-            {"name": "set <key> <val>", "description": "Set config value", "frequency": "occasional"},
-            {"name": "tmux-setup", "description": "Apply tmux configuration to ~/.tmux.conf", "frequency": "occasional"},
-            {"name": "tmux-edit", "description": "Edit tmux options in $EDITOR", "frequency": "occasional"},
-            {"name": "tmux-list", "description": "List current tmux options", "frequency": "occasional"},
-            {"name": "reset", "description": "Reset configuration", "frequency": "rare"},
-        ],
-    },
-    {
-        "command": "colab",
-        "description": "Google Colab integration",
-        "help_summary": "Google Colab integration",
-        "frequency": "occasional",
-        "subcommands": [
-            {"name": "list", "description": "List Colab connections"},
-            {"name": "connect", "description": "Add Colab connection"},
-            {"name": "run <cmd>", "description": "Run command on Colab"},
-            {"name": "ssh", "description": "SSH into Colab"},
-        ],
-    },
-    {
-        "command": "vast",
-        "description": "Vast.ai instance management",
-        "help_summary": "Vast.ai instance management",
-        "frequency": "mixed",
-        "subcommands": [
-            {"name": "list", "description": "List your instances", "frequency": "occasional"},
-            {"name": "show <id>", "description": "Show instance details", "frequency": "occasional"},
-            {"name": "ssh <id>", "description": "SSH into instance", "frequency": "occasional"},
-            {"name": "start <id>", "description": "Start instance", "frequency": "occasional"},
-            {"name": "stop <id>", "description": "Stop instance", "frequency": "occasional"},
-            {"name": "reboot <id>", "description": "Reboot instance", "frequency": "occasional"},
-            {"name": "search", "description": "Search for GPU offers", "frequency": "occasional"},
-            {"name": "keys", "description": "List SSH keys", "frequency": "occasional"},
-            {"name": "attach-key [path]", "description": "Attach local SSH key", "frequency": "occasional"},
-            {"name": "rm <id>", "description": "Remove instance", "frequency": "rare"},
-        ],
-    },
-    {
-        "command": "pricing",
-        "description": "Currency exchange rates and cost calculator",
-        "help_summary": "Currency exchange and cost calculator",
-        "frequency": "rare",
-        "subcommands": [
-            {"name": "rates", "description": "Show exchange rates"},
-            {"name": "rates --refresh", "description": "Refresh exchange rates"},
-            {"name": "currency", "description": "Show display currency"},
-            {"name": "currency --set CNY", "description": "Set display currency"},
-            {"name": "colab", "description": "Show Colab pricing"},
-            {"name": "vast", "description": "Show Vast.ai costs"},
-            {"name": "convert 10 USD CNY", "description": "Convert currency"},
-        ],
-    },
-    {
-        "command": "update",
-        "description": "Check for updates",
-        "help_summary": "Check for updates",
-        "frequency": "rare",
-        "subcommands": [],
-    },
-    {
-        "command": "help",
-        "description": "Show help",
-        "help_summary": "Show this help",
-        "frequency": "rare",
-        "subcommands": [],
-    },
-    {
-        "command": "version",
-        "description": "Show version",
-        "help_summary": "Show version",
-        "frequency": "rare",
-        "subcommands": [],
-    },
-]
+help_text = '''
+tmux-trainsh: GPU training workflow automation in the terminal.
 
+Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends
+(Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.
 
 QUICK START
   train help                          # Browse help topics
@@ -274,9 +96,9 @@ RESUME
 
 CONFIG FILES
   ~/.config/tmux-trainsh/
-  ├── config.toml         Main settings
-  ├── hosts.toml          SSH hosts
-  ├── storages.toml       Storage backends
+  ├── config.yaml         Main settings
+  ├── hosts.yaml          SSH hosts
+  ├── storages.yaml       Storage backends
   └── recipes/            Recipe files (.py)
 
 Use "train help <topic>" for centralized help, or "train <command> --help" for command-local help.
@@ -287,7 +109,7 @@ Full documentation: https://github.com/binbinsh/tmux-trainsh
 def option_text() -> str:
     return '''\
 --config
-default=~/.config/tmux-trainsh/config.yaml
+default=~/.config/tmux-trainsh/config.toml
 Path to configuration file.
 
 --verbose -v

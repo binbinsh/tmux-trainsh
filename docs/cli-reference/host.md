@@ -34,5 +34,5 @@ Host types:
 
 For Vast.ai instances, use: train vast
 
-Hosts are stored in: ~/.config/tmux-trainsh/hosts.toml
+Hosts are stored in: ~/.config/tmux-trainsh/hosts.yaml
 ```
