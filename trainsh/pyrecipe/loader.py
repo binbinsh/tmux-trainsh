@@ -1,0 +1,57 @@
+"""Loader for .py recipe files."""
+
+from __future__ import annotations
+
+import importlib.util
+import hashlib
+import sys
+from pathlib import Path
+from typing import List
+
+from .base import RecipeSpec
+
+
+def _module_name_for_path(path: Path) -> str:
+    slug = path.name.replace("-", "_").replace(".", "_")
+    digest = hashlib.sha1(path.as_posix().encode("utf-8")).hexdigest()[:12]
+    return f"trainsh_user_recipe_{digest}_{slug}"
+
+
+def load_python_recipe(path: str) -> RecipeSpec:
+    """Load one recipe object from Python file."""
+    source = Path(path).expanduser().resolve()
+    if not source.exists():
+        raise FileNotFoundError(f"recipe file not found: {path}")
+
+    spec = importlib.util.spec_from_file_location(_module_name_for_path(source), str(source))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load recipe module from: {source}")
+
+    module = importlib.util.module_from_spec(spec)
+    loaded: List[RecipeSpec] = []
+    try:
+        sys.modules[spec.name] = module  # type: ignore[arg-type]
+        spec.loader.exec_module(module)  # type: ignore[arg-type]
+    finally:
+        sys.modules.pop(spec.name, None)  # type: ignore[arg-type]
+
+    explicit = getattr(module, "recipe", None)
+    if isinstance(explicit, RecipeSpec):
+        return explicit
+
+    bound_recipe = getattr(module, "__trainsh_recipe__", None)
+    if isinstance(bound_recipe, RecipeSpec):
+        return bound_recipe
+
+    for item in vars(module).values():
+        if isinstance(item, RecipeSpec):
+            loaded.append(item)
+
+    if len(loaded) == 1:
+        return loaded[0]
+    if loaded:
+        raise RuntimeError(
+            "multiple RecipeSpec objects found in recipe module; "
+            "please expose only one as `recipe = ...`"
+        )
+    raise RuntimeError("no recipe defined in .py file")

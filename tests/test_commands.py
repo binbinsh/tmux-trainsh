@@ -12,7 +12,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 
 TEST_HOME = tempfile.TemporaryDirectory()
-TEST_CONFIG_DIR = Path(TEST_HOME.name) / ".config" / "kitten-trainsh"
+TEST_CONFIG_DIR = Path(TEST_HOME.name) / ".config" / "tmux-trainsh"
 TEST_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 PRICING_FILE = TEST_CONFIG_DIR / "pricing.json"
 
@@ -33,8 +33,23 @@ if not PRICING_FILE.exists():
 # Format: (command, expected_in_help_or_error)
 COMMANDS = [
     # Top-level
-    ("--help", "kitten-trainsh"),
-    ("--version", "kitten-trainsh"),
+    ("--help", "tmux-trainsh Help"),
+    ("--version", "tmux-trainsh"),
+    ("help", "Help Topics"),
+    ("help recipe", "feature-tour"),
+    ("help run", "Usage: train run"),
+    ("help recipes", "Runtime commands live at the top level"),
+    ("help schedule", "Usage:"),
+    ("gui --help", "Unknown command"),
+    ("exec --help", "Unknown command"),
+    ("recipe --help", "Unknown command"),
+    ("run --help", "Usage"),
+    ("resume", "Usage"),
+    ("status", "sessions"),
+    ("logs", "execution"),
+    ("jobs", "job states"),
+    ("schedule --help", "Usage:"),
+    ("schedule list", "No DAGs found"),
 
     # Host
     ("host --help", "Subcommands"),
@@ -59,17 +74,14 @@ COMMANDS = [
     ("transfer --help", "Transfer files"),
 
     # Recipe
-    ("recipe --help", "Subcommands"),
-    ("recipe list", "recipes"),
-    ("recipe show", "Usage"),
-    ("recipe run", "Usage"),
-    ("recipe new", "Usage"),
-    ("recipe edit", "Usage"),
-    ("recipe rm", "Usage"),
-    ("recipe logs", "execution"),
-    ("recipe logs --last", "execution"),
-    ("recipe status", "sessions"),
-    ("recipe status --all", "sessions"),
+    ("recipes --help", "Runtime commands live at the top level"),
+    ("recipes list", "Bundled examples"),
+    ("recipes show", "Usage"),
+    ("recipes show hello", "hello-world"),
+    ("recipes show feature-tour", "feature-tour"),
+    ("recipes new", "Usage"),
+    ("recipes edit", "Usage"),
+    ("recipes rm", "Usage"),
 
     # Secrets
     ("secrets --help", "Subcommands"),
@@ -155,17 +167,28 @@ def test_imports() -> list[tuple[str, bool, str]]:
         "trainsh.commands.vast",
         "trainsh.commands.storage",
         "trainsh.commands.transfer",
+        "trainsh.commands.help_cmd",
         "trainsh.commands.recipe",
+        "trainsh.commands.recipe_templates",
+        "trainsh.commands.recipe_runtime",
+        "trainsh.commands.runtime_dispatch",
         "trainsh.commands.secrets_cmd",
         "trainsh.commands.colab",
         "trainsh.commands.pricing",
         "trainsh.commands.config_cmd",
+        "trainsh.commands.schedule_cmd",
         "trainsh.services.vast_api",
         "trainsh.services.ssh",
         "trainsh.services.tmux",
         "trainsh.services.transfer_engine",
         "trainsh.core.models",
         "trainsh.core.secrets",
+        "trainsh.pyrecipe",
+        "trainsh.runtime",
+        "trainsh.runtime_executors",
+        "trainsh.core.dag_processor",
+        "trainsh.core.dag_executor",
+        "trainsh.core.scheduler",
     ]
 
     # Add project root to path
@@ -184,7 +207,7 @@ def test_imports() -> list[tuple[str, bool, str]]:
 def main():
     """Run all tests."""
     print("=" * 60)
-    print("kitten-trainsh Command Availability Tests")
+    print("tmux-trainsh Command Availability Tests")
     print("=" * 60)
 
     # Test imports first

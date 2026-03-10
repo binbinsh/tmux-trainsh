@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from trainsh.core.dsl_parser import DSLRecipe
 from trainsh.core.executor_main import DSLExecutor
+from trainsh.core.recipe_models import RecipeModel
 from trainsh.utils.notifier import Notifier
 
 
@@ -95,8 +95,9 @@ class NotifierTests(unittest.TestCase):
 
 class ExecutorNotifyTests(unittest.TestCase):
     def _new_executor(self, logs):
-        recipe = DSLRecipe(name="notify-test")
-        return DSLExecutor(recipe, log_callback=logs.append, recipe_path=None)
+        recipe = RecipeModel(name="notify-test")
+        with patch("trainsh.core.executor_main.load_config", return_value={"tmux": {}}):
+            return DSLExecutor(recipe, log_callback=logs.append, recipe_path=None)
 
     def test_simple_notify_message(self):
         logs = []

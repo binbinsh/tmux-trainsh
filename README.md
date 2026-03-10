@@ -16,7 +16,7 @@
 
 The missing training automation for public cloud GPU and storage.
 
-Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, S3, GDrive), and automate training workflows with a simple recipe DSL.
+Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, S3, GDrive), and automate training workflows with Python recipe modules.
 
 ## Requirements
 
@@ -44,6 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.
 ```bash
 # Show help
 train help
+train help recipe
+train recipes new my-flow --template feature-tour
 
 # Set up API keys
 train secrets set VAST_API_KEY
@@ -57,6 +59,10 @@ train storage add
 
 # Run a recipe
 train run train
+
+# Inspect scheduled recipes
+train schedule list
+
 ```
 
 ## Configuration
@@ -134,365 +140,244 @@ tmux:
     # Add any custom tmux options here
 ```
 
-### Apply tmux config in recipes
+### Auto bridge splits
+
+When `tmux.open` runs, train can automatically create local tmux splits and attach each split to the matching session:
+
+- Local host: `tmux attach -t <session>`
+- Remote host: `ssh -tt <host> 'tmux attach -t <session> || tmux new-session -A -s <session>'`
+
+Behavior:
+- If `train run` or `train resume` is launched outside tmux and `auto_enter_tmux = true`, train auto-starts a tmux session and runs the command inside it.
+- If `train` is launched inside tmux, splits are created in the current tmux window.
+- If launched outside tmux and `bridge_outside_tmux = true`, train creates a detached local bridge session (`train_<job_name>_<index>`) for these splits.
+- Local hosts also attach bridge panes to the local recipe tmux session.
+- Local and remote tmux lifecycle/IO are handled via tmux CLI calls.
+- If `prefer_bridge_exec = true`, execute commands prefer the already-attached bridge pane, reducing repeated external SSH auth prompts.
+- Once a command is sent to a remote tmux session, it continues running on the remote host even if the local `train` process stops.
+- `bridge_remote_status` controls remote tmux status bar in bridge panes:
+  - `off`: hide remote status while attached (default, avoids double top bars)
+  - `bottom`: show remote status at bottom
+  - `keep`: keep remote tmux config unchanged
+- `train resume` rebuilds and reuses these bridge splits from saved state.
+
+Session naming (unified):
+- Auto-enter live shell: `train_<job_name>_<index>`
+- Detached bridge session: `train_<job_name>_<index>`
+- Recipe window session: `train_<job_name>_<index>`
+- Window `index` follows `tmux.open` execution order (`0, 1, 2, ...`)
+
+### Apply tmux config in Python recipes
 
 Use `tmux.config @host` to apply your tmux configuration to remote hosts:
 
-```
-# In your .recipe file
-host gpu = vast:12345
+```python
+from trainsh.pyrecipe import *
+
+recipe("remote-tmux")
+host("gpu", "vast:12345")
 
 # Apply tmux config to remote host before opening sessions
-tmux.config @gpu
+tmux_config("gpu")
 
 # Then open tmux session with your preferred settings
-tmux.open @gpu as work
-@work > python train.py
+work = session("work", on="gpu")
+work("python train.py")
 ```
 
 If no tmux server is running on the remote host, `tmux.config` still writes `~/.tmux.conf`; it will take effect when a tmux session is created/attached.
 
-## Recipe DSL
+## Python Recipes
 
-Recipe files (`.recipe`) define automated training workflows with a simple DSL.
+Recipe files (`.py`) define automated training workflows with the Python `trainsh.pyrecipe` API.
 
 ### Quick Example
 
-```
-# Variables
-var MODEL = llama-7b
-var WORKDIR = /workspace/train
+```python
+from trainsh.pyrecipe import *
 
-# Hosts (machines)
-host gpu = placeholder
-host backup = myserver
+recipe("train-demo")
+var("MODEL", "llama-7b")
+var("WORKDIR", "/workspace/train")
+host("gpu", "placeholder")
+host("backup", "myserver")
+storage("output", "r2:my-bucket")
 
-# Storage
-storage output = r2:my-bucket
-
-# Workflow
-vast.pick @gpu num_gpus=1 min_gpu_ram=24
-vast.start
-vast.wait timeout=5m
-
-# Create a tmux session "work" on the gpu host
-tmux.open @gpu as work
-
-# Commands reference the session name, not the host
-@work > cd $WORKDIR && git clone https://github.com/user/repo
-@work > pip install -r requirements.txt
-@work > python train.py --model $MODEL &
-
-wait @work idle timeout=2h
-notify "Training finished"
-
-# Transfers reference the host (for SSH connection info)
-@gpu:$WORKDIR/model -> @output:/models/$MODEL/
-@gpu:$WORKDIR/model -> @backup:/backup/
-
-vast.stop
-tmux.close @work
+pick = vast_pick(host="gpu", num_gpus=1, min_gpu_ram=24)
+ready = vast_wait(timeout="5m", after=pick)
+work = session("work", on="gpu", after=ready)
+clone = work("cd $WORKDIR && git clone https://github.com/user/repo", after=ready)
+deps = work("cd $WORKDIR/repo && pip install -r requirements.txt", after=clone)
+train = work.bg("cd $WORKDIR/repo && python train.py --model $MODEL", after=deps)
+done = work.idle(timeout="2h", after=train)
+push = transfer("@gpu:$WORKDIR/model", "@output:/models/$MODEL/", after=done)
+backup = transfer("@gpu:$WORKDIR/model", "@backup:/backup/", after=push)
+notice("Training finished", after=backup)
+vast_stop(after=backup)
+work.close(after=backup)
 ```
 
-### Definitions
+### Core Concepts
 
-All definitions must appear before workflow commands. Names cannot be duplicated across var/host/storage.
+Python recipes use a few core building blocks:
 
-| Type | Syntax | Reference | Description |
-|------|--------|-----------|-------------|
-| Variable | `var NAME = value` | `$NAME` | Define a variable |
-| Host | `host NAME = spec` | `@NAME` | Define a remote host |
-| Storage | `storage NAME = spec` | `@NAME` | Define a storage backend |
+- `var("MODEL", "llama-7b")` defines variables referenced in commands as `$MODEL`.
+- `host("gpu", "user@hostname")` defines a host. `placeholder` is still supported for runtime resolution such as `vast_pick`.
+- `storage("output", "r2:bucket")` defines a storage backend for transfer and storage helpers.
+- `session("work", on="gpu")` opens a named tmux session on a host and returns a session helper.
+- `work(...)`, `work.bg(...)`, `work.idle(...)`, `work.wait(...)`, `work.file(...)`, and `work.port(...)` express the old session workflow directly in Python.
+- `transfer("@gpu:/path", "@output:/path")` moves files between local, host, and storage endpoints.
+- `latest_only(...)`, `choose(...)`, `join(...)`, `notice(...)`, and `vast_stop(...)` cover the main control flow and lifecycle helpers.
 
-### Host Spec Formats
+Common host and storage specs remain the same:
 
-| Spec | Description |
-|------|-------------|
-| `placeholder` | Placeholder, must be filled by `vast.pick` |
-| `user@hostname` | SSH host |
-| `user@hostname -p PORT` | SSH host with port |
-| `user@hostname -i KEY` | SSH host with identity file |
-| `user@hostname -J JUMP` | SSH host with jump host |
-| `user@hostname -o ProxyCommand='CMD'` | SSH host via custom ProxyCommand (e.g. HTTPS tunnel client) |
-| `name` | Reference to hosts.yaml config |
+- Host specs: `placeholder`, `user@hostname`, `user@hostname -p PORT`, `user@hostname -i KEY`, `user@hostname -J JUMP`, `user@hostname -o ProxyCommand='CMD'`, or a host name from `hosts.toml`.
+- Storage specs: `placeholder`, `r2:bucket`, `b2:bucket`, `s3:bucket`, or a storage name from `storages.toml`.
 
-Cloudflared Access examples:
+Cloudflared Access example:
+
+```python
+host(
+    "case",
+    "root@172.16.0.88 -o ProxyCommand='cloudflared access ssh --hostname ssh-access.example.com'",
+)
+```
+
+Resume is now Python-native:
 
 ```bash
-# Inline host spec
-host case = root@172.16.0.88 -o ProxyCommand='cloudflared access ssh --hostname ssh-access.example.com'
+train resume train-demo
+train resume train-demo --var MODEL=llama-70b
 ```
 
-```yaml
-# hosts.yaml (primary + fallback candidates)
-hosts:
-  - name: case
-    type: ssh
-    hostname: primary.example.com
-    port: 22
-    username: root
-    env_vars:
-      connection_candidates:
-        - "ssh://backup.example.com:22"
-        - "cloudflared://ssh-access.example.com"
+Resume restores the latest saved job state, including tmux session mapping and resolved hosts. Because of that, host overrides are intentionally blocked on resume; use a fresh `train run ... --host ...` when you need a different machine.
+
+Centralized help topics:
+
+```bash
+train help
+train help recipe
+train help run
+train help schedule
 ```
 
-```yaml
-# hosts.yaml (structured candidates, same as interactive `train host add`)
-hosts:
-  - name: case
-    type: ssh
-    hostname: primary.example.com
-    port: 22
-    username: root
-    env_vars:
-      connection_candidates:
-        - type: ssh
-          hostname: backup.example.com
-          port: 22
-        - type: cloudflared
-          hostname: ssh-access.example.com
+## Python Recipe API
+
+`tmux-trainsh` recipes are authored as Python files and loaded with:
+
+```python
+from trainsh.pyrecipe import *
 ```
 
-### Storage Spec Formats
+Minimal example:
 
-| Spec | Description |
-|------|-------------|
-| `placeholder` | Placeholder, must be filled at runtime |
-| `r2:bucket` | Cloudflare R2 |
-| `b2:bucket` | Backblaze B2 |
-| `s3:bucket` | Amazon S3 |
-| `name` | Reference to storages.yaml config |
+```python
+from trainsh.pyrecipe import *
 
-### Execute Commands
+recipe(
+    "train-demo",
+    schedule="@every 30m",
+    executor="thread_pool",
+    workers=4,
+    callbacks=["console", "sqlite"],
+)
 
-Run commands in a tmux session (created with `tmux.open`):
-
-```
-@session > command
-@session > command &
-@session timeout=2h > command
-```
-
-| Syntax | Description |
-|--------|-------------|
-| `@session > cmd` | Run command, wait for completion |
-| `@session > cmd &` | Run command in background |
-| `@session timeout=DURATION > cmd` | Run with custom timeout (default: 10m) |
-
-**Note:** The `@session` references a session name from `tmux.open @host as session`, not the host directly.
-
-**Multiline:** Use shell line continuations (`\`) or heredocs (`<< 'EOF'`) to span commands across lines; the DSL treats them as a single execute step.
-
-**train exec:** `@name` resolves to an existing tmux session first. If none exists, it runs directly on the host named `name` without creating a tmux session.
-
-### Wait Commands
-
-Wait for conditions in a session:
-
-```
-wait @session "pattern" timeout=DURATION
-wait @session file=PATH timeout=DURATION
-wait @session port=PORT timeout=DURATION
-wait @session idle timeout=DURATION
+host("gpu", "your-server")
+ready = latest_only(fail_if_unknown=False, id="latest_only")
+main = session("main", on="gpu", after=ready)
+sync = main(
+    "cd /tmp && git clone https://github.com/example/project.git project",
+)
+train = main.bg(
+    "cd /tmp/project && python train.py",
+    after=sync,
+)
+main.wait("training finished", timeout="2h", after=train)
+main.idle(timeout="2h", after=train)
 ```
 
-| Condition | Description |
-|-----------|-------------|
-| `"pattern"` | Wait for regex pattern in terminal output |
-| `file=PATH` | Wait for file to exist |
-| `port=PORT` | Wait for port to be open |
-| `idle` | Wait for no child processes (command finished) |
+The Python API includes:
+- dependency scheduling via `after=...`
+- executor aliases such as `thread_pool`, `process_pool`, `local`, `airflow`, `celery`, `dask`, `debug`
+- direct session helpers for tmux/session workflows: `session(...)`, `main(...)`, `main.bg(...)`, `main.idle(...)`, `main.wait(...)`, `main.file(...)`, `main.port(...)`
+- control/provider helpers such as `latest_only`, `choose`, `short_circuit`, `join`, `storage_wait`, `sql_query`, `sql_exec`, `sql_script`, `xcom_push`, and `xcom_pull`
+- public recipe authoring via `from trainsh.pyrecipe import *`
 
-### Transfer Commands
+Starter paths:
+- `train recipes new <name> --template minimal` for a small local recipe
+- `train recipes new <name> --template feature-tour` for a fuller example that combines retries, callbacks, session waits, HTTP, SQLite, XCom, `latest_only`, and `storage_wait`
+- `train recipes show feature-tour` to inspect the bundled integrated example
 
-Transfer files between endpoints:
+More detail: [docs/python-recipes.md](docs/python-recipes.md)
 
-```
-@src:path -> @dst:path
-@src:path -> ./local/path
-./local/path -> @dst:path
-```
+## Scheduler
 
-### Control Commands
+Python recipes can be discovered as DAG-like jobs and triggered with:
 
-**tmux session commands:**
-
-The recipe system separates two concepts:
-- **Host**: The machine where commands run (defined with `host NAME = spec`)
-- **Session**: A persistent tmux session on that host (created with `tmux.open @host as session_name`)
-
-Commands are sent to **sessions**, not hosts directly. This allows multiple sessions on the same host.
-
-```
-# WRONG - missing session name
-tmux.open @gpu
-@gpu > python train.py
-
-# CORRECT - create named session, then use session name
-tmux.open @gpu as work
-@work > python train.py
-tmux.close @work
+```bash
+train schedule list
+train schedule run --once
+train schedule run --forever
+train schedule status
 ```
 
-| Command | Description |
-|---------|-------------|
-| `tmux.open @host as name` | Create tmux session named "name" on host and auto-bridge it to local splits |
-| `tmux.close @session` | Close tmux session |
-| `tmux.config @host` | Apply tmux configuration to remote host |
-| `vast.pick @host [options]` | Interactively select Vast.ai instance |
-| `vast.start [id]` | Start Vast.ai instance |
-| `vast.stop [id]` | Stop Vast.ai instance |
-| `vast.wait [options]` | Wait for instance to be ready |
-| `vast.cost [id]` | Show usage cost |
-| `notify "message"` | Send styled notification |
-| `sleep DURATION` | Sleep for duration |
+Schedules are read from recipe metadata such as:
 
-**notify syntax:**
-
-- `notify "done"`
-- `notify training complete`
-- `notify "$MODEL finished"`
-
-Styling and delivery are configured globally in `~/.config/tmux-trainsh/config.yaml`:
-
-```yaml
-notifications:
-  enabled: true
-  channels:                             # log | system | webhook | command
-    - log
-    - system
-  webhook_url: ""                       # used when channels include webhook
-  command: ""                           # used when channels include command
-  timeout_secs: 5
-  fail_on_error: false
+```python
+# schedule: @every 15m
 ```
 
-`system` channel uses macOS `osascript` native notification.
-
-**vast.pick options:**
-
-- `num_gpus=N` - Minimum GPU count
-- `min_gpu_ram=N` - Minimum GPU memory (GB)
-- `gpu=NAME` - GPU model (e.g., RTX_4090)
-- `max_dph=N` - Maximum $/hour
-- `limit=N` - Max instances to show
-
-**vast.wait options:**
-
-- `timeout=DURATION` - Max wait time (default: 10m)
-- `poll=DURATION` - Poll interval (default: 10s)
-- `stop_on_fail=BOOL` - Stop instance on timeout
-
-### Duration Format
-
-- `30s` - 30 seconds
-- `5m` - 5 minutes
-- `2h` - 2 hours
-- `300` - 300 seconds (raw number)
-
-### Comments
-
-```
-# This is a comment
-```
-
-### Variable Interpolation
-
-- `$NAME` - Reference a variable
-- `${NAME}` - Reference a variable (alternative)
-- `${secret:NAME}` - Reference a secret from secrets store
+The scheduler stores run metadata in `~/.config/tmux-trainsh/runtime.db`, which is also used by runtime features such as `latest_only` and XCom-like state.
 
 ## Commands
 
-### train run
-
-Run a recipe (alias for "recipe run")
+### Workflow
 
 | Command | Description |
 |---------|-------------|
 | `train run <name>` | Run a recipe |
+| `train resume <name>` | Resume the latest failed/interrupted run |
 | `train run <name> --host gpu=vast:123` | Override host |
 | `train run <name> --var MODEL=llama-7b` | Override variable |
 | `train run <name> --pick-host gpu` | Pick Vast.ai host |
-
-### train exec
-
-Execute DSL commands directly
-
-| Command | Description |
-|---------|-------------|
-| `train exec '<dsl>'` | Execute DSL commands directly |
-| `train exec '@session > cmd'` | Run in tmux session; falls back to host if no session exists |
-| `train exec '@src:path -> @dst:path'` | Transfer files |
-
-### train host
-
-Host management (SSH, Colab, Vast.ai)
-
-| Command | Description |
-|---------|-------------|
-| `train host list` | List configured hosts |
-| `train host show <name>` | Show host details |
-| `train host ssh <name>` | SSH into host |
-| `train host add` | Add new host (SSH/Colab) |
-| `train host edit <name>` | Edit existing host config |
-| `train host browse <name>` | Browse files on host |
-| `train host test <name>` | Test connection |
-| `train host rm <name>` | Remove a host |
-
-### train transfer
-
-File transfer between hosts/storage
-
-| Command | Description |
-|---------|-------------|
+| `train schedule list` | List discovered scheduled recipes |
+| `train schedule run --once` | Run one scheduler pass |
+| `train schedule status` | Show scheduler runtime history |
+| `train status` | View current recipe sessions |
+| `train logs` | View recent execution logs |
+| `train jobs` | View recent job history |
 | `train transfer <src> <dst>` | Transfer files |
 | `train transfer <src> <dst> --delete` | Sync with deletions |
 | `train transfer <src> <dst> --exclude '*.ckpt'` | Exclude patterns |
 | `train transfer <src> <dst> --dry-run` | Preview transfer |
 
-### train recipe
-
-Recipe management (list, show, edit, etc.)
+### Recipe Files
 
 | Command | Description |
 |---------|-------------|
-| `train recipe list` | List recipes |
-| `train recipe show <name>` | Show recipe details |
-| `train recipe status` | View running sessions |
-| `train recipe status --last` | Show latest running job details and attach commands |
-| `train recipe status --all` | Include completed sessions |
-| `train recipe syntax` | Show full DSL syntax reference |
-| `train recipe new <name>` | Create new recipe |
-| `train recipe edit <name>` | Edit recipe in editor |
-| `train recipe run <name>` | Run a recipe (same as `train run`) |
-| `train recipe resume <name>` | Resume a failed/interrupted recipe (rebuilds tmux bridge splits) |
-| `train recipe resume <name> --check` | Check remote status only |
-| `train recipe logs` | View execution logs |
-| `train recipe logs --last` | Show last execution |
-| `train recipe logs <job-id>` | Show logs for a specific job |
-| `train recipe jobs` | View job history |
-| `train recipe rm <name>` | Remove a recipe |
+| `train recipes list` | List recipes and bundled examples |
+| `train recipes show <name>` | Show recipe details |
+| `train recipes new <name> --template minimal|feature-tour` | Create new recipe |
+| `train recipes edit <name>` | Edit recipe in editor |
+| `train recipes rm <name>` | Remove a recipe |
 
-### train storage
-
-Storage backend management (R2, B2, S3, etc.)
+### Infrastructure
 
 | Command | Description |
 |---------|-------------|
+| `train host list` | List configured hosts |
+| `train host add` | Add new host (SSH/Colab) |
+| `train host edit <name>` | Edit existing host config |
+| `train host show <name>` | Show host details |
+| `train host ssh <name>` | SSH into host |
+| `train host browse <name>` | Browse files on host |
+| `train host test <name>` | Test connection |
+| `train host rm <name>` | Remove a host |
 | `train storage list` | List storage backends |
 | `train storage show <name>` | Show storage details |
 | `train storage add` | Add storage backend |
 | `train storage test <name>` | Test connection |
 | `train storage rm <name>` | Remove storage |
-
-### train secrets
-
-Manage API keys and credentials
-
-| Command | Description |
-|---------|-------------|
 | `train secrets list` | List stored secrets |
 | `train secrets set <key>` | Set a secret |
 | `train secrets get <key>` | Get a secret |
@@ -512,9 +397,7 @@ Configuration and settings
 | `train config tmux-list` | List current tmux options |
 | `train config reset` | Reset configuration |
 
-### train colab
-
-Google Colab integration
+### Cloud
 
 | Command | Description |
 |---------|-------------|
@@ -535,14 +418,13 @@ Vast.ai instance management
 | `train vast start <id>` | Start instance |
 | `train vast stop <id>` | Stop instance |
 | `train vast reboot <id>` | Reboot instance |
+| `train vast rm <id>` | Remove instance |
 | `train vast search` | Search for GPU offers |
 | `train vast keys` | List SSH keys |
 | `train vast attach-key [path]` | Attach local SSH key |
 | `train vast rm <id>` | Remove instance |
 
-### train pricing
-
-Currency exchange rates and cost calculator
+### Utility
 
 | Command | Description |
 |---------|-------------|
@@ -553,24 +435,10 @@ Currency exchange rates and cost calculator
 | `train pricing colab` | Show Colab pricing |
 | `train pricing vast` | Show Vast.ai costs |
 | `train pricing convert 10 USD CNY` | Convert currency |
-
-### train update
-
-Check for updates
-
-`train update`
-
-### train help
-
-Show help
-
-`train help`
-
-### train version
-
-Show version
-
-`train version`
+| `train help` | Browse centralized help topics |
+| `train help recipe` | Show Python recipe syntax and examples |
+| `train version` | Show version |
+| `train <command> --help` | Show command help |
 
 ## License
 

@@ -2,6 +2,7 @@
 # Encapsulates wait-related tmux polling and condition checks.
 
 import os
+import re
 import subprocess
 import time
 from typing import Any, Callable
@@ -97,7 +98,7 @@ class WaitHelper:
 
         if timeout > 3600:
             self.executor.log(f"  Long wait ({self.format_duration(timeout)})")
-            self.executor.log("  If you disconnect, run 'recipe resume' to continue later")
+            self.executor.log("  If you disconnect, run 'train resume <name>' to continue later")
 
         # Give commands a brief head start before polling for idle.
         time.sleep(min(5, max(1, timeout // 6)))
@@ -160,13 +161,13 @@ class WaitHelper:
             return False, f"Unknown window: {target}"
 
         start = time.time()
-        poll_interval = 30
+        poll_interval = 1 if pattern else 30
         ssh_failures = 0
         poll_count = 0
 
         if timeout > 3600:
             self.executor.log(f"  Long wait ({self.format_duration(timeout)})")
-            self.executor.log("  If you disconnect, run 'recipe resume' to continue later")
+            self.executor.log("  If you disconnect, run 'train resume <name>' to continue later")
 
         while time.time() - start < timeout:
             poll_count += 1
@@ -175,6 +176,26 @@ class WaitHelper:
 
             if self.executor.logger:
                 self.executor.logger.log_wait(target or "", condition or pattern or "", elapsed, remaining, f"poll #{poll_count}")
+
+            if pattern:
+                if not window.remote_session:
+                    return False, f"Window {target} has no tmux session"
+                try:
+                    pane = self.executor.get_tmux_client(window.host).capture_pane(
+                        window.remote_session,
+                        start="-400",
+                    )
+                    output = pane.stdout or ""
+                    if pane.returncode == 0 and re.search(pattern, output):
+                        if self.executor.logger:
+                            self.executor.logger.log_detail(
+                                "wait_pattern_found",
+                                f"Pattern matched in @{target}",
+                                {"pattern": pattern, "elapsed_sec": elapsed},
+                            )
+                        return True, f"Pattern found: {pattern}"
+                except re.error as exc:
+                    return False, f"Invalid wait pattern: {exc}"
 
             if condition and condition.startswith("file:"):
                 filepath = self.executor._interpolate(condition[5:])

@@ -9,3 +9,4 @@ vendors/
 .DS_Store
 .env
 uv.lock
+site/

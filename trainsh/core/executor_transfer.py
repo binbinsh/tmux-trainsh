@@ -2,7 +2,7 @@
 # Extracts transfer and endpoint parsing logic from DSLExecutor.
 
 import os
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .models import Host
 
@@ -22,20 +22,60 @@ class TransferHelper:
 
     def exec_transfer(self, step: Any) -> tuple[bool, str]:
         """Execute file transfer: source -> dest"""
+        source = getattr(step, "source", "")
+        destination = getattr(step, "dest", "")
+        delete = self._coerce_bool(getattr(step, "delete", False))
+        operation = str(getattr(step, "operation", "copy")).strip().lower()
+        exclude = self._coerce_list(getattr(step, "exclude", None))
+
+        # Treat explicit sync-like op as delete enabled.
+        if operation == "sync":
+            delete = True
+
+        return self.transfer(
+            source,
+            destination,
+            delete=delete,
+            exclude=exclude,
+            operation=operation,
+        )
+
+    def transfer(
+        self,
+        source: str,
+        destination: str,
+        *,
+        delete: bool = False,
+        exclude: Optional[Iterable[Any]] = None,
+        operation: str = "copy",
+    ) -> tuple[bool, str]:
+        """Execute transfer between source and destination specs."""
+        operation = (operation or "copy").strip().lower()
+        if operation not in {"copy", "sync"}:
+            return False, f"Unsupported transfer operation: {operation!r}"
+        if operation == "sync":
+            delete = True
+
         from ..services.transfer_engine import TransferEngine
 
-        source = self.executor._interpolate(step.source)
-        dest = self.executor._interpolate(step.dest)
+        source = self.executor._interpolate(str(source or "").strip())
+        destination = self.executor._interpolate(str(destination or "").strip())
+
+        if not source or not destination:
+            return False, "Transfer requires both source and destination"
 
         transfer_info = {
             "source": source,
-            "dest": dest,
+            "destination": destination,
+            "delete": bool(delete),
+            "operation": operation,
+            "exclude": list(exclude or []),
         }
         if self.executor.logger:
-            self.executor.logger.log_detail("transfer", f"Transferring {source} -> {dest}", transfer_info)
+            self.executor.logger.log_detail("transfer", f"Transferring {source} -> {destination}", transfer_info)
 
         src_endpoint = self.parse_endpoint(source)
-        dst_endpoint = self.parse_endpoint(dest)
+        dst_endpoint = self.parse_endpoint(destination)
 
         import time
         start_time = time.time()
@@ -47,21 +87,49 @@ class TransferHelper:
             destination=dst_endpoint,
             hosts=hosts,
             storages=storages,
+            delete=bool(delete),
+            exclude=list(exclude or []),
         )
         duration_ms = int((time.time() - start_time) * 1000)
 
         if self.executor.logger:
             self.executor.logger.log_transfer(
-                source, dest, "rsync",
+                source,
+                destination,
+                "sync" if operation == "sync" else "copy",
                 result.bytes_transferred,
                 duration_ms,
                 result.success,
-                result.message
+                result.message,
             )
 
         if result.success:
             return True, f"Transferred {result.bytes_transferred} bytes"
         return False, result.message
+
+    def _coerce_bool(self, value: Any, *, default: bool = False) -> bool:
+        """Normalize bool-like transfer inputs."""
+        if isinstance(value, bool):
+            return bool(value)
+        if value is None:
+            return bool(default)
+        text = str(value).strip().lower()
+        if not text:
+            return bool(default)
+        return text in {"1", "true", "yes", "y", "on", "t"}
+
+    def _coerce_list(self, value: Any) -> Optional[List[str]]:
+        """Normalize list-like values for transfer excludes."""
+        if value is None:
+            return None
+
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+
+        text = str(value).strip()
+        if not text:
+            return None
+        return [item.strip() for item in text.split(",") if item.strip()]
 
     def parse_endpoint(self, spec: str) -> Any:
         """Parse transfer endpoint: @host:/path, @storage:/path, or /local/path"""
@@ -87,6 +155,18 @@ class TransferHelper:
                 return TransferEndpoint(type="host", path=path, host_id=name)
 
             return TransferEndpoint(type="host", path="/", host_id=spec[1:])
+
+        if spec.startswith("host:"):
+            parts = spec[5:].split(":", 1)
+            if len(parts) == 2:
+                return TransferEndpoint(type="host", path=parts[1], host_id=parts[0])
+            return TransferEndpoint(type="host", path=parts[0], host_id=parts[0])
+
+        if spec.startswith("storage:"):
+            parts = spec[8:].split(":", 1)
+            if len(parts) == 2:
+                return TransferEndpoint(type="storage", path=parts[1], storage_id=parts[0])
+            return TransferEndpoint(type="storage", path=parts[0], storage_id=parts[0])
 
         return TransferEndpoint(type="local", path=os.path.expanduser(spec))
 
@@ -116,23 +196,41 @@ class TransferHelper:
         storages: Dict[str, Any] = {}
 
         for name, spec in self.executor.recipe.storages.items():
+            if isinstance(spec, Storage):
+                storages[name] = spec
+                continue
+            if isinstance(spec, dict):
+                try:
+                    storages[name] = Storage.from_dict(spec)
+                    continue
+                except Exception:
+                    pass
             if spec in global_storages:
                 storages[name] = global_storages[spec]
             elif spec != "placeholder":
+                provider = str(spec or "").strip().lower()
+                bucket = ""
                 if ":" in spec:
                     provider, bucket = spec.split(":", 1)
-                    storage_type = StorageType.R2
-                    if provider == "b2":
-                        storage_type = StorageType.B2
-                    elif provider == "s3":
-                        storage_type = StorageType.S3
-                    elif provider == "gdrive":
-                        storage_type = StorageType.GDRIVE
+                    provider = provider.strip().lower()
+                storage_type = {
+                    "local": StorageType.LOCAL,
+                    "r2": StorageType.R2,
+                    "s3": StorageType.S3,
+                    "b2": StorageType.B2,
+                    "smb": StorageType.SMB,
+                    "ssh": StorageType.SSH,
+                    "gdrive": StorageType.GOOGLE_DRIVE,
+                    "gcs": StorageType.GCS,
+                }.get(provider, StorageType.R2)
+                config: Dict[str, Any] = {}
+                if bucket:
+                    config["bucket"] = bucket
 
-                    storages[name] = Storage(
-                        id=name,
-                        name=name,
-                        type=storage_type,
-                        bucket=bucket,
-                    )
+                storages[name] = Storage(
+                    id=name,
+                    name=name,
+                    type=storage_type,
+                    config=config,
+                )
         return storages

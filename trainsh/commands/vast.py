@@ -33,6 +33,7 @@ def cmd_list(args: List[str]) -> None:
     from ..services.vast_api import get_vast_client
     from ..utils.vast_formatter import print_instance_table
 
+    print("Vast.ai instances:")
     client = get_vast_client()
     instances = client.list_instances()
     print_instance_table(instances)
@@ -204,6 +205,7 @@ def cmd_keys(args: List[str]) -> None:
     """List SSH keys."""
     from ..services.vast_api import get_vast_client
 
+    print("SSH keys:")
     client = get_vast_client()
     keys = client.list_ssh_keys()
 

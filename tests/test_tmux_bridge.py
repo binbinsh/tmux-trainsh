@@ -1,10 +1,11 @@
 import unittest
+from unittest.mock import patch
 
 from trainsh.config import get_default_config
 from trainsh.core.executor_main import DSLExecutor, WindowInfo
 from trainsh.core.remote_tmux import RemoteTmuxClient
 from trainsh.core.executor_utils import _infer_window_hosts_from_recipe
-from trainsh.core.dsl_parser import DSLRecipe, parse_recipe_string
+from trainsh.core.recipe_models import RecipeModel, RecipeStepModel, StepType
 
 
 class TmuxBridgeConfigTests(unittest.TestCase):
@@ -20,8 +21,9 @@ class TmuxBridgeConfigTests(unittest.TestCase):
 
 class BridgeAttachCommandTests(unittest.TestCase):
     def _executor(self) -> DSLExecutor:
-        recipe = DSLRecipe(name="test")
-        return DSLExecutor(recipe, log_callback=lambda _msg: None, recipe_path=None)
+        recipe = RecipeModel(name="test")
+        with patch("trainsh.core.executor_main.load_config", return_value={"tmux": {}}):
+            return DSLExecutor(recipe, log_callback=lambda _msg: None, recipe_path=None)
 
     def test_local_attach_command(self):
         executor = self._executor()
@@ -48,24 +50,46 @@ class BridgeAttachCommandTests(unittest.TestCase):
 
 class ResumeHostInferenceTests(unittest.TestCase):
     def test_infer_window_hosts_from_tmux_open_steps(self):
-        recipe = parse_recipe_string(
-            """
-host gpu = root@1.2.3.4 -p 22022
-host localbox = local
-tmux.open @gpu as train
-tmux.open @localbox as localrun
-@train > echo hi
-"""
+        recipe = RecipeModel(
+            name="test",
+            hosts={
+                "gpu": "root@1.2.3.4 -p 22022",
+                "localbox": "local",
+            },
+            steps=[
+                RecipeStepModel(
+                    type=StepType.CONTROL,
+                    line_num=1,
+                    raw="tmux.open @gpu as train",
+                    command="tmux.open",
+                    args=["@gpu", "as", "train"],
+                ),
+                RecipeStepModel(
+                    type=StepType.CONTROL,
+                    line_num=2,
+                    raw="tmux.open @localbox as localrun",
+                    command="tmux.open",
+                    args=["@localbox", "as", "localrun"],
+                ),
+                RecipeStepModel(
+                    type=StepType.EXECUTE,
+                    line_num=3,
+                    raw="@train > echo hi",
+                    host="train",
+                    commands="echo hi",
+                ),
+            ],
         )
-        mapping = _infer_window_hosts_from_recipe(recipe, upto_step=4)
+        mapping = _infer_window_hosts_from_recipe(recipe, upto_step=2)
         self.assertEqual(mapping.get("train"), "root@1.2.3.4 -p 22022")
         self.assertEqual(mapping.get("localrun"), "local")
 
 
 class TmuxClientFactoryTests(unittest.TestCase):
     def test_get_tmux_client_local_and_remote_cached(self):
-        recipe = DSLRecipe(name="test")
-        executor = DSLExecutor(recipe, log_callback=lambda _msg: None, recipe_path=None)
+        recipe = RecipeModel(name="test")
+        with patch("trainsh.core.executor_main.load_config", return_value={"tmux": {}}):
+            executor = DSLExecutor(recipe, log_callback=lambda _msg: None, recipe_path=None)
 
         local_client = executor.get_tmux_client("local")
         remote_a = executor.get_tmux_client("user@host -p 22")

@@ -5,7 +5,7 @@ import shlex
 import subprocess
 from typing import Dict, List, Optional, Tuple
 
-from .dsl_parser import DSLRecipe, StepType
+from .recipe_models import RecipeModel, StepType
 from .models import Host, HostType
 
 
@@ -139,7 +139,7 @@ def _format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
-def _infer_window_hosts_from_recipe(recipe: DSLRecipe, upto_step: int) -> Dict[str, str]:
+def _infer_window_hosts_from_recipe(recipe: RecipeModel, upto_step: int) -> Dict[str, str]:
     """Infer window->host mapping from tmux.open steps up to a step index."""
     mapping: Dict[str, str] = {}
     for idx, step in enumerate(recipe.steps):

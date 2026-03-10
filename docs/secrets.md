@@ -2,7 +2,7 @@
 
 tmux-trainsh provides a secure way to manage API keys, tokens, and other credentials using your operating system's native keychain.
 
-> Note: examples below use the `.recipe` DSL syntax. Secrets are referenced with `${secret:name}` interpolation.
+> Note: examples below use the current Python recipe DSL. `${secret:name}` interpolation works inside recipe commands exactly the same way.
 
 ## Overview
 
@@ -19,18 +19,20 @@ This ensures your sensitive data is encrypted at rest and protected by your syst
 
 Reference secrets in your recipe using the `${secret:name}` syntax:
 
-```yaml
-steps:
-  - id: setup_auth
-    ssh_command:
-      host_id: "${host_id}"
-      command: |
-        export HF_TOKEN=${secret:huggingface/token}
-        export WANDB_API_KEY=${secret:wandb/api_key}
-        export GITHUB_TOKEN=${secret:github/token}
+```python
+from trainsh.pyrecipe import *
 
-        huggingface-cli login --token $HF_TOKEN
-        wandb login --relogin
+recipe("secret-demo")
+host("gpu", "$HOST_ID")
+
+auth = shell("""
+export HF_TOKEN=${secret:huggingface/token}
+export WANDB_API_KEY=${secret:wandb/api_key}
+export GITHUB_TOKEN=${secret:github/token}
+
+huggingface-cli login --token $HF_TOKEN
+wandb login --relogin
+""", host="gpu")
 ```
 
 ### Variable vs Secret Interpolation
@@ -80,39 +82,29 @@ kaggle/key
 
 ## Example: Training with Private HuggingFace Model
 
-```yaml
-recipe:
-  name: train-private-model
-  version: "1.0.0"
+```python
+from trainsh.pyrecipe import *
 
-variables:
-  host_id: vast-12345
-  model_repo: my-org/my-private-model
-  remote_workdir: /workspace/train
+recipe("train-private-model")
+host("gpu", "vast:12345")
+var("MODEL_REPO", "my-org/my-private-model")
+var("REMOTE_WORKDIR", "/workspace/train")
 
-steps:
-  - id: hf_login
-    ssh_command:
-      host_id: "${host_id}"
-      command: |
-        export HF_TOKEN=${secret:huggingface/token}
-        huggingface-cli login --token $HF_TOKEN --add-to-git-credential
-        echo "Logged in to HuggingFace"
+hf_login = shell("""
+export HF_TOKEN=${secret:huggingface/token}
+huggingface-cli login --token $HF_TOKEN --add-to-git-credential
+echo \"Logged in to HuggingFace\"
+""", host="gpu")
 
-  - id: clone_model
-    depends_on: [hf_login]
-    ssh_command:
-      host_id: "${host_id}"
-      command: "git clone https://huggingface.co/${model_repo} ${remote_workdir}/model"
-
-  - id: train
-    depends_on: [clone_model]
-    tmux_new:
-      host_id: "${host_id}"
-      session_name: train
-      command: |
-        export WANDB_API_KEY=${secret:wandb/api_key}
-        python train.py --model ${remote_workdir}/model --wandb-project my-project
+main = session("train", on="gpu", after=hf_login)
+clone_model = main(
+    "git clone https://huggingface.co/${MODEL_REPO} ${REMOTE_WORKDIR}/model",
+    after=hf_login,
+)
+train = main.bg("""
+export WANDB_API_KEY=${secret:wandb/api_key}
+python train.py --model ${REMOTE_WORKDIR}/model --wandb-project my-project
+""", after=clone_model)
 ```
 
 ## Security Notes

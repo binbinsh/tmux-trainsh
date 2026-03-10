@@ -19,12 +19,25 @@ BANNER = r'''
 '''
 
 
-# ---------------------------------------------------------------------------
-# COMMANDS_REGISTRY – single source of truth for all CLI commands.
-# Each entry defines a top-level command, its description, and subcommands.
-# generate_commands_markdown() renders them as markdown for README.
-# usage / help_text are generated from this registry.
-# ---------------------------------------------------------------------------
+Commands:
+  help      - Browse help topics
+  run       - Run a recipe
+  resume    - Resume the latest failed/interrupted recipe run
+  status    - Show current or recent recipe sessions
+  logs      - Show execution logs
+  jobs      - Show recent job state history
+  schedule  - Scheduler operations for timed recipes
+  recipes   - Recipe file management
+  transfer  - File transfer between hosts/storage
+  host      - Host management (SSH, Colab, Vast.ai)
+  storage   - Storage backend management (R2, B2, S3, etc.)
+  secrets   - Manage API keys and credentials
+  config    - Configuration and settings
+  vast      - Vast.ai instance management
+  colab     - Google Colab integration
+  pricing   - Currency exchange rates and cost calculator
+  update    - Check for updates
+'''
 
 COMMANDS_REGISTRY: List[Dict] = [
     {
@@ -211,124 +224,64 @@ COMMANDS_REGISTRY: List[Dict] = [
 ]
 
 
-def _generate_usage() -> str:
-    """Generate the short usage string from COMMANDS_REGISTRY."""
-    lines = ["[command] [args...]", "", "Commands:"]
-    for entry in COMMANDS_REGISTRY:
-        cmd = entry["command"]
-        # Skip meta commands (help/version) in short usage
-        if cmd in ("help", "version"):
-            continue
-        lines.append(f"  {cmd:<10s}- {entry['description']}")
-    lines.append("")
-    return "\n".join(lines)
+QUICK START
+  train help                          # Browse help topics
+  train help recipe                   # Python recipe syntax and examples
+  train secrets set VAST_API_KEY      # Set up API keys
+  train host add                      # Add SSH/Colab host
+  train storage add                   # Add storage backend
+  train recipes list                  # Inspect available recipes
+  train run <recipe>                  # Run a recipe
+  train schedule list                 # Inspect scheduled recipes
 
+HELP HUB
+  help                    Browse all help topics
+  help recipe             Python recipe syntax, examples, and lifecycle
+  help run                Run command options
+  help schedule           Scheduler usage
+  help host               Host management
 
-def _generate_help_text() -> str:
-    """Generate the full help text from COMMANDS_REGISTRY."""
-    lines = [
-        "",
-        "tmux-trainsh: GPU training workflow automation in the terminal.",
-        "",
-        "Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends",
-        "(Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.",
-        "",
-        "QUICK START",
-        "  train secrets set VAST_API_KEY      # Set up API keys",
-        "  train host add                      # Add SSH/Colab host",
-        "  train storage add                   # Add storage backend",
-        "  train run <recipe>                  # Run a recipe",
-        "",
-        "COMMANDS",
-    ]
-    for entry in COMMANDS_REGISTRY:
-        cmd = entry["command"]
-        # Build a short subcommand hint from the subcommand list
-        sub_names = []
-        seen = set()
-        for sc in entry.get("subcommands", []):
-            name = sc["name"].split()[0]
-            if name.startswith("<") or name.startswith("'") or name.startswith("@"):
-                continue
-            if name.startswith("-"):
-                continue
-            if name not in seen:
-                sub_names.append(name)
-                seen.add(name)
-        if sub_names:
-            hint = "|".join(sub_names[:3])
-            if len(sub_names) > 3:
-                hint += "|..."
-            left = f"  {cmd} {hint}"
-        elif cmd in ("help", "version"):
-            left = f"  {cmd}"
-        else:
-            left = f"  {cmd} <args>"
-        lines.append(f"{left:<32s}{entry['help_summary']}")
-    lines.extend([
-        "",
-        "RECIPE DSL (quick reference)",
-        "  var NAME = value                    Define a variable",
-        "  host gpu = placeholder              Define a host (filled by vast.pick)",
-        "  storage output = r2:bucket          Define storage backend",
-        "",
-        "  vast.pick @gpu num_gpus=1           Pick Vast.ai instance",
-        "  vast.wait timeout=5m                Wait for instance ready",
-        "  tmux.open @gpu as work              Create tmux session",
-        "",
-        "  @work > command                     Run command in session",
-        "  @work > command &                   Run in background",
-        "  wait @work idle timeout=2h          Wait for completion",
-        '  notify "Done"                        Send styled notification',
-        "",
-        "  @gpu:/path -> @output:/path         Transfer files",
-        "  vast.stop                           Stop instance",
-        "",
-        "  Full DSL reference: train recipe syntax",
-        "",
-        "CONFIG FILES",
-        "  ~/.config/tmux-trainsh/",
-        "  ├── config.yaml         Main settings",
-        "  ├── hosts.yaml          SSH hosts",
-        "  ├── storages.yaml       Storage backends",
-        "  └── recipes/            Recipe files (.recipe)",
-        "",
-        'Use "train <command> --help" for command-specific help.',
-        "Full documentation: https://github.com/binbinsh/tmux-trainsh",
-        "",
-    ])
-    return "\n".join(lines)
+WORKFLOWS
+  run <name>              Run a recipe
+  resume <name>           Resume the latest failed/interrupted recipe run
+  status [id]             Show current or recent recipe sessions
+  logs [job-id]           Show execution logs
+  jobs                    Show recent job state history
+  schedule list|run|...   Scheduler operations for timed recipes
+  transfer <src> <dst>    File transfer between hosts/storage
 
+RECIPE FILES
+  recipes list|show|new|... Manage Python recipe files
 
-def generate_commands_markdown() -> str:
-    """Render COMMANDS_REGISTRY as markdown tables for README."""
-    header = "| Command | Description |\n|---------|-------------|"
-    sections: List[str] = []
+INFRASTRUCTURE
+  host list|add|ssh|...   Host management (SSH, Colab, Vast.ai)
+  storage list|add|...    Storage backend management (R2, B2, S3)
+  secrets list|set|get    Manage API keys and credentials
+  config show|set|...     Configuration and settings
 
-    for entry in COMMANDS_REGISTRY:
-        cmd = entry["command"]
-        subs = entry.get("subcommands", [])
+CLOUD
+  vast list|ssh|start|... Vast.ai instance management
+  colab list|connect|ssh  Google Colab integration
 
-        sections.append(f"### train {cmd}\n")
-        sections.append(entry["description"])
-        sections.append("")
+UTILITY
+  pricing rates|convert   Currency exchange and cost calculator
+  update                  Check for updates
+  version                 Show version
 
-        if not subs:
-            sections.append(f"`train {cmd}`")
-            sections.append("")
-            continue
+RESUME
+  train resume <name>                 Resume from the latest saved checkpoint
+  Resume keeps saved hosts/tmux state; only --var overrides are supported
 
-        sections.append(header)
-        for sc in subs:
-            sections.append(f"| `train {cmd} {sc['name']}` | {sc['description']} |")
-        sections.append("")
+CONFIG FILES
+  ~/.config/tmux-trainsh/
+  ├── config.toml         Main settings
+  ├── hosts.toml          SSH hosts
+  ├── storages.toml       Storage backends
+  └── recipes/            Recipe files (.py)
 
-    return "\n".join(sections)
-
-
-usage = _generate_usage()
-
-help_text = _generate_help_text()
+Use "train help <topic>" for centralized help, or "train <command> --help" for command-local help.
+Full documentation: https://github.com/binbinsh/tmux-trainsh
+'''
 
 
 def option_text() -> str:
@@ -360,56 +313,75 @@ def main(args: list[str]) -> Optional[str]:
     command = args[1]
     cmd_args = args[2:]
 
-    # Route to subcommand
-    if command == "run":
-        # Alias: "train run <name>" -> "train recipe run <name>"
-        from .commands.recipe import cmd_run
-        return cmd_run(cmd_args)
-    elif command == "exec":
-        from .commands.exec_cmd import main as exec_main
-        return exec_main(cmd_args)
-    elif command == "vast":
-        from .commands.vast import main as vast_main
-        return vast_main(cmd_args)
-    elif command == "transfer":
-        from .commands.transfer import main as transfer_main
-        return transfer_main(cmd_args)
-    elif command == "recipe":
-        from .commands.recipe import main as recipe_main
-        return recipe_main(cmd_args)
-    elif command == "host":
-        from .commands.host import main as host_main
-        return host_main(cmd_args)
-    elif command == "storage":
-        from .commands.storage import main as storage_main
-        return storage_main(cmd_args)
-    elif command == "secrets":
-        from .commands.secrets_cmd import main as secrets_main
-        return secrets_main(cmd_args)
-    elif command == "colab":
-        from .commands.colab import main as colab_main
-        return colab_main(cmd_args)
-    elif command == "pricing":
-        from .commands.pricing import main as pricing_main
-        return pricing_main(cmd_args)
-    elif command == "update":
-        from .commands.update import main as update_main
-        return update_main(cmd_args)
-    elif command == "config":
-        from .commands.config_cmd import main as config_main
-        return config_main(cmd_args)
-    elif command == "help":
+    if command in {"-h", "--help"}:
+        from .commands.help_cmd import main as help_main
         print(BANNER)
-        print(help_text)
+        help_main([])
         raise SystemExit(0)
+    if command in {"-V", "--version"}:
+        from . import __display_version__
+        print(f"tmux-trainsh {__display_version__}")
+        raise SystemExit(0)
+
+    # Route to subcommand
+    if command == "help":
+        from .commands.help_cmd import main as help_main
+        return help_main(cmd_args)
     elif command == "version":
         from . import __display_version__
         print(f"tmux-trainsh {__display_version__}")
         raise SystemExit(0)
-    else:
+
+    from .commands.recipe import main as recipes_main
+    from .commands.recipe_runtime import (
+        cmd_jobs,
+        cmd_logs,
+        cmd_resume,
+        cmd_run,
+        cmd_status,
+    )
+    from .commands.schedule_cmd import main as schedule_main
+    from .commands.vast import main as vast_main
+    from .commands.transfer import main as transfer_main
+    from .commands.host import main as host_main
+    from .commands.storage import main as storage_main
+    from .commands.secrets_cmd import main as secrets_main
+    from .commands.colab import main as colab_main
+    from .commands.pricing import main as pricing_main
+    from .commands.update import main as update_main
+    from .commands.config_cmd import main as config_main
+
+    handlers = {
+        "run": cmd_run,
+        "resume": cmd_resume,
+        "status": cmd_status,
+        "logs": cmd_logs,
+        "jobs": cmd_jobs,
+        "schedule": schedule_main,
+        "recipes": recipes_main,
+        "transfer": transfer_main,
+        "host": host_main,
+        "storage": storage_main,
+        "secrets": secrets_main,
+        "config": config_main,
+        "vast": vast_main,
+        "colab": colab_main,
+        "pricing": pricing_main,
+        "update": update_main,
+    }
+
+    handler = handlers.get(command)
+    if command == "recipe":
+        print("Unknown command: recipe")
+        print("Use 'train recipes' for file management.")
+        print("Use top-level 'train run|resume|status|logs|jobs|schedule' for execution.")
+        raise SystemExit(1)
+
+    if handler is None:
         print(f"Unknown command: {command}")
         print(usage)
         raise SystemExit(1)
+    return handler(cmd_args)
 
 
 def cli() -> None:
