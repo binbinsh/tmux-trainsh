@@ -1,5 +1,13 @@
 # AGENTS
 
+Versioning rule:
+
+- Project versions use `YY.MMDD.HHMM`.
+- `YY` is the two-digit year.
+- `MMDD` is month and day.
+- `HHMM` is 24-hour time.
+- Example: `26.0310.1845` means 2026-03-10 18:45.
+
 Project-level constraints for `pyrecipe` migration work:
 
 - Keep the Python recipe runtime split across multiple files; do not collapse everything into one module.

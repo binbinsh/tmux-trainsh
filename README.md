@@ -39,16 +39,6 @@ uv tool install tmux-trainsh
 curl -fsSL https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.sh | bash -s -- --github
 ```
 
-## Versioning
-
-Project versions use the format `YY.MMDD.HHMM`.
-
-- `YY`: two-digit year
-- `MMDD`: month and day
-- `HHMM`: 24-hour time
-
-Example: `26.0310.1845` means 2026-03-10 18:45.
-
 ## Quick Start
 
 ```bash
