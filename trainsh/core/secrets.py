@@ -35,6 +35,195 @@ def _save_config(cfg: dict) -> None:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
 
+def normalize_secret_key(key: str) -> str:
+    """Normalize secret names for matching."""
+    return str(key or "").strip().upper()
+
+
+def parse_secret_bundle_value(value: Optional[str]) -> Optional[Dict[str, str]]:
+    """Parse a JSON-encoded secret bundle payload."""
+    if not value:
+        return None
+
+    text = str(value).strip()
+    candidates = [text]
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        candidates.append(text[1:-1].replace('""', '"'))
+
+    data = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            data = parsed
+            break
+        if isinstance(parsed, str):
+            try:
+                reparsed = json.loads(parsed)
+            except Exception:
+                continue
+            if isinstance(reparsed, dict):
+                data = reparsed
+                break
+
+    if not isinstance(data, dict):
+        return None
+
+    parsed: Dict[str, str] = {}
+    for raw_key, raw_value in data.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        parsed[key] = "" if raw_value is None else str(raw_value)
+    return parsed or None
+
+
+def dump_secret_bundle_value(payload: Dict[str, str]) -> str:
+    """Serialize a secret bundle payload to JSON."""
+    clean = {
+        str(key): str(value)
+        for key, value in payload.items()
+        if value is not None and str(value) != ""
+    }
+    return json.dumps(clean, ensure_ascii=False, sort_keys=True)
+
+
+def normalize_storage_bundle_payload(
+    provider: str,
+    payload: Optional[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    """Normalize bundle fields to the canonical provider-specific names."""
+    if not payload:
+        return None
+
+    cleaned = {
+        str(key).strip(): "" if value is None else str(value).strip()
+        for key, value in payload.items()
+        if str(key).strip()
+    }
+
+    if provider == "r2":
+        normalized: Dict[str, str] = {}
+        account_id = cleaned.get("account_id", "")
+        access_key_id = cleaned.get("access_key_id", "")
+        secret_access_key = cleaned.get("secret_access_key", "")
+        endpoint = cleaned.get("endpoint") or cleaned.get("s3_api_endpoint", "")
+
+        if account_id:
+            normalized["account_id"] = account_id
+        if access_key_id:
+            normalized["access_key_id"] = access_key_id
+        if secret_access_key:
+            normalized["secret_access_key"] = secret_access_key
+        if endpoint:
+            normalized["endpoint"] = endpoint
+        return normalized or None
+
+    if provider == "b2":
+        normalized = {}
+        application_key_id = cleaned.get("application_key_id", "")
+        application_key = cleaned.get("application_key", "")
+        endpoint = cleaned.get("endpoint", "")
+
+        if application_key_id:
+            normalized["application_key_id"] = application_key_id
+        if application_key:
+            normalized["application_key"] = application_key
+        if endpoint:
+            normalized["endpoint"] = endpoint
+        return normalized or None
+
+    return cleaned or None
+
+
+def resolve_secret_bundle_alias(key: str) -> Optional[tuple[str, Optional[str], str]]:
+    """Map supported secret aliases onto the composite bundle keys."""
+    normalized = normalize_secret_key(key)
+
+    if normalized == SecretKeys.R2_CREDENTIALS:
+        return SecretKeys.R2_CREDENTIALS, None, "r2"
+    if normalized == SecretKeys.R2_ACCOUNT_ID:
+        return SecretKeys.R2_CREDENTIALS, "account_id", "r2"
+    if normalized == SecretKeys.R2_ACCESS_KEY_ID:
+        return SecretKeys.R2_CREDENTIALS, "access_key_id", "r2"
+    if normalized == SecretKeys.R2_SECRET_ACCESS_KEY:
+        return SecretKeys.R2_CREDENTIALS, "secret_access_key", "r2"
+    if normalized == "R2_ENDPOINT":
+        return SecretKeys.R2_CREDENTIALS, "endpoint", "r2"
+
+    if normalized == SecretKeys.B2_CREDENTIALS:
+        return SecretKeys.B2_CREDENTIALS, None, "b2"
+    if normalized == SecretKeys.B2_APPLICATION_KEY_ID:
+        return SecretKeys.B2_CREDENTIALS, "application_key_id", "b2"
+    if normalized == SecretKeys.B2_APPLICATION_KEY:
+        return SecretKeys.B2_CREDENTIALS, "application_key", "b2"
+    if normalized == "B2_ENDPOINT":
+        return SecretKeys.B2_CREDENTIALS, "endpoint", "b2"
+
+    if normalized.endswith("_R2_CREDENTIALS"):
+        return normalized, None, "r2"
+    if normalized.endswith("_B2_CREDENTIALS"):
+        return normalized, None, "b2"
+
+    if normalized.endswith("_ACCOUNT_ID"):
+        prefix = normalized[: -len("_ACCOUNT_ID")]
+        if prefix:
+            return f"{prefix}_R2_CREDENTIALS", "account_id", "r2"
+    if normalized.endswith("_ACCESS_KEY_ID"):
+        prefix = normalized[: -len("_ACCESS_KEY_ID")]
+        if prefix:
+            return f"{prefix}_R2_CREDENTIALS", "access_key_id", "r2"
+    if normalized.endswith("_SECRET_ACCESS_KEY"):
+        prefix = normalized[: -len("_SECRET_ACCESS_KEY")]
+        if prefix:
+            return f"{prefix}_R2_CREDENTIALS", "secret_access_key", "r2"
+    if normalized.endswith("_APPLICATION_KEY_ID"):
+        prefix = normalized[: -len("_APPLICATION_KEY_ID")]
+        if prefix:
+            return f"{prefix}_B2_CREDENTIALS", "application_key_id", "b2"
+    if normalized.endswith("_APPLICATION_KEY"):
+        prefix = normalized[: -len("_APPLICATION_KEY")]
+        if prefix:
+            return f"{prefix}_B2_CREDENTIALS", "application_key", "b2"
+
+    return None
+
+
+def bundle_component_aliases(composite_key: str, provider: str) -> Dict[str, str]:
+    """Return component aliases covered by a composite secret bundle."""
+    normalized = normalize_secret_key(composite_key)
+    if provider == "r2":
+        if normalized == SecretKeys.R2_CREDENTIALS:
+            return {
+                "account_id": SecretKeys.R2_ACCOUNT_ID,
+                "access_key_id": SecretKeys.R2_ACCESS_KEY_ID,
+                "secret_access_key": SecretKeys.R2_SECRET_ACCESS_KEY,
+                "endpoint": "R2_ENDPOINT",
+            }
+        prefix = normalized[: -len("_R2_CREDENTIALS")]
+        return {
+            "account_id": f"{prefix}_ACCOUNT_ID",
+            "access_key_id": f"{prefix}_ACCESS_KEY_ID",
+            "secret_access_key": f"{prefix}_SECRET_ACCESS_KEY",
+            "endpoint": f"{prefix}_ENDPOINT",
+        }
+
+    if normalized == SecretKeys.B2_CREDENTIALS:
+        return {
+            "application_key_id": SecretKeys.B2_APPLICATION_KEY_ID,
+            "application_key": SecretKeys.B2_APPLICATION_KEY,
+            "endpoint": "B2_ENDPOINT",
+        }
+    prefix = normalized[: -len("_B2_CREDENTIALS")]
+    return {
+        "application_key_id": f"{prefix}_APPLICATION_KEY_ID",
+        "application_key": f"{prefix}_APPLICATION_KEY",
+        "endpoint": f"{prefix}_ENDPOINT",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Backend ABC
 # ---------------------------------------------------------------------------
@@ -313,12 +502,8 @@ class KeyringBackend(SecretsBackend):
             SecretKeys.ANTHROPIC_API_KEY,
             SecretKeys.GITHUB_TOKEN,
             SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
-            SecretKeys.R2_ACCESS_KEY,
-            SecretKeys.R2_SECRET_KEY,
-            SecretKeys.B2_KEY_ID,
-            SecretKeys.B2_APPLICATION_KEY,
-            SecretKeys.AWS_ACCESS_KEY_ID,
-            SecretKeys.AWS_SECRET_ACCESS_KEY,
+            SecretKeys.R2_CREDENTIALS,
+            SecretKeys.B2_CREDENTIALS,
         ]
         return [k for k in predefined if self.get(k) is not None]
 
@@ -561,36 +746,112 @@ class SecretsManager:
             self._backend_loaded = True
         return backend
 
-    def get(self, key: str) -> Optional[str]:
-        if key in self._cache:
-            return self._cache[key]
+    def _get_direct_value(self, key: str) -> Optional[str]:
+        normalized = normalize_secret_key(key)
+        if normalized in self._cache:
+            return self._cache[normalized]
 
-        env_value = os.environ.get(key)
+        env_value = os.environ.get(normalized)
         if env_value:
             return env_value
 
         backend = self._get_backend()
-        if backend is not None:
-            try:
-                value = backend.get(key)
-            except Exception:
-                value = None
-            if value:
-                self._cache[key] = value
-                return value
-
+        if backend is None:
+            return None
+        try:
+            value = backend.get(normalized)
+        except Exception:
+            value = None
+        if value:
+            self._cache[normalized] = value
+            return value
         return None
+
+    def _get_bundle_payload(self, composite_key: str, provider: str) -> Optional[Dict[str, str]]:
+        direct_value = self._get_direct_value(composite_key)
+        payload = parse_secret_bundle_value(direct_value)
+        if payload:
+            return normalize_storage_bundle_payload(provider, payload)
+
+        aliases = bundle_component_aliases(composite_key, provider)
+        legacy_payload = {
+            field: value
+            for field, alias in aliases.items()
+            if (value := self._get_direct_value(alias))
+        }
+        return normalize_storage_bundle_payload(provider, legacy_payload or None)
+
+    def get(self, key: str) -> Optional[str]:
+        normalized = normalize_secret_key(key)
+        bundle_alias = resolve_secret_bundle_alias(normalized)
+        if bundle_alias is None:
+            direct_value = self._get_direct_value(normalized)
+            if direct_value:
+                return direct_value
+            return None
+
+        composite_key, field_name, provider = bundle_alias
+        payload = self._get_bundle_payload(composite_key, provider)
+        if not payload:
+            return None
+
+        if field_name is None:
+            value = dump_secret_bundle_value(payload)
+        else:
+            value = str(payload.get(field_name, "")).strip()
+            if not value:
+                return None
+
+        self._cache[normalized] = value
+        return value
 
     def set(self, key: str, value: str) -> None:
         backend = self._require_backend()
-        backend.set(key, value)
-        self._cache[key] = value
+        normalized = normalize_secret_key(key)
+        backend.set(normalized, value)
+        self._cache[normalized] = value
+
+    def set_bundle(self, composite_key: str, payload: Dict[str, str]) -> None:
+        normalized = normalize_secret_key(composite_key)
+        bundle_alias = resolve_secret_bundle_alias(normalized)
+        provider = bundle_alias[2] if bundle_alias is not None else ("r2" if normalized.endswith("_R2_CREDENTIALS") else "b2")
+        normalized_payload = normalize_storage_bundle_payload(provider, payload) or {}
+        serialized = dump_secret_bundle_value(normalized_payload)
+        backend = self._require_backend()
+        backend.set(normalized, serialized)
+        self._cache[normalized] = serialized
+
+        for alias in bundle_component_aliases(normalized, provider).values():
+            alias_key = normalize_secret_key(alias)
+            self._cache.pop(alias_key, None)
+            if alias_key != normalized:
+                try:
+                    backend.delete(alias_key)
+                except Exception:
+                    pass
 
     def delete(self, key: str) -> None:
-        self._cache.pop(key, None)
+        normalized = normalize_secret_key(key)
+        bundle_alias = resolve_secret_bundle_alias(normalized)
+        target_key = bundle_alias[0] if bundle_alias is not None else normalized
+
+        self._cache.pop(normalized, None)
+        self._cache.pop(target_key, None)
+        if bundle_alias is not None:
+            for alias in bundle_component_aliases(target_key, bundle_alias[2]).values():
+                self._cache.pop(normalize_secret_key(alias), None)
+
         backend = self._get_backend()
         if backend is not None:
-            backend.delete(key)
+            backend.delete(target_key)
+            if bundle_alias is not None:
+                for alias in bundle_component_aliases(target_key, bundle_alias[2]).values():
+                    alias_key = normalize_secret_key(alias)
+                    if alias_key != target_key:
+                        try:
+                            backend.delete(alias_key)
+                        except Exception:
+                            pass
 
     def exists(self, key: str) -> bool:
         return self.get(key) is not None
@@ -603,14 +864,50 @@ class SecretsManager:
             SecretKeys.ANTHROPIC_API_KEY,
             SecretKeys.GITHUB_TOKEN,
             SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
-            SecretKeys.R2_ACCESS_KEY,
-            SecretKeys.R2_SECRET_KEY,
-            SecretKeys.B2_KEY_ID,
-            SecretKeys.B2_APPLICATION_KEY,
-            SecretKeys.AWS_ACCESS_KEY_ID,
-            SecretKeys.AWS_SECRET_ACCESS_KEY,
+            SecretKeys.R2_CREDENTIALS,
+            SecretKeys.B2_CREDENTIALS,
         ]
-        return [key for key in predefined if self.exists(key)]
+        present: set[str] = set()
+
+        present.update(normalize_secret_key(key) for key in self._cache)
+        present.update(
+            normalize_secret_key(key)
+            for key, value in os.environ.items()
+            if value
+        )
+
+        backend = self._get_backend()
+        if backend is not None:
+            try:
+                present.update(
+                    normalize_secret_key(key)
+                    for key in backend.list_set_keys()
+                    if key
+                )
+            except Exception:
+                pass
+
+        available: List[str] = []
+        for key in predefined:
+            normalized = normalize_secret_key(key)
+            bundle_alias = resolve_secret_bundle_alias(normalized)
+            if bundle_alias is None:
+                if normalized in present:
+                    available.append(key)
+                continue
+
+            composite_key, _field_name, provider = bundle_alias
+            aliases = {
+                normalize_secret_key(composite_key),
+                *(
+                    normalize_secret_key(alias)
+                    for alias in bundle_component_aliases(composite_key, provider).values()
+                ),
+            }
+            if present.intersection(aliases):
+                available.append(key)
+
+        return available
 
     # Convenience accessors
     def get_vast_api_key(self) -> Optional[str]:

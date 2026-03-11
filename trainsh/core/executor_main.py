@@ -2273,10 +2273,12 @@ class DSLExecutor:
 
     def _resolve_storage(self, storage_name: Any) -> Optional[Storage]:
         """Resolve storage name to Storage object."""
-        name = str(storage_name).strip() if storage_name is not None else ""
-        if not name:
-            return None
-        return self._build_transfer_storages().get(name)
+        from .storage_specs import resolve_storage_reference
+
+        return resolve_storage_reference(
+            storage_name,
+            named_storages=self._build_transfer_storages(),
+        )
 
     def _storage_local_path(self, storage: Storage, path: str) -> str:
         """Resolve a path within local storage."""
@@ -2295,7 +2297,7 @@ class DSLExecutor:
         path_text = str(path or "").strip().lstrip("/")
         remote_name = get_rclone_remote_name(storage)
 
-        if storage.type in {StorageType.R2, StorageType.S3, StorageType.B2}:
+        if storage.type in {StorageType.R2, StorageType.B2}:
             bucket = str(storage.config.get("bucket", "")).strip().strip("/")
             if bucket:
                 if not path_text:
@@ -2317,6 +2319,8 @@ class DSLExecutor:
 
         if not check_rclone_available():
             return False, "rclone is required. Install with: brew install rclone"
+        if storage.type == StorageType.S3:
+            return False, "Amazon S3 support has been removed. Please migrate to R2 or B2."
 
         env = os.environ.copy()
         env.update(build_rclone_env(storage))

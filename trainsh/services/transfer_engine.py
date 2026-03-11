@@ -8,7 +8,8 @@ from typing import Optional, List, Callable, Dict
 from dataclasses import dataclass
 
 from ..core.models import Host, Storage, StorageType, TransferEndpoint, HostType
-from ..core.secrets import get_secrets_manager
+from ..core.storage_specs import sanitize_rclone_remote_name
+from ..core.secrets import get_secrets_manager, parse_secret_bundle_value
 from ..constants import SecretKeys
 
 
@@ -23,8 +24,8 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
     This allows us to configure remotes without modifying ~/.config/rclone/rclone.conf
 
     Credentials are loaded in priority order:
-    1. Storage-specific secrets: {STORAGE_NAME}_ACCESS_KEY, etc.
-    2. Global secrets: R2_ACCESS_KEY, AWS_ACCESS_KEY_ID, etc.
+    1. Storage-specific bundle/legacy secrets
+    2. Global bundle/legacy secrets
     3. Config values stored in storage.config
 
     Args:
@@ -34,13 +35,20 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
     Returns:
         Dictionary of environment variables to set
     """
-    name = (remote_name or storage.name).upper().replace("-", "_").replace(" ", "_")
-    storage_prefix = name  # For storage-specific secrets
+    remote_env_name = sanitize_rclone_remote_name(
+        remote_name or get_rclone_remote_name(storage),
+        uppercase=True,
+    )
+    storage_prefix = str(storage.name or "").upper().replace("-", "_").replace(" ", "_")
     secrets = get_secrets_manager()
     env: Dict[str, str] = {}
     config = storage.config
+    storage_bundle = parse_secret_bundle_value(secrets.get(f"{storage_prefix}_R2_CREDENTIALS"))
+    global_r2_bundle = parse_secret_bundle_value(secrets.get(SecretKeys.R2_CREDENTIALS))
+    storage_b2_bundle = parse_secret_bundle_value(secrets.get(f"{storage_prefix}_B2_CREDENTIALS"))
+    global_b2_bundle = parse_secret_bundle_value(secrets.get(SecretKeys.B2_CREDENTIALS))
 
-    def get_credential(storage_key: str, global_key: str, config_key: str = "") -> str:
+    def get_credential(storage_key: str, global_key: str, config_keys: str | tuple[str, ...] = ()) -> str:
         """Get credential from storage-specific, global, or config sources."""
         # 1. Try storage-specific secret: {STORAGE_NAME}_{KEY}
         value = secrets.get(f"{storage_prefix}_{storage_key}")
@@ -51,84 +59,101 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         if value:
             return value
         # 3. Fall back to config value
-        if config_key:
-            return config.get(config_key, "")
+        if isinstance(config_keys, str):
+            config_keys = (config_keys,)
+        for config_key in config_keys:
+            if config_key and config.get(config_key):
+                return str(config.get(config_key, ""))
         return ""
 
     if storage.type == StorageType.R2:
         # Cloudflare R2 (S3-compatible)
-        env[f"RCLONE_CONFIG_{name}_TYPE"] = "s3"
-        env[f"RCLONE_CONFIG_{name}_PROVIDER"] = "Cloudflare"
-        env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
+        env[f"RCLONE_CONFIG_{remote_env_name}_TYPE"] = "s3"
+        env[f"RCLONE_CONFIG_{remote_env_name}_PROVIDER"] = "Cloudflare"
+        env[f"RCLONE_CONFIG_{remote_env_name}_ENV_AUTH"] = "false"
 
         # Get credentials with fallback chain
-        access_key = get_credential("ACCESS_KEY", SecretKeys.R2_ACCESS_KEY, "access_key_id")
-        secret_key = get_credential("SECRET_KEY", SecretKeys.R2_SECRET_KEY, "secret_access_key")
+        access_key_id = get_credential(
+            "ACCESS_KEY_ID",
+            SecretKeys.R2_ACCESS_KEY_ID,
+            ("access_key_id",),
+        )
+        secret_access_key = get_credential(
+            "SECRET_ACCESS_KEY",
+            SecretKeys.R2_SECRET_ACCESS_KEY,
+            ("secret_access_key",),
+        )
 
-        if access_key:
-            env[f"RCLONE_CONFIG_{name}_ACCESS_KEY_ID"] = access_key
-        if secret_key:
-            env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] = secret_key
+        if access_key_id:
+            env[f"RCLONE_CONFIG_{remote_env_name}_ACCESS_KEY_ID"] = access_key_id
+        if secret_access_key:
+            env[f"RCLONE_CONFIG_{remote_env_name}_SECRET_ACCESS_KEY"] = secret_access_key
 
         # Endpoint from config
-        endpoint = config.get("endpoint", "")
-        if not endpoint and config.get("account_id"):
-            endpoint = f"https://{config['account_id']}.r2.cloudflarestorage.com"
+        storage_bundle_payload = storage_bundle or {}
+        global_r2_bundle_payload = global_r2_bundle or {}
+        endpoint = (
+            storage_bundle_payload.get("endpoint")
+            or global_r2_bundle_payload.get("endpoint")
+            or config.get("endpoint", "")
+        )
+        account_id = (
+            storage_bundle_payload.get("account_id")
+            or global_r2_bundle_payload.get("account_id")
+            or config.get("account_id", "")
+        )
+        if not endpoint and account_id:
+            endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
         if endpoint:
-            env[f"RCLONE_CONFIG_{name}_ENDPOINT"] = endpoint
-
-    elif storage.type == StorageType.S3:
-        # Amazon S3 or S3-compatible
-        env[f"RCLONE_CONFIG_{name}_TYPE"] = "s3"
-        env[f"RCLONE_CONFIG_{name}_PROVIDER"] = config.get("provider", "AWS")
-        env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
-
-        # Get credentials with fallback chain
-        access_key = get_credential("ACCESS_KEY_ID", SecretKeys.AWS_ACCESS_KEY_ID, "access_key_id")
-        secret_key = get_credential("SECRET_ACCESS_KEY", SecretKeys.AWS_SECRET_ACCESS_KEY, "secret_access_key")
-
-        if access_key:
-            env[f"RCLONE_CONFIG_{name}_ACCESS_KEY_ID"] = access_key
-        if secret_key:
-            env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] = secret_key
-
-        # Region and endpoint
-        if config.get("region"):
-            env[f"RCLONE_CONFIG_{name}_REGION"] = config["region"]
-        if config.get("endpoint"):
-            env[f"RCLONE_CONFIG_{name}_ENDPOINT"] = config["endpoint"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_ENDPOINT"] = endpoint
 
     elif storage.type == StorageType.B2:
         # Backblaze B2
-        env[f"RCLONE_CONFIG_{name}_TYPE"] = "b2"
+        env[f"RCLONE_CONFIG_{remote_env_name}_TYPE"] = "b2"
 
         # Get credentials with fallback chain
-        key_id = get_credential("KEY_ID", SecretKeys.B2_KEY_ID, "key_id")
-        app_key = get_credential("APPLICATION_KEY", SecretKeys.B2_APPLICATION_KEY, "application_key")
+        application_key_id = get_credential(
+            "APPLICATION_KEY_ID",
+            SecretKeys.B2_APPLICATION_KEY_ID,
+            ("application_key_id",),
+        )
+        application_key = get_credential(
+            "APPLICATION_KEY",
+            SecretKeys.B2_APPLICATION_KEY,
+            ("application_key",),
+        )
 
-        if key_id:
-            env[f"RCLONE_CONFIG_{name}_ACCOUNT"] = key_id
-        if app_key:
-            env[f"RCLONE_CONFIG_{name}_KEY"] = app_key
+        if application_key_id:
+            env[f"RCLONE_CONFIG_{remote_env_name}_ACCOUNT"] = application_key_id
+        if application_key:
+            env[f"RCLONE_CONFIG_{remote_env_name}_KEY"] = application_key
+
+        endpoint = (
+            (storage_b2_bundle or {}).get("endpoint")
+            or (global_b2_bundle or {}).get("endpoint")
+            or config.get("endpoint", "")
+        )
+        if endpoint:
+            env[f"RCLONE_CONFIG_{remote_env_name}_ENDPOINT"] = endpoint
 
     elif storage.type == StorageType.GOOGLE_DRIVE:
         # Google Drive
-        env[f"RCLONE_CONFIG_{name}_TYPE"] = "drive"
+        env[f"RCLONE_CONFIG_{remote_env_name}_TYPE"] = "drive"
 
         # For Google Drive, we support two modes:
         # 1. Use existing rclone remote (remote_name in config)
         # 2. Use service account or token from secrets
         if config.get("client_id"):
-            env[f"RCLONE_CONFIG_{name}_CLIENT_ID"] = config["client_id"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_CLIENT_ID"] = config["client_id"]
         if config.get("client_secret"):
-            env[f"RCLONE_CONFIG_{name}_CLIENT_SECRET"] = config["client_secret"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_CLIENT_SECRET"] = config["client_secret"]
         if config.get("root_folder_id"):
-            env[f"RCLONE_CONFIG_{name}_ROOT_FOLDER_ID"] = config["root_folder_id"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_ROOT_FOLDER_ID"] = config["root_folder_id"]
 
         # Token from secrets (JSON format) - try storage-specific first
         token = get_credential("TOKEN", SecretKeys.GOOGLE_DRIVE_CREDENTIALS, "token")
         if token:
-            env[f"RCLONE_CONFIG_{name}_TOKEN"] = token
+            env[f"RCLONE_CONFIG_{remote_env_name}_TOKEN"] = token
 
         # If using existing rclone remote, just pass through
         if config.get("remote_name") and not any(env):
@@ -138,41 +163,41 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
 
     elif storage.type == StorageType.GCS:
         # Google Cloud Storage
-        env[f"RCLONE_CONFIG_{name}_TYPE"] = "google cloud storage"
+        env[f"RCLONE_CONFIG_{remote_env_name}_TYPE"] = "google cloud storage"
 
         if config.get("project_id"):
-            env[f"RCLONE_CONFIG_{name}_PROJECT_NUMBER"] = config["project_id"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_PROJECT_NUMBER"] = config["project_id"]
         if config.get("service_account_json"):
-            env[f"RCLONE_CONFIG_{name}_SERVICE_ACCOUNT_CREDENTIALS"] = config["service_account_json"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_SERVICE_ACCOUNT_CREDENTIALS"] = config["service_account_json"]
         if config.get("bucket"):
-            env[f"RCLONE_CONFIG_{name}_BUCKET_POLICY_ONLY"] = "true"
+            env[f"RCLONE_CONFIG_{remote_env_name}_BUCKET_POLICY_ONLY"] = "true"
 
     elif storage.type == StorageType.SSH:
         # SFTP via SSH
-        env[f"RCLONE_CONFIG_{name}_TYPE"] = "sftp"
+        env[f"RCLONE_CONFIG_{remote_env_name}_TYPE"] = "sftp"
 
         if config.get("host"):
-            env[f"RCLONE_CONFIG_{name}_HOST"] = config["host"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_HOST"] = config["host"]
         if config.get("user"):
-            env[f"RCLONE_CONFIG_{name}_USER"] = config["user"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_USER"] = config["user"]
         if config.get("port"):
-            env[f"RCLONE_CONFIG_{name}_PORT"] = str(config["port"])
+            env[f"RCLONE_CONFIG_{remote_env_name}_PORT"] = str(config["port"])
         if config.get("key_file"):
             key_path = os.path.expanduser(config["key_file"])
-            env[f"RCLONE_CONFIG_{name}_KEY_FILE"] = key_path
+            env[f"RCLONE_CONFIG_{remote_env_name}_KEY_FILE"] = key_path
 
     elif storage.type == StorageType.SMB:
         # SMB/CIFS share
-        env[f"RCLONE_CONFIG_{name}_TYPE"] = "smb"
+        env[f"RCLONE_CONFIG_{remote_env_name}_TYPE"] = "smb"
 
         if config.get("host"):
-            env[f"RCLONE_CONFIG_{name}_HOST"] = config["host"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_HOST"] = config["host"]
         if config.get("user"):
-            env[f"RCLONE_CONFIG_{name}_USER"] = config["user"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_USER"] = config["user"]
         if config.get("pass"):
-            env[f"RCLONE_CONFIG_{name}_PASS"] = config["pass"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_PASS"] = config["pass"]
         if config.get("domain"):
-            env[f"RCLONE_CONFIG_{name}_DOMAIN"] = config["domain"]
+            env[f"RCLONE_CONFIG_{remote_env_name}_DOMAIN"] = config["domain"]
 
     return env
 
@@ -196,8 +221,8 @@ def get_rclone_remote_name(storage: Storage) -> str:
         if remote_name:
             return remote_name
 
-    # Otherwise use storage name
-    return storage.name
+    # Otherwise use a sanitized storage name for ephemeral remotes.
+    return sanitize_rclone_remote_name(storage.name)
 
 
 
@@ -314,32 +339,32 @@ class TransferEngine:
         try:
             # Run rsync with real-time output for progress
             import sys
-            process = subprocess.Popen(
+            output_lines = []
+            bytes_transferred = 0
+            with subprocess.Popen(
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-            )
+            ) as process:
+                stdout = process.stdout
+                if stdout is not None:
+                    # Stream output in real-time
+                    for line in stdout:
+                        line = line.rstrip()
+                        output_lines.append(line)
 
-            output_lines = []
-            bytes_transferred = 0
+                        # Show progress lines (rsync progress format)
+                        if line and not line.startswith(' '):
+                            print(f"  {line}", flush=True)
 
-            # Stream output in real-time
-            for line in process.stdout:
-                line = line.rstrip()
-                output_lines.append(line)
+                        # Parse bytes from final summary
+                        match = re.search(r"sent ([\d,]+) bytes", line)
+                        if match:
+                            bytes_transferred = int(match.group(1).replace(",", ""))
 
-                # Show progress lines (rsync progress format)
-                if line and not line.startswith(' '):
-                    print(f"  {line}", flush=True)
-
-                # Parse bytes from final summary
-                match = re.search(r"sent ([\d,]+) bytes", line)
-                if match:
-                    bytes_transferred = int(match.group(1).replace(",", ""))
-
-            process.wait()
+                process.wait()
 
             return TransferResult(
                 success=process.returncode == 0,
@@ -397,6 +422,15 @@ class TransferEngine:
         # Build environment with storage credentials
         env = os.environ.copy()
 
+        if (src_storage and src_storage.type == StorageType.S3) or (
+            dst_storage and dst_storage.type == StorageType.S3
+        ):
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message="Amazon S3 support has been removed. Please migrate to R2 or B2.",
+            )
+
         if src_storage:
             rclone_env = build_rclone_env(src_storage)
             env.update(rclone_env)
@@ -407,47 +441,47 @@ class TransferEngine:
 
         try:
             # Run rclone with real-time progress output
-            process = subprocess.Popen(
+            output_lines = []
+            bytes_transferred = 0
+            with subprocess.Popen(
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
                 env=env,
-            )
+            ) as process:
+                stdout = process.stdout
+                if stdout is not None:
+                    # Stream output in real-time
+                    for line in stdout:
+                        line = line.rstrip()
+                        output_lines.append(line)
 
-            output_lines = []
-            bytes_transferred = 0
+                        # Show progress lines
+                        if line:
+                            # rclone progress format: "Transferred: X / Y, ETA X"
+                            print(f"  {line}", flush=True)
 
-            # Stream output in real-time
-            for line in process.stdout:
-                line = line.rstrip()
-                output_lines.append(line)
+                            # Parse transferred bytes from rclone output
+                            match = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
+                            if match:
+                                size_str = match.group(1)
+                                unit = match.group(2).upper()
+                                try:
+                                    size = float(size_str)
+                                    if unit == "KIB" or unit == "KB":
+                                        bytes_transferred = int(size * 1024)
+                                    elif unit == "MIB" or unit == "MB":
+                                        bytes_transferred = int(size * 1024 * 1024)
+                                    elif unit == "GIB" or unit == "GB":
+                                        bytes_transferred = int(size * 1024 * 1024 * 1024)
+                                    else:
+                                        bytes_transferred = int(size)
+                                except ValueError:
+                                    pass
 
-                # Show progress lines
-                if line:
-                    # rclone progress format: "Transferred: X / Y, ETA X"
-                    print(f"  {line}", flush=True)
-
-                    # Parse transferred bytes from rclone output
-                    match = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
-                    if match:
-                        size_str = match.group(1)
-                        unit = match.group(2).upper()
-                        try:
-                            size = float(size_str)
-                            if unit == "KIB" or unit == "KB":
-                                bytes_transferred = int(size * 1024)
-                            elif unit == "MIB" or unit == "MB":
-                                bytes_transferred = int(size * 1024 * 1024)
-                            elif unit == "GIB" or unit == "GB":
-                                bytes_transferred = int(size * 1024 * 1024 * 1024)
-                            else:
-                                bytes_transferred = int(size)
-                        except ValueError:
-                            pass
-
-            process.wait()
+                process.wait()
 
             return TransferResult(
                 success=process.returncode == 0,
@@ -666,29 +700,29 @@ class TransferEngine:
 
         try:
             # Run with real-time output
-            process = subprocess.Popen(
+            output_lines = []
+            bytes_transferred = 0
+            with subprocess.Popen(
                 full_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-            )
+            ) as process:
+                stdout = process.stdout
+                if stdout is not None:
+                    for line in stdout:
+                        line = line.rstrip()
+                        output_lines.append(line)
+                        # Show all non-empty lines
+                        if line:
+                            print(f"  {line}", flush=True)
+                        # Parse bytes from final summary
+                        match = re.search(r"sent ([\d,]+) bytes", line)
+                        if match:
+                            bytes_transferred = int(match.group(1).replace(",", ""))
 
-            output_lines = []
-            bytes_transferred = 0
-
-            for line in process.stdout:
-                line = line.rstrip()
-                output_lines.append(line)
-                # Show all non-empty lines
-                if line:
-                    print(f"  {line}", flush=True)
-                # Parse bytes from final summary
-                match = re.search(r"sent ([\d,]+) bytes", line)
-                if match:
-                    bytes_transferred = int(match.group(1).replace(",", ""))
-
-            process.wait()
+                process.wait()
 
             return TransferResult(
                 success=process.returncode == 0,
@@ -762,16 +796,15 @@ class TransferEngine:
         try:
             # Run with stderr going directly to terminal for pv progress
             import sys
-            process = subprocess.Popen(
+            with subprocess.Popen(
                 full_cmd,
                 shell=True,
                 stdout=subprocess.PIPE,
                 stderr=None,  # Let stderr go directly to terminal
                 text=True,
-            )
-
-            # Wait for process to complete
-            stdout, _ = process.communicate()
+            ) as process:
+                # Wait for process to complete
+                stdout, _ = process.communicate()
 
             if process.returncode != 0:
                 return TransferResult(
@@ -888,9 +921,9 @@ class TransferEngine:
             storage = storages.get(endpoint.storage_id)
             if storage:
                 remote_name = get_rclone_remote_name(storage)
-                # Handle bucket in path for R2/S3/B2
+                # Handle bucket in path for object storage
                 path = endpoint.path
-                if storage.type in (StorageType.R2, StorageType.S3, StorageType.B2):
+                if storage.type in (StorageType.R2, StorageType.B2):
                     bucket = storage.config.get("bucket", "")
                     if bucket and not path.startswith(bucket):
                         # Prepend bucket to path
@@ -948,7 +981,7 @@ def analyze_transfer(
         if endpoint.storage_id:
             storage = storages.get(endpoint.storage_id)
             if storage:
-                if storage.type in (StorageType.R2, StorageType.B2, StorageType.S3, StorageType.GOOGLE_DRIVE, StorageType.GCS):
+                if storage.type in (StorageType.R2, StorageType.B2, StorageType.GOOGLE_DRIVE, StorageType.GCS):
                     return "cloud"
                 elif storage.type in (StorageType.SSH, StorageType.SMB):
                     return "ssh"

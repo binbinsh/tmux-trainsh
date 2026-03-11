@@ -4,6 +4,11 @@
 import sys
 from typing import Optional, List
 
+from ..core.storage_specs import (
+    parse_inline_storage_endpoint,
+    resolve_storage_reference,
+)
+
 usage = '''<source> <destination> [options]
 
 Transfer files between local, remote hosts, and cloud storage.
@@ -12,6 +17,7 @@ Examples:
   train transfer ~/data host:myserver:/data
   train transfer host:myserver:/models ~/models
   train transfer ~/data storage:gdrive:/backups
+  train transfer ~/data r2:my-bucket:/backups
 
 Options:
   --host, -H <name>     Remote host name or ID
@@ -30,6 +36,11 @@ def parse_endpoint(spec: str) -> tuple[str, str, Optional[str]]:
     Returns:
         (type, path, host_or_storage_id)
     """
+    inline_storage = parse_inline_storage_endpoint(spec)
+    if inline_storage is not None:
+        storage_id, storage_path = inline_storage
+        return ("storage", storage_path, storage_id)
+
     if spec.startswith("host:"):
         # host:name:path format
         parts = spec[5:].split(":", 1)
@@ -38,7 +49,12 @@ def parse_endpoint(spec: str) -> tuple[str, str, Optional[str]]:
         return ("host", parts[0], None)
     elif spec.startswith("storage:"):
         # storage:name:path format
-        parts = spec[8:].split(":", 1)
+        storage_spec = spec[8:]
+        inline_storage = parse_inline_storage_endpoint(storage_spec)
+        if inline_storage is not None:
+            storage_id, storage_path = inline_storage
+            return ("storage", storage_path, storage_id)
+        parts = storage_spec.split(":", 1)
         if len(parts) == 2:
             return ("storage", parts[1], parts[0])
         return ("storage", parts[0], None)
@@ -129,15 +145,22 @@ def main(args: List[str]) -> Optional[str]:
         # Load storage configurations
         from .storage import load_storages
         from ..services.transfer_engine import (
-            build_rclone_env,
             get_rclone_remote_name,
         )
         from ..core.models import StorageType
 
         storages = load_storages()
 
-        src_storage = storages.get(src_id) if src_type == "storage" else None
-        dst_storage = storages.get(dst_id) if dst_type == "storage" else None
+        src_storage = (
+            resolve_storage_reference(src_id, named_storages=storages)
+            if src_type == "storage"
+            else None
+        )
+        dst_storage = (
+            resolve_storage_reference(dst_id, named_storages=storages)
+            if dst_type == "storage"
+            else None
+        )
 
         # Validate storages exist
         if src_type == "storage" and not src_storage:
@@ -148,12 +171,18 @@ def main(args: List[str]) -> Optional[str]:
             print(f"Error: Destination storage not found: {dst_id}")
             print("Use 'train storage list' to see configured storages.")
             sys.exit(1)
+        if src_storage and src_storage.type == StorageType.S3:
+            print("Error: Amazon S3 support has been removed. Please migrate this storage to R2 or B2.")
+            sys.exit(1)
+        if dst_storage and dst_storage.type == StorageType.S3:
+            print("Error: Amazon S3 support has been removed. Please migrate this storage to R2 or B2.")
+            sys.exit(1)
 
         # Build rclone paths with correct remote names
         if src_storage:
             src_remote = get_rclone_remote_name(src_storage)
-            # Handle bucket for S3-compatible storage
-            if src_storage.type in (StorageType.R2, StorageType.S3, StorageType.B2):
+            # Handle bucket for object storage
+            if src_storage.type in (StorageType.R2, StorageType.B2):
                 bucket = src_storage.config.get("bucket", "")
                 if bucket and not src_path.startswith(bucket):
                     src_path = f"{bucket}/{src_path.lstrip('/')}"
@@ -163,8 +192,8 @@ def main(args: List[str]) -> Optional[str]:
 
         if dst_storage:
             dst_remote = get_rclone_remote_name(dst_storage)
-            # Handle bucket for S3-compatible storage
-            if dst_storage.type in (StorageType.R2, StorageType.S3, StorageType.B2):
+            # Handle bucket for object storage
+            if dst_storage.type in (StorageType.R2, StorageType.B2):
                 bucket = dst_storage.config.get("bucket", "")
                 if bucket and not dst_path.startswith(bucket):
                     dst_path = f"{bucket}/{dst_path.lstrip('/')}"

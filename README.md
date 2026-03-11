@@ -16,7 +16,7 @@
 
 The missing training automation for public cloud GPU and storage.
 
-Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, S3, GDrive), and automate training workflows with Python recipe modules.
+Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage (R2, B2, GDrive), and automate training workflows with Python recipe modules.
 
 ## Requirements
 
@@ -49,7 +49,7 @@ train recipes new my-flow --template feature-tour
 
 # Set up API keys
 train secrets set VAST_API_KEY
-train secrets set R2_ACCESS_KEY
+train secrets set R2_CREDENTIALS
 
 # Add a host
 train host add
@@ -83,11 +83,49 @@ Config files are stored in `~/.config/tmux-trainsh/`:
 Supported secret keys:
 - `VAST_API_KEY` - Vast.ai API key
 - `HF_TOKEN` - HuggingFace token
-- `R2_ACCESS_KEY`, `R2_SECRET_KEY` - Cloudflare R2
-- `B2_KEY_ID`, `B2_APPLICATION_KEY` - Backblaze B2
-- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` - Amazon S3
+- `R2_CREDENTIALS` - Cloudflare R2 S3 API credentials bundle
+- `B2_CREDENTIALS` - Backblaze B2 application key bundle
 - `GITHUB_TOKEN` - GitHub token
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` - AI APIs
+
+Minimal cloud storage setup:
+
+```bash
+# Global R2 credentials
+train secrets set R2_CREDENTIALS
+# Prompts for:
+#   R2 Account ID
+#   R2 API Token Access Key ID
+#   R2 API Token Secret Access Key
+
+# Global B2 credentials
+train secrets set B2_CREDENTIALS
+# Prompts for:
+#   B2 Application Key ID
+#   B2 Application Key
+
+# Add an R2 or B2 storage backend, then test it
+train storage add
+train storage test <storage-name>
+```
+
+You can also scope credentials to one storage backend instead of using global secrets:
+
+```bash
+train secrets set ARTIFACTS_R2_CREDENTIALS
+train secrets set ARCHIVE_B2_CREDENTIALS
+```
+
+R2 bundles follow Cloudflare-style naming and typically include:
+- `account_id`
+- `access_key_id`
+- `secret_access_key`
+
+The S3 API endpoint is auto-derived from `account_id` during normal CLI setup.
+
+B2 bundles follow Backblaze application-key naming and typically include:
+- `application_key_id`
+- `application_key`
 
 ## Tmux Configuration
 
@@ -232,7 +270,7 @@ Python recipes use a few core building blocks:
 Common host and storage specs remain the same:
 
 - Host specs: `placeholder`, `user@hostname`, `user@hostname -p PORT`, `user@hostname -i KEY`, `user@hostname -J JUMP`, `user@hostname -o ProxyCommand='CMD'`, or a host name from `hosts.yaml`.
-- Storage specs: `placeholder`, `r2:bucket`, `b2:bucket`, `s3:bucket`, or a storage name from `storages.yaml`.
+- Storage specs: `placeholder`, `r2:bucket`, `b2:bucket`, or a storage name from `storages.yaml`.
 
 Cloudflared Access example:
 

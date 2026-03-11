@@ -140,7 +140,6 @@ hosts:
 | `placeholder` | Placeholder, must be filled at runtime |
 | `r2:bucket` | Cloudflare R2 |
 | `b2:bucket` | Backblaze B2 |
-| `s3:bucket` | Amazon S3 |
 | `name` | Reference to storages.yaml config |""",
     },
     {

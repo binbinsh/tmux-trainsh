@@ -31,7 +31,7 @@ Commands:
   recipes   - Recipe file management
   transfer  - File transfer between hosts/storage
   host      - Host management (SSH, Colab, Vast.ai)
-  storage   - Storage backend management (R2, B2, S3, etc.)
+  storage   - Storage backend management (R2, B2, etc.)
   secrets   - Manage API keys and credentials
   config    - Configuration and settings
   vast      - Vast.ai instance management
@@ -44,7 +44,7 @@ help_text = '''
 tmux-trainsh: GPU training workflow automation in the terminal.
 
 Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends
-(Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.
+(Cloudflare R2, Backblaze B2, Google Drive), and automate training workflows.
 
 QUICK START
   train help                          # Browse help topics
@@ -77,7 +77,7 @@ RECIPE FILES
 
 INFRASTRUCTURE
   host list|add|ssh|...   Host management (SSH, Colab, Vast.ai)
-  storage list|add|...    Storage backend management (R2, B2, S3)
+  storage list|add|...    Storage backend management (R2, B2)
   secrets list|set|get    Manage API keys and credentials
   config show|set|...     Configuration and settings
 

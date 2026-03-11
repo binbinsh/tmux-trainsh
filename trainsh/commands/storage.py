@@ -21,7 +21,6 @@ Supported storage types:
   - gdrive         Google Drive
   - r2             Cloudflare R2
   - b2             Backblaze B2
-  - s3             Amazon S3 (or compatible)
   - gcs            Google Cloud Storage
   - smb            SMB/CIFS
 
@@ -107,9 +106,8 @@ def cmd_add(args: List[str]) -> None:
     print("  3. Google Drive")
     print("  4. Cloudflare R2")
     print("  5. Backblaze B2")
-    print("  6. Amazon S3")
-    print("  7. Google Cloud Storage")
-    print("  8. SMB/CIFS")
+    print("  6. Google Cloud Storage")
+    print("  7. SMB/CIFS")
     type_choice = prompt_input("Choice [1]: ", default="1")
     if type_choice is None:
         return
@@ -120,9 +118,8 @@ def cmd_add(args: List[str]) -> None:
         "3": StorageType.GOOGLE_DRIVE,
         "4": StorageType.R2,
         "5": StorageType.B2,
-        "6": StorageType.S3,
-        "7": StorageType.GCS,
-        "8": StorageType.SMB,
+        "6": StorageType.GCS,
+        "7": StorageType.SMB,
     }
     storage_type = type_map.get(type_choice, StorageType.LOCAL)
 
@@ -157,46 +154,24 @@ def cmd_add(args: List[str]) -> None:
         config["remote_name"] = remote_name
 
     elif storage_type == StorageType.R2:
-        account_id = prompt_input("Cloudflare Account ID: ")
-        if account_id is None:
-            return
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
         print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY' and '{name.upper()}_SECRET_KEY'")
-        print("Option 2: Global - 'train secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
-        print("(Storage-specific credentials take priority over global ones)")
-        config["account_id"] = account_id
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_R2_CREDENTIALS'")
+        print("Option 2: Global - 'train secrets set R2_CREDENTIALS'")
+        print("(Bundle includes Account ID plus API Token credentials; S3 API endpoint is auto-derived)")
         config["bucket"] = bucket
-        config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
 
     elif storage_type == StorageType.B2:
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
         print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_KEY_ID' and '{name.upper()}_APPLICATION_KEY'")
-        print("Option 2: Global - 'train secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_B2_CREDENTIALS'")
+        print("Option 2: Global - 'train secrets set B2_CREDENTIALS'")
+        print("(Bundle includes Application Key ID and Application Key)")
         config["bucket"] = bucket
-
-    elif storage_type == StorageType.S3:
-        bucket = prompt_input("Bucket name: ")
-        if bucket is None:
-            return
-        region = prompt_input("Region [us-east-1]: ", default="us-east-1")
-        if region is None:
-            return
-        endpoint = prompt_input("Custom endpoint (optional, for S3-compatible): ")
-        if endpoint is None:
-            return
-        print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY_ID' and '{name.upper()}_SECRET_ACCESS_KEY'")
-        print("Option 2: Global - 'train secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
-        config["bucket"] = bucket
-        config["region"] = region
-        if endpoint:
-            config["endpoint"] = endpoint
 
     elif storage_type == StorageType.GCS:
         bucket = prompt_input("Bucket name: ")
@@ -290,6 +265,8 @@ def cmd_rm(args: List[str]) -> None:
 
 def cmd_test(args: List[str]) -> None:
     """Test connection to storage."""
+    from ..core.models import StorageType
+
     if not args:
         print("Usage: train storage test <name>")
         sys.exit(1)
@@ -310,7 +287,11 @@ def cmd_test(args: List[str]) -> None:
         get_rclone_remote_name,
     )
 
-    if storage.type.value in ("gdrive", "r2", "b2", "s3", "gcs"):
+    if storage.type == StorageType.S3:
+        print("Error: Amazon S3 support has been removed. Please migrate to R2 or B2.")
+        sys.exit(1)
+
+    if storage.type.value in ("gdrive", "r2", "b2", "gcs"):
         if not check_rclone_available():
             print("Error: rclone is required but not installed.")
             print("Install with: brew install rclone")
@@ -326,7 +307,7 @@ def cmd_test(args: List[str]) -> None:
         # Get the correct remote name
         remote_name = get_rclone_remote_name(storage)
 
-        # For R2/S3/B2, also need to specify the bucket
+        # For object storage, also need to specify the bucket
         bucket = storage.config.get("bucket", "")
         if bucket:
             rclone_path = f"{remote_name}:{bucket}"

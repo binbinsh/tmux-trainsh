@@ -1,6 +1,7 @@
 """Tests for trainsh.core.secrets — backend selection, config persistence,
 OnePasswordBackend service-account wiring, and SecretsManager resolution."""
 
+import io
 import json
 import os
 import tempfile
@@ -256,16 +257,84 @@ class TestPromptBackendSelection(unittest.TestCase):
     @patch.object(secrets_mod, "_resolve_op_auth", return_value=False)
     @patch("trainsh.cli_utils.prompt_input", side_effect=["1", "Private"])
     def test_1password_fallback_to_encrypted(self, _inp, _resolve, _avail):
-        backend = secrets_mod.prompt_backend_selection()
-        # Should have fallen back to encrypted_file
+        secrets_mod.prompt_backend_selection()
         loaded = _load_config()
         self.assertEqual(loaded["secrets"]["backend"], "encrypted_file")
 
     @patch("trainsh.cli_utils.prompt_input", return_value="2")
     def test_encrypted_file_selection(self, _inp):
-        backend = secrets_mod.prompt_backend_selection()
+        secrets_mod.prompt_backend_selection()
         loaded = _load_config()
         self.assertEqual(loaded["secrets"]["backend"], "encrypted_file")
+
+
+class TestSecretsCommand(unittest.TestCase):
+    def test_cmd_list_includes_cloud_storage_secret_keys(self):
+        import trainsh.commands.secrets_cmd as secrets_cmd
+
+        backend = MagicMock()
+        backend.get.return_value = None
+        manager = MagicMock()
+        manager._get_backend.return_value = backend
+        manager.list_keys.return_value = []
+
+        with patch("trainsh.core.secrets.get_secrets_manager", return_value=manager), patch(
+            "trainsh.core.secrets.get_configured_backend_name",
+            return_value="encrypted_file",
+        ), patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            secrets_cmd.cmd_list([])
+
+        output = stdout.getvalue()
+        self.assertIn("R2_CREDENTIALS", output)
+        self.assertIn("B2_CREDENTIALS", output)
+
+    def test_list_keys_uses_backend_enumeration_for_composite_secrets(self):
+        mgr = SecretsManager()
+        backend = MagicMock()
+        backend.list_set_keys.return_value = ["R2_CREDENTIALS", "B2_APPLICATION_KEY_ID"]
+        mgr._backend = backend
+        mgr._backend_loaded = True
+
+        keys = set(mgr.list_keys())
+
+        self.assertIn("R2_CREDENTIALS", keys)
+        self.assertIn("B2_CREDENTIALS", keys)
+
+    def test_r2_prompt_bundle_only_requests_account_id_and_api_token_pair(self):
+        import trainsh.commands.secrets_cmd as secrets_cmd
+
+        with patch("trainsh.commands.secrets_cmd.prompt_input", return_value="acct-123") as prompt_mock, patch(
+            "trainsh.commands.secrets_cmd.getpass.getpass",
+            side_effect=["akid-123", "secret-456"],
+        ):
+            payload = secrets_cmd._prompt_bundle_payload("r2")
+
+        self.assertEqual(
+            payload,
+            {
+                "account_id": "acct-123",
+                "access_key_id": "akid-123",
+                "secret_access_key": "secret-456",
+            },
+        )
+        self.assertEqual(prompt_mock.call_count, 1)
+
+    def test_b2_prompt_bundle_only_requests_application_key_pair(self):
+        import trainsh.commands.secrets_cmd as secrets_cmd
+
+        with patch(
+            "trainsh.commands.secrets_cmd.getpass.getpass",
+            side_effect=["appkeyid-123", "appkey-456"],
+        ):
+            payload = secrets_cmd._prompt_bundle_payload("b2")
+
+        self.assertEqual(
+            payload,
+            {
+                "application_key_id": "appkeyid-123",
+                "application_key": "appkey-456",
+            },
+        )
 
 
 class TestSecretsManagerResolution(unittest.TestCase):
@@ -289,6 +358,93 @@ class TestSecretsManagerResolution(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "NONEXISTENT_KEY"}
         with patch.dict(os.environ, env, clear=True):
             self.assertIsNone(mgr.get("NONEXISTENT_KEY"))
+
+    def test_bundle_aliases_resolve_from_composite_secret(self):
+        mgr = SecretsManager()
+        backend = MagicMock()
+        backend.get.side_effect = lambda key: (
+            '"{""account_id"": ""abc123"", ""access_key_id"": ""r2-ak"", ""secret_access_key"": ""r2-sk"", ""endpoint"": ""https://r2.example.com""}"'
+            if key == "R2_CREDENTIALS"
+            else None
+        )
+        mgr._backend = backend
+        mgr._backend_loaded = True
+
+        self.assertEqual(mgr.get("R2_ACCOUNT_ID"), "abc123")
+        self.assertEqual(mgr.get("R2_ACCESS_KEY_ID"), "r2-ak")
+        self.assertEqual(mgr.get("R2_SECRET_ACCESS_KEY"), "r2-sk")
+        self.assertEqual(mgr.get("R2_ENDPOINT"), "https://r2.example.com")
+        self.assertEqual(
+            json.loads(mgr.get("R2_CREDENTIALS")),
+            {
+                "account_id": "abc123",
+                "access_key_id": "r2-ak",
+                "endpoint": "https://r2.example.com",
+                "secret_access_key": "r2-sk",
+            },
+        )
+
+    def test_set_bundle_clears_r2_component_keys(self):
+        mgr = SecretsManager()
+        backend = MagicMock()
+        mgr._backend = backend
+        mgr._backend_loaded = True
+
+        mgr.set_bundle(
+            "R2_CREDENTIALS",
+            {
+                "account_id": "abc123",
+                "access_key_id": "new-ak",
+                "secret_access_key": "new-sk",
+                "endpoint": "https://r2.example.com",
+            },
+        )
+
+        backend.set.assert_called_once()
+        backend.delete.assert_any_call("R2_ACCOUNT_ID")
+        backend.delete.assert_any_call("R2_ACCESS_KEY_ID")
+        backend.delete.assert_any_call("R2_SECRET_ACCESS_KEY")
+        backend.delete.assert_any_call("R2_ENDPOINT")
+
+    def test_b2_bundle_aliases_resolve_from_composite_secret(self):
+        mgr = SecretsManager()
+        backend = MagicMock()
+        backend.get.side_effect = lambda key: (
+            '"{""application_key_id"": ""b2-id"", ""application_key"": ""b2-secret""}"'
+            if key == "B2_CREDENTIALS"
+            else None
+        )
+        mgr._backend = backend
+        mgr._backend_loaded = True
+
+        self.assertEqual(mgr.get("B2_APPLICATION_KEY_ID"), "b2-id")
+        self.assertEqual(mgr.get("B2_APPLICATION_KEY"), "b2-secret")
+        self.assertEqual(
+            json.loads(mgr.get("B2_CREDENTIALS")),
+            {
+                "application_key": "b2-secret",
+                "application_key_id": "b2-id",
+            },
+        )
+
+    def test_set_bundle_clears_b2_component_keys(self):
+        mgr = SecretsManager()
+        backend = MagicMock()
+        mgr._backend = backend
+        mgr._backend_loaded = True
+
+        mgr.set_bundle(
+            "B2_CREDENTIALS",
+            {
+                "application_key_id": "b2-id",
+                "application_key": "b2-secret",
+            },
+        )
+
+        backend.set.assert_called_once()
+        backend.delete.assert_any_call("B2_APPLICATION_KEY_ID")
+        backend.delete.assert_any_call("B2_APPLICATION_KEY")
+        backend.delete.assert_any_call("B2_ENDPOINT")
 
 
 class TestLoadBackendFromConfig(unittest.TestCase):

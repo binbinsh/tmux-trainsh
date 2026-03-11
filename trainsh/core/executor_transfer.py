@@ -5,6 +5,10 @@ import os
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .models import Host
+from .storage_specs import (
+    build_storage_from_spec,
+    parse_inline_storage_endpoint,
+)
 
 
 class TransferHelper:
@@ -134,15 +138,24 @@ class TransferHelper:
     def parse_endpoint(self, spec: str) -> Any:
         """Parse transfer endpoint: @host:/path, @storage:/path, or /local/path"""
         from ..commands.host import load_hosts
+        from ..commands.storage import load_storages
         from ..core.models import TransferEndpoint
 
         if spec.startswith("@"):
             if ":" in spec:
                 name_part, path = spec.split(":", 1)
                 name = name_part[1:]
+                global_storages = load_storages()
 
                 if name in self.executor.recipe.storages:
                     return TransferEndpoint(type="storage", path=path, storage_id=name)
+                if name in global_storages:
+                    return TransferEndpoint(type="storage", path=path, storage_id=name)
+
+                inline_storage = parse_inline_storage_endpoint(f"{name}:{path}")
+                if inline_storage is not None:
+                    storage_id, storage_path = inline_storage
+                    return TransferEndpoint(type="storage", path=storage_path, storage_id=storage_id)
 
                 if name in self.executor.recipe.hosts:
                     host = self.executor.recipe.hosts[name]
@@ -163,10 +176,20 @@ class TransferHelper:
             return TransferEndpoint(type="host", path=parts[0], host_id=parts[0])
 
         if spec.startswith("storage:"):
-            parts = spec[8:].split(":", 1)
+            storage_spec = spec[8:]
+            inline_storage = parse_inline_storage_endpoint(storage_spec)
+            if inline_storage is not None:
+                storage_id, storage_path = inline_storage
+                return TransferEndpoint(type="storage", path=storage_path, storage_id=storage_id)
+            parts = storage_spec.split(":", 1)
             if len(parts) == 2:
                 return TransferEndpoint(type="storage", path=parts[1], storage_id=parts[0])
             return TransferEndpoint(type="storage", path=parts[0], storage_id=parts[0])
+
+        inline_storage = parse_inline_storage_endpoint(spec)
+        if inline_storage is not None:
+            storage_id, storage_path = inline_storage
+            return TransferEndpoint(type="storage", path=storage_path, storage_id=storage_id)
 
         return TransferEndpoint(type="local", path=os.path.expanduser(spec))
 
@@ -190,10 +213,10 @@ class TransferHelper:
     def build_transfer_storages(self) -> Dict[str, Any]:
         """Build storage mapping for transfers from recipe storage specs."""
         from ..commands.storage import load_storages
-        from ..core.models import Storage, StorageType
+        from ..core.models import Storage
 
         global_storages = load_storages()
-        storages: Dict[str, Any] = {}
+        storages: Dict[str, Any] = dict(global_storages)
 
         for name, spec in self.executor.recipe.storages.items():
             if isinstance(spec, Storage):
@@ -207,30 +230,9 @@ class TransferHelper:
                     pass
             if spec in global_storages:
                 storages[name] = global_storages[spec]
-            elif spec != "placeholder":
-                provider = str(spec or "").strip().lower()
-                bucket = ""
-                if ":" in spec:
-                    provider, bucket = spec.split(":", 1)
-                    provider = provider.strip().lower()
-                storage_type = {
-                    "local": StorageType.LOCAL,
-                    "r2": StorageType.R2,
-                    "s3": StorageType.S3,
-                    "b2": StorageType.B2,
-                    "smb": StorageType.SMB,
-                    "ssh": StorageType.SSH,
-                    "gdrive": StorageType.GOOGLE_DRIVE,
-                    "gcs": StorageType.GCS,
-                }.get(provider, StorageType.R2)
-                config: Dict[str, Any] = {}
-                if bucket:
-                    config["bucket"] = bucket
+                continue
 
-                storages[name] = Storage(
-                    id=name,
-                    name=name,
-                    type=storage_type,
-                    config=config,
-                )
+            resolved = build_storage_from_spec(spec, storage_name=name)
+            if resolved is not None:
+                storages[name] = resolved
         return storages
