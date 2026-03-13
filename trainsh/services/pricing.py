@@ -5,7 +5,7 @@ import json
 import os
 import yaml
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, UTC
 from enum import Enum
 from typing import Optional, Dict, List, Any
 from pathlib import Path
@@ -83,7 +83,7 @@ class ExchangeRates:
                 "TWD": 32.0,
             }
         if not self.updated_at:
-            self.updated_at = datetime.utcnow().isoformat()
+            self.updated_at = datetime.now(UTC).isoformat()
 
     def get_rate(self, currency: str) -> float:
         return self.rates.get(currency, 1.0)
@@ -97,7 +97,7 @@ class ExchangeRates:
         return amount_usd * to_rate if to_currency != "USD" else amount_usd
 
 
-def fetch_exchange_rates() -> ExchangeRates:
+def fetch_exchange_rates(*, fallback_to_defaults: bool = True) -> Optional[ExchangeRates]:
     """Fetch exchange rates from free API (frankfurter.app)."""
     url = "https://api.frankfurter.app/latest?from=USD&to=JPY,HKD,CNY,EUR,GBP,KRW,TWD"
 
@@ -112,11 +112,13 @@ def fetch_exchange_rates() -> ExchangeRates:
         return ExchangeRates(
             base="USD",
             rates=rates,
-            updated_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
         )
     except (urllib.error.URLError, json.JSONDecodeError) as e:
         print(f"Failed to fetch exchange rates: {e}")
-        return ExchangeRates()
+        if fallback_to_defaults:
+            return ExchangeRates()
+        return None
 
 
 # ============================================================
@@ -249,6 +251,7 @@ def calculate_host_cost(
 # ============================================================
 
 PRICING_FILE = CONFIG_DIR / "pricing.yaml"
+EXCHANGE_RATE_REFRESH_DAYS = 3
 
 
 @dataclass
@@ -325,6 +328,102 @@ def save_pricing_settings(settings: PricingSettings) -> None:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
+def _parse_updated_at(value: Any) -> Optional[datetime]:
+    """Parse an ISO-like timestamp into UTC."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def get_display_currency(default: str = "USD") -> str:
+    """Read the configured display currency from config."""
+    from ..config import load_config
+
+    config = load_config()
+    value = str(config.get("ui", {}).get("currency") or default).strip().upper()
+    return value or default
+
+
+def exchange_rates_need_refresh(
+    rates: Any,
+    required_currencies: Optional[List[str] | set[str] | tuple[str, ...]] = None,
+    *,
+    now: Optional[datetime] = None,
+    refresh_days: int = EXCHANGE_RATE_REFRESH_DAYS,
+) -> bool:
+    """Return True when cached exchange rates should be refreshed."""
+    rate_map = getattr(rates, "rates", None)
+    if rate_map is None:
+        return False
+    if not isinstance(rate_map, dict) or not rate_map:
+        return True
+
+    required = {str(item).strip().upper() for item in (required_currencies or []) if str(item).strip()}
+    required.add("USD")
+    for currency in required:
+        if currency != "USD" and currency not in rate_map:
+            return True
+
+    updated_at = _parse_updated_at(getattr(rates, "updated_at", ""))
+    if updated_at is None:
+        return False
+
+    now_utc = now or datetime.now(UTC)
+    return (now_utc - updated_at).total_seconds() >= refresh_days * 24 * 60 * 60
+
+
+def ensure_exchange_rates(
+    required_currencies: Optional[List[str] | set[str] | tuple[str, ...]] = None,
+    *,
+    settings: Optional[PricingSettings] = None,
+    force: bool = False,
+) -> ExchangeRates:
+    """Return cached or refreshed exchange rates, refreshing when needed."""
+    settings = settings or load_pricing_settings()
+    current = settings.exchange_rates
+
+    if not force and not exchange_rates_need_refresh(current, required_currencies):
+        return current
+
+    fresh = fetch_exchange_rates(fallback_to_defaults=False)
+    if fresh is not None:
+        settings.exchange_rates = fresh
+        save_pricing_settings(settings)
+        return fresh
+
+    if isinstance(getattr(current, "rates", None), dict) and current.rates:
+        return current
+    return ExchangeRates()
+
+
+def get_pricing_context(
+    *,
+    product_currencies: Optional[List[str] | set[str] | tuple[str, ...]] = None,
+    display_currency: Optional[str] = None,
+    force_refresh: bool = False,
+) -> tuple[PricingSettings, str, ExchangeRates]:
+    """Load pricing settings plus auto-refreshed rates for the active display context."""
+    settings = load_pricing_settings()
+    display_curr = str(display_currency or get_display_currency()).strip().upper() or "USD"
+    required = {display_curr}
+    for currency in (product_currencies or []):
+        text = str(currency or "").strip().upper()
+        if text:
+            required.add(text)
+    rates = ensure_exchange_rates(required, settings=settings, force=force_refresh)
+    settings.exchange_rates = rates
+    return settings, display_curr, rates
+
+
 # ============================================================
 # Helper Functions
 # ============================================================
@@ -347,7 +446,7 @@ def format_price_per_hour(amount_usd: float, currency: str, rates: ExchangeRates
 
 def refresh_exchange_rates() -> ExchangeRates:
     """Fetch and save new exchange rates."""
-    rates = fetch_exchange_rates()
+    rates = fetch_exchange_rates(fallback_to_defaults=True)
     settings = load_pricing_settings()
     settings.exchange_rates = rates
     save_pricing_settings(settings)

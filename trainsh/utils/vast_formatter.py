@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
 from ..core.models import VastInstance
-from ..services.pricing import load_pricing_settings, format_currency
+from ..services.pricing import ensure_exchange_rates, format_currency, load_pricing_settings
 from ..config import load_config
 
 
@@ -31,10 +31,13 @@ def get_currency_settings() -> CurrencySettings:
     """Load currency settings from config.yaml (single source of truth)."""
     settings = load_pricing_settings()
     config = load_config()
-    display_curr = config.get("ui", {}).get("currency") or "USD"
+    display_curr = str(config.get("ui", {}).get("currency") or "USD").strip().upper() or "USD"
+    rates = settings.exchange_rates
+    if display_curr != "USD":
+        rates = ensure_exchange_rates([display_curr], settings=settings)
     return CurrencySettings(
         display_currency=display_curr,
-        rates=settings.exchange_rates,
+        rates=rates,
     )
 
 

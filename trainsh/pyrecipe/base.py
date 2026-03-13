@@ -5,21 +5,29 @@ This module keeps the API compact and delegates feature-specific helpers to mixi
 
 from __future__ import annotations
 
+import os
+import re
+from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..core.recipe_models import RecipeModel, RecipeStepModel
-from ..core.models import Storage
+from ..core.models import Storage as RuntimeStorage
 
 from .control_steps import RecipeControlMixin
-from .models import PythonRecipeError, ProviderStep, RecipeStep
+from .models import Host, HostPath, PythonRecipeError, ProviderStep, RecipeStep, Storage, StoragePath
+from .namespaces import (
+    NotifyNamespace,
+    VastNamespace,
+)
 from .provider_steps import RecipeProviderMixin
 from .provider_misc_steps import RecipeProviderMiscMixin
-from .provider_condition_steps import RecipeProviderConditionMixin
-from .provider_transfer_steps import RecipeProviderTransferMixin
+from .condition_steps import RecipeProviderConditionMixin
+from .transfer_steps import RecipeProviderTransferMixin
 from .session_steps import RecipeSessionMixin
 from .storage_steps import RecipeStorageMixin
 from .provider_sqlite_steps import RecipeProviderSQLiteMixin
-from .provider_network_steps import RecipeProviderNetworkMixin
+from .network_steps import RecipeProviderNetworkMixin
+from .references import wrap_step_handle
 
 
 class RecipeSpecCore:
@@ -29,18 +37,28 @@ class RecipeSpecCore:
         self,
         name: str,
         *,
+        schedule: Optional[str] = None,
+        owner: Optional[str] = None,
+        tags: Optional[Iterable[str]] = None,
+        paused: Optional[bool] = None,
+        catchup: Optional[bool] = None,
+        max_active_runs: Optional[int] = None,
         executor: str = "sequential",
         executor_kwargs: Optional[Dict[str, Any]] = None,
+        workers: Optional[int] = None,
         callbacks: Optional[Iterable[str]] = None,
+        **extra_executor_kwargs: Any,
     ):
         self.name = (name or "recipe").strip()
         if not self.name:
             raise PythonRecipeError("recipe name cannot be empty")
 
-        self.hosts: Dict[str, str] = {}
-        self.storages: Dict[str, Any] = {}
         self.variables: Dict[str, str] = {}
         self.steps: List[RecipeStep] = []
+        self.hosts: Dict[str, str] = {}
+        self.storages: Dict[str, Any] = {}
+        self.vast = VastNamespace(self)
+        self.notify = NotifyNamespace(self)
         if "".join(ch for ch in str(executor).lower() if ch.isalnum()) in {
             "k8s",
             "kubernetes",
@@ -51,34 +69,29 @@ class RecipeSpecCore:
             raise PythonRecipeError("kubernetes executor is not supported in this runtime")
         self.executor = executor
         self.executor_kwargs = dict(executor_kwargs or {})
+        if workers is not None and "max_workers" not in self.executor_kwargs:
+            self.executor_kwargs["max_workers"] = workers
+        self.executor_kwargs.update(extra_executor_kwargs)
         self.callbacks = list(callbacks) if callbacks is not None else ["console", "sqlite"]
+        self.schedule = schedule
+        self.owner = owner or "trainsh"
+        self.tags = list(tags or [])
+        self.is_paused = bool(paused) if paused is not None else False
+        self.catchup = bool(catchup) if catchup is not None else False
+        self.max_active_runs = max_active_runs
 
         self._step_seq = 0
         self._used_ids = set()
         self._task_defaults: Dict[str, Any] = {}
+        self._linear_contexts: list[dict[str, Any]] = []
+        self._resource_host_aliases: dict[Host, str] = {}
+        self._resource_storage_aliases: dict[int, str] = {}
 
-    def var(self, name: str, value: Any) -> None:
-        """Define a recipe variable."""
-        if not name:
-            raise PythonRecipeError("variable name cannot be empty")
-        self.variables[name] = str(value)
+    def __enter__(self) -> "RecipeSpecCore":
+        return self
 
-    def host(self, name: str, spec: Any) -> None:
-        """Define a host alias."""
-        if not name:
-            raise PythonRecipeError("host name cannot be empty")
-        self.hosts[name] = str(spec)
-
-    def storage(self, name: str, spec: Any) -> None:
-        """Define a storage alias."""
-        if not name:
-            raise PythonRecipeError("storage name cannot be empty")
-        if isinstance(spec, Storage):
-            self.storages[name] = spec
-        elif isinstance(spec, dict):
-            self.storages[name] = Storage.from_dict(spec)
-        else:
-            self.storages[name] = str(spec)
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
 
     def set_executor(self, name: str, **kwargs: Any) -> None:
         """Change executor type and options."""
@@ -95,6 +108,20 @@ class RecipeSpecCore:
             raise PythonRecipeError("kubernetes executor is not supported in this runtime")
         self.executor = str(name)
         self.executor_kwargs.update(kwargs)
+
+    @contextmanager
+    def linear(self):
+        """Author a simple linear task chain in statement order."""
+        state = {
+            "last": self._linear_contexts[-1]["last"] if self._linear_contexts else None,
+        }
+        self._linear_contexts.append(state)
+        try:
+            yield self
+        finally:
+            completed = self._linear_contexts.pop()
+            if self._linear_contexts:
+                self._linear_contexts[-1]["last"] = completed.get("last")
 
     def defaults(
         self,
@@ -354,8 +381,11 @@ class RecipeSpecCore:
     ) -> str:
         resolved_id = self._next_step_id(id if id is not None else step_id)
         options = self._normalize_step_options(step_options or {})
+        implicit_depends = depends_on
+        if implicit_depends is None and self._linear_contexts and self._linear_contexts[-1].get("last") is not None:
+            implicit_depends = [self._linear_contexts[-1]["last"]]
         deps: List[str] = []
-        for dependency in depends_on or []:
+        for dependency in implicit_depends or []:
             dep_id = str(dependency).strip()
             if not dep_id:
                 continue
@@ -383,7 +413,10 @@ class RecipeSpecCore:
                     on_failure=options["on_failure"],
                 )
             )
-            return resolved_id
+            handle = wrap_step_handle(self, resolved_id)
+            if self._linear_contexts:
+                self._linear_contexts[-1]["last"] = handle
+            return handle
 
         if isinstance(step, ProviderStep):
             step.id = resolved_id
@@ -401,17 +434,131 @@ class RecipeSpecCore:
             step.on_success = options["on_success"]
             step.on_failure = options["on_failure"]
             self.steps.append(step)
-            return resolved_id
+            handle = wrap_step_handle(self, resolved_id)
+            if self._linear_contexts:
+                self._linear_contexts[-1]["last"] = handle
+            return handle
 
         raise PythonRecipeError(f"unsupported step type: {type(step)!r}")
+
+    def _step_by_id(self, step_id: str) -> RecipeStep:
+        resolved = str(step_id).strip()
+        for step in self.steps:
+            if step.id == resolved:
+                return step
+        raise PythonRecipeError(f"unknown dependency step id: {resolved}")
+
+    def link_step_dependencies(self, step_id: str, dependencies: Any) -> None:
+        """Attach dependencies to an existing step after it has been created."""
+        from .authoring_support import normalize_after
+
+        step = self._step_by_id(step_id)
+        for dependency in normalize_after(dependencies) or []:
+            if dependency == step.id:
+                raise PythonRecipeError(f"step cannot depend on itself: {step.id}")
+            if dependency not in self._used_ids:
+                raise PythonRecipeError(f"unknown dependency step id: {dependency}")
+            if dependency not in step.depends_on:
+                step.depends_on.append(dependency)
+
+    def current_linear_dependency(self) -> Any:
+        if not self._linear_contexts:
+            return None
+        return self._linear_contexts[-1].get("last")
+
+    def _host_alias_for(self, host: Host) -> str:
+        cached = self._resource_host_aliases.get(host)
+        if cached:
+            return cached
+
+        base = re.sub(r"[^A-Za-z0-9_]+", "_", (host.name or host.spec).strip()).strip("_") or "host"
+        alias = base
+        suffix = 1
+        while alias in self.hosts and self.hosts[alias] != host.spec:
+            suffix += 1
+            alias = f"{base}_{suffix}"
+        self.hosts[alias] = host.spec
+        self._resource_host_aliases[host] = alias
+        return alias
+
+    def _storage_alias_for(self, storage: Storage) -> str:
+        cache_key = id(storage)
+        cached = self._resource_storage_aliases.get(cache_key)
+        if cached:
+            return cached
+
+        raw = storage.spec
+        if isinstance(raw, RuntimeStorage):
+            base_text = raw.name or raw.type.value
+            stored_value: Any = raw
+        else:
+            base_text = str(raw)
+            stored_value = raw
+        base = re.sub(r"[^A-Za-z0-9_]+", "_", (storage.name or base_text).strip()).strip("_") or "storage"
+        alias = base
+        suffix = 1
+        while alias in self.storages and self.storages[alias] != stored_value:
+            suffix += 1
+            alias = f"{base}_{suffix}"
+        self.storages[alias] = stored_value
+        self._resource_storage_aliases[cache_key] = alias
+        return alias
+
+    def resolve_host(self, host: Any) -> str:
+        if isinstance(host, Host):
+            return self._host_alias_for(host)
+        return str(host).strip()
+
+    def resolve_storage(self, storage: Any) -> str:
+        if isinstance(storage, StoragePath):
+            storage = storage.storage
+        if isinstance(storage, Storage):
+            return self._storage_alias_for(storage)
+        return self._clean_session(str(storage).strip())
+
+    def resolve_endpoint(self, value: Any) -> str:
+        if isinstance(value, HostPath):
+            return f"@{self._host_alias_for(value.host)}:{value.path}"
+        if isinstance(value, StoragePath):
+            return f"@{self._storage_alias_for(value.storage)}:{value.path}"
+        if isinstance(value, os.PathLike):
+            return os.fspath(value)
+        return str(value)
+
+    def copy(self, source: Any, destination: Any, **kwargs: Any) -> str:
+        return type(self).transfer(
+            self,
+            self.resolve_endpoint(source),
+            self.resolve_endpoint(destination),
+            operation="copy",
+            **kwargs,
+        )
+
+    def move(self, source: Any, destination: Any, **kwargs: Any) -> str:
+        return type(self).transfer(
+            self,
+            self.resolve_endpoint(source),
+            self.resolve_endpoint(destination),
+            operation="move",
+            **kwargs,
+        )
+
+    def sync(self, source: Any, destination: Any, **kwargs: Any) -> str:
+        return type(self).transfer(
+            self,
+            self.resolve_endpoint(source),
+            self.resolve_endpoint(destination),
+            operation="sync",
+            **kwargs,
+        )
 
     def to_recipe_model(self) -> RecipeModel:
         """Convert this recipe object into the normalized runtime model."""
         return RecipeModel(
             name=self.name,
             variables=dict(self.variables),
-            hosts=dict(self.hosts),
-            storages=dict(self.storages),
+            hosts=dict(self.hosts.items()),
+            storages=dict(self.storages.items()),
             steps=[item.to_step_model() for item in self.steps],
         )
 

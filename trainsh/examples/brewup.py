@@ -1,11 +1,17 @@
-from trainsh.pyrecipe import *
+from trainsh import Recipe
 
-recipe("brewup", callbacks=["console", "sqlite"])
+recipe = Recipe(
+    "brewup",
+    owner="ops",
+    tags=["bundle", "local", "maintenance"],
+    callbacks=["console", "sqlite"],
+)
 
-update = session("update", on="local")
-refresh = update("brew update")
-upgrade = update("brew upgrade", after=refresh)
-casks = update("brew upgrade --greedy --cask $(brew list --cask)", after=upgrade)
-cleanup = update("brew cleanup", after=casks)
-noticed = notice("brew upgrade complete!", after=cleanup)
-update.close(after=noticed)
+with recipe.linear():
+    update = recipe.session("update", host="local", id="open_update")
+    update.run("brew update", id="brew_update")
+    update.run("brew upgrade", id="brew_upgrade")
+    update.run("brew upgrade --greedy --cask $(brew list --cask)", id="brew_upgrade_casks")
+    update.run("brew cleanup", id="brew_cleanup")
+    recipe.notify("brew upgrade complete!", id="notify_complete")
+    update.close(id="close_update")

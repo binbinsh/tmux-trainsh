@@ -1,9 +1,15 @@
-from trainsh.pyrecipe import *
+from trainsh import Recipe
 
-recipe("hello-world", callbacks=["console", "sqlite"])
-var("MESSAGE", "Hello from trainsh")
+recipe = Recipe(
+    "hello-world",
+    owner="examples",
+    tags=["bundle", "local", "intro"],
+    callbacks=["console", "sqlite"],
+)
+message = "Hello from trainsh"
 
-hello = session("hello", on="local")
-printed = hello('echo "$MESSAGE"')
-noticed = notice("$MESSAGE", after=printed)
-hello.close(after=noticed)
+with recipe.linear():
+    hello = recipe.session("hello", host="local", id="open_hello")
+    hello.run(["printf", "%s\n", message], id="print_hello")
+    recipe.notify(message, id="notify_hello")
+    hello.close(id="close_hello")

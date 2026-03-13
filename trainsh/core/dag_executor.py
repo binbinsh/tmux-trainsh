@@ -31,11 +31,12 @@ class DagExecutor:
     def __init__(
         self,
         *,
-        executor_name: str = "thread_pool",
+        executor_name: Optional[str] = "thread_pool",
         executor_kwargs: Optional[Dict[str, Any]] = None,
         callbacks: Optional[Sequence[str]] = None,
         callback_sinks: Optional[Sequence[Any]] = None,
         default_callbacks: Optional[Sequence[str]] = None,
+        prefer_runtime_options: bool = False,
         log_callback=None,
     ):
         self.executor_name = executor_name
@@ -43,6 +44,7 @@ class DagExecutor:
         self.callbacks = list(callbacks or [])
         self.callback_sinks = list(callback_sinks or [])
         self.default_callbacks = list(default_callbacks or ["console", "sqlite"])
+        self.prefer_runtime_options = bool(prefer_runtime_options)
         self.log_callback = log_callback
 
     def run(
@@ -62,7 +64,7 @@ class DagExecutor:
         callbacks = self._select_callbacks(dag.callbacks)
 
         try:
-            selected_executor = dag.executor or self.executor_name
+            selected_executor = self._select_executor(dag)
             selected_kwargs = self._merge_kwargs(dag.executor_kwargs)
             success = run_recipe(
                 str(dag.path),
@@ -118,10 +120,12 @@ class DagExecutor:
             )
 
     def _select_callbacks(self, dag_callbacks: Optional[Sequence[str]]) -> List[str]:
-        callback_names = list(self.default_callbacks)
+        callback_names: List[str] = []
         callback_names.extend(self.callbacks)
         if dag_callbacks:
             callback_names.extend(dag_callbacks)
+        if not callback_names:
+            callback_names.extend(self.default_callbacks)
         normalized = []
         for name in callback_names:
             if not name:
@@ -135,7 +139,17 @@ class DagExecutor:
                 dedup.append(name)
         return dedup
 
+    def _select_executor(self, dag: ParsedDag) -> str:
+        if self.prefer_runtime_options and self.executor_name:
+            return self.executor_name
+        return dag.executor or self.executor_name or "sequential"
+
     def _merge_kwargs(self, dag_executor_kwargs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if self.prefer_runtime_options:
+            merged = dict(dag_executor_kwargs or {})
+            merged.update(self.executor_kwargs)
+            return merged
+
         merged = dict(self.executor_kwargs)
         if dag_executor_kwargs:
             merged.update(dag_executor_kwargs)

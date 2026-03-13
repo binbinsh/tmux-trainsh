@@ -8,6 +8,28 @@ from typing import Any, Dict, Iterable, Optional
 class RecipeProviderMiscMixin:
     """Small utility provider helpers."""
 
+    def set_var(
+        self,
+        name: str,
+        value: Any,
+        *,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Set one runtime variable."""
+        return self.provider(
+            "util",
+            "set_var",
+            params={
+                "name": str(name),
+                "value": value,
+            },
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
     def fail(
         self,
         message: str = "Failed by recipe.",

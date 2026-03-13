@@ -1,4 +1,5 @@
 import concurrent.futures
+import gc
 import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
@@ -12,7 +13,7 @@ from trainsh.core.local_tmux import TmuxCmdResult
 from trainsh.core.recipe_models import RecipeModel
 from trainsh.core.task_state import TaskInstanceState
 from trainsh.core.ti_dependencies import DependencyContext, TriggerRuleDep
-from trainsh.pyrecipe import recipe as recipe_factory
+from trainsh import Recipe
 from trainsh.pyrecipe.models import ProviderStep
 
 
@@ -20,8 +21,7 @@ from trainsh.pyrecipe.models import ProviderStep
 def isolated_executor(recipe_model: Any, *, executor_name: str = "sequential", executor_kwargs=None):
     with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
         config_dir = Path(tmpdir) / "config"
-        jobs_dir = config_dir / "jobs"
-        jobs_dir.mkdir(parents=True, exist_ok=True)
+        config_dir.mkdir(parents=True, exist_ok=True)
         stack.enter_context(
             patch(
                 "trainsh.core.executor_main.load_config",
@@ -30,15 +30,17 @@ def isolated_executor(recipe_model: Any, *, executor_name: str = "sequential", e
         )
         stack.enter_context(patch("trainsh.core.executor_main.CONFIG_DIR", config_dir))
         stack.enter_context(patch("trainsh.runtime.CONFIG_DIR", config_dir))
-        stack.enter_context(patch("trainsh.core.job_state.JOBS_DIR", jobs_dir))
-        stack.enter_context(patch("trainsh.core.execution_log.JOBS_DIR", jobs_dir))
         executor = DSLExecutor(
             recipe_model,
             log_callback=lambda *_args, **_kwargs: None,
             executor_name=executor_name,
             executor_kwargs=executor_kwargs or {},
         )
-        yield executor, config_dir
+        try:
+            yield executor, config_dir
+        finally:
+            executor.close()
+            gc.collect()
 
 
 class FakeLocalTmux:
@@ -135,7 +137,7 @@ class TriggerRuleDependencyTests(unittest.TestCase):
 
 class SequentialDependencyExecutionTests(unittest.TestCase):
     def test_sequential_executor_honors_trigger_rules_and_continue_on_failure(self):
-        recipe = recipe_factory("sequential-trigger-demo", executor="sequential")
+        recipe = Recipe("sequential-trigger-demo", executor="sequential")
         start = recipe.empty(id="start")
         failed = recipe.fail(
             "boom",
@@ -284,7 +286,7 @@ class CallbackAndRetryTests(unittest.TestCase):
 
 class SessionLifecycleTests(unittest.TestCase):
     def test_session_helpers_execute_local_tmux_lifecycle_without_real_tmux(self):
-        recipe = recipe_factory("session-demo", executor="sequential")
+        recipe = Recipe("session-demo", executor="sequential")
         main = recipe.tmux_session("local", as_="main", id="open")
         train = main.bg("python train.py", id="train")
         seen = main.wait("training finished", id="seen", depends_on=[train])

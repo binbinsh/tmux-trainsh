@@ -460,7 +460,11 @@ class EncryptedFileBackend(SecretsBackend):
     def delete(self, key: str) -> None:
         store = self._read_store()
         store.pop(key, None)
-        self._save(store)
+        if store:
+            self._save(store)
+            return
+        if _ENC_FILE.exists():
+            _ENC_FILE.unlink()
 
     def list_set_keys(self) -> List[str]:
         return list(self._read_store().keys())

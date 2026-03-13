@@ -1,3 +1,4 @@
+import gc
 import tempfile
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -16,8 +17,7 @@ def isolated_executor(
 ) -> Iterator[tuple[DSLExecutor, Path]]:
     with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
         config_dir = Path(tmpdir) / "config"
-        jobs_dir = config_dir / "jobs"
-        jobs_dir.mkdir(parents=True, exist_ok=True)
+        config_dir.mkdir(parents=True, exist_ok=True)
 
         stack.enter_context(
             patch(
@@ -27,8 +27,6 @@ def isolated_executor(
         )
         stack.enter_context(patch("trainsh.core.executor_main.CONFIG_DIR", config_dir))
         stack.enter_context(patch("trainsh.runtime.CONFIG_DIR", config_dir))
-        stack.enter_context(patch("trainsh.core.job_state.JOBS_DIR", jobs_dir))
-        stack.enter_context(patch("trainsh.core.execution_log.JOBS_DIR", jobs_dir))
         stack.enter_context(patch("trainsh.commands.storage.load_storages", return_value={}))
 
         executor = DSLExecutor(
@@ -37,4 +35,8 @@ def isolated_executor(
             executor_name=executor_name,
             executor_kwargs=executor_kwargs or {},
         )
-        yield executor, config_dir
+        try:
+            yield executor, config_dir
+        finally:
+            executor.close()
+            gc.collect()

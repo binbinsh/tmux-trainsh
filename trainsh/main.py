@@ -5,116 +5,49 @@
 import sys
 from typing import Optional
 
-BANNER = r'''
-   ████████╗██████╗  █████╗ ██╗███╗   ██╗███████╗██╗  ██╗
-   ╚══██╔══╝██╔══██╗██╔══██╗██║████╗  ██║██╔════╝██║  ██║
-      ██║   ██████╔╝███████║██║██╔██╗ ██║███████╗███████║
-      ██║   ██╔══██╗██╔══██║██║██║╚██╗██║╚════██║██╔══██║
-      ██║   ██║  ██║██║  ██║██║██║ ╚████║███████║██║  ██║
-      ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
+from .commands.help_catalog import render_top_level_help
 
-   ════════════════════════════════════════════════════════
-     🖥️  TMUX   ══▶   ☁️  GPU   ══▶   💾  STORAGE
-   ════════════════════════════════════════════════════════
-'''
+usage = render_top_level_help()
 
-usage = '''[command] [args...]
-
-Commands:
-  help      - Browse help topics
-  run       - Run a recipe
-  resume    - Resume the latest failed/interrupted recipe run
-  status    - Show current or recent recipe sessions
-  logs      - Show execution logs
-  jobs      - Show recent job state history
-  schedule  - Scheduler operations for timed recipes
-  recipes   - Recipe file management
-  transfer  - File transfer between hosts/storage
-  host      - Host management (SSH, Colab, Vast.ai)
-  storage   - Storage backend management (R2, B2, etc.)
-  secrets   - Manage API keys and credentials
-  config    - Configuration and settings
-  vast      - Vast.ai instance management
-  colab     - Google Colab integration
-  pricing   - Currency exchange rates and cost calculator
-  update    - Check for updates
-'''
-
-help_text = '''
-tmux-trainsh: GPU training workflow automation in the terminal.
+help_text = f"""tmux-trainsh: GPU training workflow automation in the terminal.
 
 Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends
-(Cloudflare R2, Backblaze B2, Google Drive), and automate training workflows.
+(Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.
 
-QUICK START
-  train help                          # Browse help topics
-  train help recipe                   # Python recipe syntax and examples
-  train secrets set VAST_API_KEY      # Set up API keys
-  train host add                      # Add SSH/Colab host
-  train storage add                   # Add storage backend
-  train recipes list                  # Inspect available recipes
-  train run <recipe>                  # Run a recipe
-  train schedule list                 # Inspect scheduled recipes
+{render_top_level_help()}
 
-HELP HUB
-  help                    Browse all help topics
-  help recipe             Python recipe syntax, examples, and lifecycle
-  help run                Run command options
-  help schedule           Scheduler usage
-  help host               Host management
-
-WORKFLOWS
-  run <name>              Run a recipe
-  resume <name>           Resume the latest failed/interrupted recipe run
-  status [id]             Show current or recent recipe sessions
-  logs [job-id]           Show execution logs
-  jobs                    Show recent job state history
-  schedule list|run|...   Scheduler operations for timed recipes
-  transfer <src> <dst>    File transfer between hosts/storage
-
-RECIPE FILES
-  recipes list|show|new|... Manage Python recipe files
-
-INFRASTRUCTURE
-  host list|add|ssh|...   Host management (SSH, Colab, Vast.ai)
-  storage list|add|...    Storage backend management (R2, B2)
-  secrets list|set|get    Manage API keys and credentials
-  config show|set|...     Configuration and settings
-
-CLOUD
-  vast list|ssh|start|... Vast.ai instance management
-  colab list|connect|ssh  Google Colab integration
-
-UTILITY
-  pricing rates|convert   Currency exchange and cost calculator
-  update                  Check for updates
-  version                 Show version
-
-RESUME
-  train resume <name>                 Resume from the latest saved checkpoint
-  Resume keeps saved hosts/tmux state; only --var overrides are supported
-
-CONFIG FILES
+Config files live under:
   ~/.config/tmux-trainsh/
-  ├── config.yaml         Main settings
-  ├── hosts.yaml          SSH hosts
-  ├── storages.yaml       Storage backends
-  └── recipes/            Recipe files (.py)
+  ├── config.yaml
+  ├── hosts.yaml
+  ├── storages.yaml
+  └── recipes/
+"""
 
-Use "train help <topic>" for centralized help, or "train <command> --help" for command-local help.
-Full documentation: https://github.com/binbinsh/tmux-trainsh
-'''
+
+COMMAND_HINTS = {
+    "recipes": "Use 'train recipe list|show|new|edit|remove' for recipe file management.",
+    "run": "Use 'train recipe run <recipe>' to execute a recipe.",
+    "resume": "Use 'train recipe resume <recipe>' to resume a recipe.",
+    "status": "Use 'train recipe status' to inspect live/manual job state.",
+    "logs": "Use 'train recipe logs' to inspect execution details.",
+    "jobs": "Use 'train recipe jobs' for the recent-jobs table.",
+    "schedule": "Use 'train recipe schedule <run|list|status>' for scheduled recipes.",
+    "exec": "Use 'train recipe run <recipe>' to execute a recipe.",
+    "hosts": "Use 'train host' (singular) for named host definitions.",
+    "storages": "Use 'train storage' (singular) for storage backends.",
+    "log": "Use 'train recipe logs' for detailed execution logs.",
+    "job": "Use 'train recipe jobs' for a compact recent-jobs table.",
+}
 
 
 def option_text() -> str:
     return '''\
---config
-default=~/.config/tmux-trainsh/config.toml
-Path to configuration file.
+--help -h
+Show the command index and top-level navigation.
 
---verbose -v
-type=bool-set
-Enable verbose output.
+--version -V
+Print the installed tmux-trainsh version.
 '''
 
 
@@ -128,7 +61,6 @@ def main(args: list[str]) -> Optional[str]:
 
     # No subcommand - show usage
     if len(args) < 2:
-        print(BANNER)
         print(usage)
         raise SystemExit(0)
 
@@ -136,9 +68,7 @@ def main(args: list[str]) -> Optional[str]:
     cmd_args = args[2:]
 
     if command in {"-h", "--help"}:
-        from .commands.help_cmd import main as help_main
-        print(BANNER)
-        help_main([])
+        print(help_text)
         raise SystemExit(0)
     if command in {"-V", "--version"}:
         from . import __display_version__
@@ -154,15 +84,7 @@ def main(args: list[str]) -> Optional[str]:
         print(f"tmux-trainsh {__display_version__}")
         raise SystemExit(0)
 
-    from .commands.recipe import main as recipes_main
-    from .commands.recipe_runtime import (
-        cmd_jobs,
-        cmd_logs,
-        cmd_resume,
-        cmd_run,
-        cmd_status,
-    )
-    from .commands.schedule_cmd import main as schedule_main
+    from .commands.recipe_cmd import main as recipe_main
     from .commands.vast import main as vast_main
     from .commands.transfer import main as transfer_main
     from .commands.host import main as host_main
@@ -174,13 +96,7 @@ def main(args: list[str]) -> Optional[str]:
     from .commands.config_cmd import main as config_main
 
     handlers = {
-        "run": cmd_run,
-        "resume": cmd_resume,
-        "status": cmd_status,
-        "logs": cmd_logs,
-        "jobs": cmd_jobs,
-        "schedule": schedule_main,
-        "recipes": recipes_main,
+        "recipe": recipe_main,
         "transfer": transfer_main,
         "host": host_main,
         "storage": storage_main,
@@ -193,14 +109,12 @@ def main(args: list[str]) -> Optional[str]:
     }
 
     handler = handlers.get(command)
-    if command == "recipe":
-        print("Unknown command: recipe")
-        print("Use 'train recipes' for file management.")
-        print("Use top-level 'train run|resume|status|logs|jobs|schedule' for execution.")
-        raise SystemExit(1)
-
     if handler is None:
         print(f"Unknown command: {command}")
+        hint = COMMAND_HINTS.get(command)
+        if hint:
+            print(hint)
+            print()
         print(usage)
         raise SystemExit(1)
     return handler(cmd_args)

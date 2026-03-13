@@ -5,35 +5,9 @@ from __future__ import annotations
 import sys
 from typing import Callable, Dict, List
 
+from .help_catalog import render_command_help, render_help_index
 
-INDEX_TEXT = """tmux-trainsh Help
-
-Help Topics
-  recipe      Python recipe syntax, examples, and lifecycle
-  recipes     Recipe file management commands
-  run         Recipe execution options
-  resume      Resume behavior and constraints
-  status      Session and live job inspection
-  logs        Execution log inspection
-  jobs        Job history inspection
-  schedule    Scheduler commands
-  transfer    File transfer commands
-  host        Host management
-  storage     Storage backend management
-  secrets     Secret management
-  config      Configuration and tmux settings
-  vast        Vast.ai management
-  colab       Google Colab integration
-  pricing     Pricing and currency tools
-  update      Update checks
-
-Examples
-  train help
-  train help recipe
-  train help run
-  train help schedule
-  train help host
-"""
+INDEX_TEXT = render_help_index()
 
 
 RECIPE_TEXT = """Python Recipe Syntax
@@ -42,67 +16,119 @@ Recipe files live under:
   ~/.config/tmux-trainsh/recipes/*.py
 
 Public import contract:
-  from trainsh.pyrecipe import *
+  from trainsh import Recipe, Host, VastHost, HostPath, Storage, StoragePath
 
 Minimal example:
 ```python
-from trainsh.pyrecipe import *
+from trainsh import Host, Recipe
 
-recipe("example", callbacks=["console", "sqlite"])
-var("MODEL", "llama-7b")
-host("gpu", "your-server")
+recipe = Recipe("nanochat", callbacks=["console", "sqlite"])
+gpu = Host("placeholder", name="gpu")
 
-prepare = host_test("gpu", timeout="15s")
-main = session("main", on="gpu", after=prepare)
-clone = main("cd /tmp && git clone https://github.com/example/project.git project")
-train = main.bg("cd /tmp/project && python train.py --model $MODEL", after=clone)
-done = main.idle(timeout="2h", after=train)
-notice("Training finished", after=done)
-main.close(after=done)
+pick = recipe.vast.pick(
+    host="gpu",
+    gpu_name="H200",
+    num_gpus=8,
+    min_gpu_ram=80,
+    auto_select=True,
+    create_if_missing=True,
+)
+fallback = recipe.vast.pick(
+    host="gpu",
+    gpu_name="H100",
+    num_gpus=8,
+    min_gpu_ram=80,
+    auto_select=True,
+    create_if_missing=True,
+    depends_on=[pick],
+    step_options={"trigger_rule": "all_failed"},
+)
+picked = recipe.on_one_success(id="picked_gpu", depends_on=[pick, fallback])
+start = recipe.vast.start(depends_on=[picked])
+ready = recipe.vast.wait_ready(timeout="30m", depends_on=[start])
+
+with recipe.linear():
+    main = recipe.session("main", host=gpu, depends_on=[ready])
+    main.install_uv()
+    main.run("cd /workspace/nanochat && bash /workspace/nanochat/runs/trainsh_nanochat.sh", background=True)
+    main.file("/workspace/nanochat-data/trainsh_success.txt", timeout="10h")
+    main.close()
 ```
 
 Starter templates
-  train recipes new demo --template minimal
-  train recipes new feature-demo --template feature-tour
-  train recipes show feature-tour
+  train recipe show nanochat
+  train recipe run nanochat
+  Bundled examples currently available:
+    train recipe show nanochat
+    Other bundled examples: aptup, brewup, hello
 
 Core building blocks
-  var("NAME", "value")                 Define variables used as $NAME
-  host("gpu", "user@host")             Define host aliases
-  storage("artifacts", "r2:bucket")
-  session("main", on="gpu")
-  main(...), main.bg(...)
+  recipe = Recipe("nanochat")          Declare one recipe object
+  gpu = Host("placeholder", name="gpu")
+  artifacts = Storage("r2:bucket")     Explicit storage object
+  gpu.path("/remote/file")             Typed remote path
+  artifacts.path("/bucket/key")        Typed storage path
+  recipe.session("main", host=gpu)
+  with recipe.linear():
+  main.run(...), main.bg(...)
   main.idle(...), main.wait(...), main.file(...), main.port(...)
-  transfer(...)
-  latest_only(...), choose(...), join(...)
-  http_wait(...), sql_query(...), xcom_push(...)
-  notice(...), vast_pick(...), vast_wait(...)
+  recipe.copy(...)
+  recipe.latest_only(...), recipe.choose(...), recipe.join(...)
+  recipe.http_wait(...), recipe.sqlite_query(...), recipe.xcom_push(...)
+  recipe.notify(...), recipe.vast.start(...), recipe.vast.wait_ready(...)
 
 Scheduling metadata
-  Prefer recipe(...) metadata:
-    recipe("nightly", schedule="@every 15m", owner="ml", tags=["nightly", "train"])
+  Prefer constructor metadata:
+    recipe = Recipe("nightly", schedule="@every 15m", owner="ml", tags=["nightly", "train"])
 
-Recipe lifecycle commands
-  train recipes list
-  train recipes show <name>
-  train recipes new <name> --template minimal|feature-tour
-  train run <name>
-  train resume <name>
-  train status
-  train logs
-  train jobs
-  train schedule list
+Canonical lifecycle commands
+  train recipe list
+  train recipe show <name>
+  train recipe new <name> --template minimal
+  train recipe run <name>
+  train recipe resume <name>
+  train recipe status
+  train recipe logs
+  train recipe jobs
+  train recipe schedule list
+"""
+
+
+STATUS_TEXT = """Run Status vs Scheduler History
+
+Use these commands for different questions:
+
+  train recipe status
+    Live/manual jobs, tmux sessions, current progress, attach commands.
+
+  train recipe logs
+    Full execution details for one job, including step results.
+
+  train recipe jobs
+    Compact recent job table.
+
+  train recipe schedule list
+    What recipes are scheduled?
+
+  train recipe schedule status
+    What did the scheduler start recently?
+
+Rule of thumb
+  If you started the run manually, begin with `train recipe status`.
+  If you are checking cron-like scheduled activity, begin with `train recipe schedule status`.
 """
 
 
 TOPIC_ALIASES = {
+    "overview": "overview",
+    "index": "overview",
     "recipe": "recipe",
-    "recipes": "recipes",
     "syntax": "recipe",
     "python-recipes": "recipe",
     "run": "run",
     "resume": "resume",
     "status": "status",
+    "workflow-status": "status",
     "logs": "logs",
     "jobs": "jobs",
     "schedule": "schedule",
@@ -115,129 +141,43 @@ TOPIC_ALIASES = {
     "colab": "colab",
     "pricing": "pricing",
     "update": "update",
-    "overview": "overview",
 }
 
 
 def _show_recipe() -> None:
     print(RECIPE_TEXT)
+    print()
+    print(render_command_help("recipe"))
 
 
-def _show_recipes() -> None:
-    from .recipe import main as recipes_main
-
-    recipes_main(["--help"])
-
-
-def _show_run() -> None:
-    from .recipe_runtime import cmd_run
-
-    cmd_run(["--help"])
+def _show_status_topic() -> None:
+    print(STATUS_TEXT)
+    print()
+    print(render_command_help("status"))
 
 
-def _show_resume() -> None:
-    from .recipe_runtime import cmd_resume
-
-    cmd_resume(["--help"])
-
-
-def _show_status() -> None:
-    from .recipe_runtime import cmd_status
-
-    cmd_status(["--help"])
-
-
-def _show_logs() -> None:
-    from .recipe_runtime import cmd_logs
-
-    cmd_logs(["--help"])
-
-
-def _show_jobs() -> None:
-    from .recipe_runtime import cmd_jobs
-
-    cmd_jobs(["--help"])
-
-
-def _show_schedule() -> None:
-    from .schedule_cmd import main as schedule_main
-
-    schedule_main(["--help"])
-
-
-def _show_host() -> None:
-    from .host import main as host_main
-
-    host_main(["--help"])
-
-
-def _show_storage() -> None:
-    from .storage import main as storage_main
-
-    storage_main(["--help"])
-
-
-def _show_transfer() -> None:
-    from .transfer import main as transfer_main
-
-    transfer_main(["--help"])
-
-
-def _show_secrets() -> None:
-    from .secrets_cmd import main as secrets_main
-
-    secrets_main(["--help"])
-
-
-def _show_config() -> None:
-    from .config_cmd import main as config_main
-
-    config_main(["--help"])
-
-
-def _show_vast() -> None:
-    from .vast import main as vast_main
-
-    vast_main(["--help"])
-
-
-def _show_colab() -> None:
-    from .colab import main as colab_main
-
-    colab_main(["--help"])
-
-
-def _show_pricing() -> None:
-    from .pricing import main as pricing_main
-
-    pricing_main(["--help"])
-
-
-def _show_update() -> None:
-    from .update import main as update_main
-
-    update_main(["--help"])
+def _show_plain(command: str) -> Callable[[], None]:
+    return lambda: print(render_command_help(command))
 
 
 TOPIC_HANDLERS: Dict[str, Callable[[], None]] = {
     "overview": lambda: print(INDEX_TEXT),
     "recipe": _show_recipe,
-    "recipes": _show_recipes,
-    "run": _show_run,
-    "resume": _show_resume,
-    "status": _show_status,
-    "logs": _show_logs,
-    "jobs": _show_jobs,
-    "schedule": _show_schedule,
-    "transfer": _show_transfer,
-    "host": _show_host,
-    "storage": _show_storage,
-    "secrets": _show_secrets,
-    "config": _show_config,
-    "vast": _show_vast,
-    "colab": _show_colab,
-    "pricing": _show_pricing,
-    "update": _show_update,
+    "run": _show_plain("run"),
+    "resume": _show_plain("resume"),
+    "status": _show_status_topic,
+    "logs": _show_plain("logs"),
+    "jobs": _show_plain("jobs"),
+    "schedule": _show_plain("schedule"),
+    "transfer": _show_plain("transfer"),
+    "host": _show_plain("host"),
+    "storage": _show_plain("storage"),
+    "secrets": _show_plain("secrets"),
+    "config": _show_plain("config"),
+    "vast": _show_plain("vast"),
+    "colab": _show_plain("colab"),
+    "pricing": _show_plain("pricing"),
+    "update": _show_plain("update"),
 }
 
 

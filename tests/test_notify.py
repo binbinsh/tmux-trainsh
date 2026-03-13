@@ -97,7 +97,9 @@ class ExecutorNotifyTests(unittest.TestCase):
     def _new_executor(self, logs):
         recipe = RecipeModel(name="notify-test")
         with patch("trainsh.core.executor_main.load_config", return_value={"tmux": {}}):
-            return DSLExecutor(recipe, log_callback=logs.append, recipe_path=None)
+            executor = DSLExecutor(recipe, log_callback=logs.append, recipe_path=None)
+        self.addCleanup(executor.close)
+        return executor
 
     def test_simple_notify_message(self):
         logs = []

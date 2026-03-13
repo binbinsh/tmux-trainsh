@@ -4,15 +4,19 @@ OnePasswordBackend service-account wiring, and SecretsManager resolution."""
 import io
 import json
 import os
+import atexit
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from trainsh.constants import SecretKeys
+
 # We need to redirect CONFIG_DIR / CONFIG_FILE to a temp dir before
 # importing the module, so patch at the constants level.
 _tmp = tempfile.TemporaryDirectory()
+atexit.register(_tmp.cleanup)
 _TMP_DIR = Path(_tmp.name) / ".config" / "tmux-trainsh"
 _TMP_DIR.mkdir(parents=True, exist_ok=True)
 _TMP_CONFIG = _TMP_DIR / "config.yaml"
@@ -677,6 +681,139 @@ class TestEnsureVault(unittest.TestCase):
         env = create_kwargs.kwargs.get("env") or create_kwargs[1].get("env")
         self.assertIsNotNone(env)
         self.assertEqual(env["OP_SERVICE_ACCOUNT_TOKEN"], "ops_TOK")
+
+
+class TestOnePasswordPublicApi(unittest.TestCase):
+    def test_get_set_delete_and_list_keys_paths(self):
+        backend = OnePasswordBackend(vault="trainsh", sa_token="ops_T")
+
+        with patch.object(backend, "_op_with_recovery", return_value=MagicMock(returncode=1, stdout="", stderr="boom")):
+            self.assertIsNone(backend.get("MISSING"))
+
+        with patch.object(backend, "_op_with_recovery", return_value=MagicMock(returncode=0, stdout=" value \n", stderr="")):
+            self.assertEqual(backend.get("KEY"), "value")
+
+        with patch.object(backend, "_ensure_vault") as mocked_vault, patch.object(
+            backend, "_op", side_effect=[MagicMock(returncode=0, stdout="{}", stderr=""), MagicMock(returncode=0, stdout="", stderr="")]
+        ) as mocked_op:
+            backend.set("KEY", "value")
+        mocked_vault.assert_called_once()
+        self.assertIn("edit", mocked_op.call_args_list[1].args)
+
+        with patch.object(backend, "_ensure_vault"), patch.object(
+            backend, "_op", side_effect=[MagicMock(returncode=1, stdout="", stderr="not found"), MagicMock(returncode=0, stdout="", stderr="")]
+        ) as mocked_op:
+            backend.set("KEY", "value")
+        self.assertIn("create", mocked_op.call_args_list[1].args)
+
+        with patch.object(backend, "_ensure_vault"), patch.object(
+            backend, "_op", side_effect=[MagicMock(returncode=0, stdout="{}", stderr=""), MagicMock(returncode=1, stdout="", stderr="edit failed")]
+        ):
+            with self.assertRaises(RuntimeError):
+                backend.set("KEY", "value")
+
+        with patch.object(backend, "_ensure_vault"), patch.object(
+            backend, "_op", side_effect=[MagicMock(returncode=1, stdout="", stderr="not found"), MagicMock(returncode=1, stdout="", stderr="create failed")]
+        ):
+            with self.assertRaises(RuntimeError):
+                backend.set("KEY", "value")
+
+        with patch.object(backend, "_op") as mocked_op:
+            backend.delete("KEY")
+        mocked_op.assert_called_once()
+
+        with patch.object(backend, "_op", return_value=MagicMock(returncode=1, stdout="", stderr="boom")):
+            self.assertEqual(backend.list_set_keys(), [])
+        with patch.object(backend, "_op", return_value=MagicMock(returncode=0, stdout="not-json", stderr="")):
+            self.assertEqual(backend.list_set_keys(), [])
+        with patch.object(
+            backend,
+            "_op",
+            return_value=MagicMock(returncode=0, stdout=json.dumps([{"title": "A"}, {}, {"title": "B"}]), stderr=""),
+        ):
+            self.assertEqual(backend.list_set_keys(), ["A", "B"])
+
+
+class TestBackendAvailabilityAndManager(unittest.TestCase):
+    def setUp(self):
+        _clean_config()
+
+    @patch("trainsh.core.secrets.shutil.which", return_value=None)
+    def test_op_available_false(self, _which):
+        self.assertFalse(secrets_mod._op_available())
+
+    def test_keyring_available_paths(self):
+        class FailKeyring:
+            pass
+
+        class FakeKeyringModule:
+            @staticmethod
+            def get_keyring():
+                return FailKeyring()
+
+        with patch.dict("sys.modules", {"keyring": FakeKeyringModule}):
+            self.assertFalse(secrets_mod._keyring_available())
+
+        class GoodBackend:
+            pass
+
+        class GoodKeyringModule:
+            @staticmethod
+            def get_keyring():
+                return GoodBackend()
+
+        with patch.dict("sys.modules", {"keyring": GoodKeyringModule}):
+            self.assertTrue(secrets_mod._keyring_available())
+
+    @patch("trainsh.core.secrets.subprocess.run", return_value=MagicMock(returncode=1, stdout="", stderr="boom"))
+    def test_op_desktop_connectable_false(self, _run):
+        self.assertFalse(secrets_mod._op_desktop_connectable())
+
+    def test_secrets_manager_backend_and_convenience_paths(self):
+        mgr = SecretsManager()
+        backend = MagicMock()
+        mgr._backend = backend
+        mgr._backend_loaded = True
+
+        backend.get.side_effect = RuntimeError("boom")
+        self.assertIsNone(mgr.get("KEY"))
+
+        backend.get.side_effect = None
+        backend.get.return_value = "value"
+        self.assertEqual(mgr.get("KEY"), "value")
+        self.assertEqual(mgr._cache["KEY"], "value")
+
+        backend.get.return_value = None
+        with patch("trainsh.core.secrets.prompt_backend_selection", return_value=backend):
+            mgr2 = SecretsManager()
+            mgr2.set("KEY", "value")
+        backend.set.assert_called()
+        self.assertEqual(mgr2._cache["KEY"], "value")
+
+        mgr2.delete("KEY")
+        backend.delete.assert_called()
+
+        with patch.object(mgr2, "get", side_effect=lambda key: "x" if key in {SecretKeys.VAST_API_KEY, SecretKeys.HF_TOKEN} else None):
+            keys = mgr2.list_keys()
+        self.assertEqual(set(keys), {SecretKeys.VAST_API_KEY, SecretKeys.HF_TOKEN})
+        self.assertEqual(mgr2.get_vast_api_key(), None)
+        with patch.object(mgr2, "set") as mocked_set:
+            mgr2.set_vast_api_key("v")
+            mgr2.set_hf_token("h")
+            mgr2.set_github_token("g")
+        self.assertEqual(mocked_set.call_count, 3)
+        mgr2.clear_cache()
+        self.assertEqual(mgr2._cache, {})
+
+    def test_get_configured_backend_name_and_singleton(self):
+        self.assertIsNone(secrets_mod.get_configured_backend_name())
+        _save_config({"secrets": {"backend": "encrypted_file"}})
+        self.assertEqual(secrets_mod.get_configured_backend_name(), "encrypted_file")
+
+        secrets_mod._secrets_manager = None
+        first = secrets_mod.get_secrets_manager()
+        second = secrets_mod.get_secrets_manager()
+        self.assertIs(first, second)
 
 
 if __name__ == "__main__":

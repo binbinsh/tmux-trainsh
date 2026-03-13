@@ -300,15 +300,25 @@ class DagProcessor:
 
     def _find_recipe_call(self, tree: ast.AST) -> Optional[ast.Call]:
         for node in getattr(tree, "body", []):
-            value = getattr(node, "value", None)
-            if isinstance(node, ast.Assign):
-                value = node.value
-            elif isinstance(node, ast.AnnAssign):
-                value = node.value
-            if not isinstance(value, ast.Call):
-                continue
-            if self._is_recipe_factory_call(value):
+            value = self._recipe_call_from_node(node)
+            if value is not None:
                 return value
+        return None
+
+    def _recipe_call_from_node(self, node: ast.AST) -> Optional[ast.Call]:
+        value = getattr(node, "value", None)
+        if isinstance(node, ast.Assign):
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            value = node.value
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                value = item.context_expr
+                if isinstance(value, ast.Call) and self._is_recipe_factory_call(value):
+                    return value
+            return None
+        if isinstance(value, ast.Call) and self._is_recipe_factory_call(value):
+            return value
         return None
 
     def _parse_recipe_name_call(self, tree: ast.AST) -> Optional[str]:
@@ -343,9 +353,9 @@ class DagProcessor:
     def _is_recipe_factory_call(node: ast.Call) -> bool:
         func = node.func
         if isinstance(func, ast.Name):
-            return func.id == "recipe"
+            return func.id in {"recipe", "Recipe"}
         if isinstance(func, ast.Attribute):
-            return func.attr == "recipe"
+            return func.attr in {"recipe", "Recipe"}
         return False
 
     @staticmethod

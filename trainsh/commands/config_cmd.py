@@ -4,25 +4,53 @@
 import sys
 from typing import Optional, List
 
-from ..cli_utils import prompt_input
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
 
-usage = '''[subcommand] [args...]
+SUBCOMMAND_SPECS = (
+    SubcommandSpec("show", "Show the merged configuration."),
+    SubcommandSpec("get", "Read one config key by dotted path."),
+    SubcommandSpec("set", "Write one config key by dotted path."),
+    SubcommandSpec("reset", "Reset config.yaml back to defaults."),
+    SubcommandSpec("tmux", "Inspect or edit tmux-specific settings."),
+)
 
-Subcommands:
-  show             - Show current configuration
-  get <key>        - Get a config value (e.g., vast.default_disk_gb)
-  set <key> <val>  - Set a config value
-  reset            - Reset to default configuration
-  tmux-setup       - Apply tmux configuration to ~/.tmux.conf
-  tmux-edit        - Edit tmux options in $EDITOR
-  tmux-list        - List all tmux options
+TMUX_SUBCOMMAND_SPECS = (
+    SubcommandSpec("show", "List tmux options from config."),
+    SubcommandSpec("edit", "Edit tmux options in $EDITOR."),
+    SubcommandSpec("apply", "Write ~/.tmux.conf from config."),
+)
 
-Examples:
-  train config get ui.currency
-  train config set ui.currency CNY
-  train config tmux-edit
-  train config tmux-setup
-'''
+usage = render_command_help(
+    command="train config",
+    summary="Inspect and update tmux-trainsh configuration.",
+    usage_lines=(
+        "train config <subcommand> [args...]",
+        "train config tmux <show|edit|apply>",
+    ),
+    subcommands=SUBCOMMAND_SPECS,
+    notes=("Main config file: ~/.config/tmux-trainsh/config.yaml.",),
+    examples=(
+        "train config show",
+        "train config get ui.currency",
+        "train config set ui.currency CNY",
+        "train config tmux show",
+        "train config tmux edit",
+        "train config tmux apply",
+    ),
+)
+
+tmux_usage = render_command_help(
+    command="train config tmux",
+    summary="Inspect and apply tmux-specific settings stored in config.yaml.",
+    usage_lines=("train config tmux <show|edit|apply>",),
+    subcommands=TMUX_SUBCOMMAND_SPECS,
+    notes=("Apply writes ~/.tmux.conf; edit only changes config.yaml.",),
+    examples=(
+        "train config tmux show",
+        "train config tmux edit",
+        "train config tmux apply",
+    ),
+)
 
 
 def cmd_show(args: List[str]) -> None:
@@ -192,7 +220,7 @@ def cmd_tmux_list(args: List[str]) -> None:
         print(f"  {opt}")
     print("-" * 50)
     print(f"Total: {len(tmux_options)} options")
-    print("\nUse 'train config tmux-edit' to modify")
+    print("\nUse 'train config tmux edit' to modify")
 
 
 def cmd_tmux_edit(args: List[str]) -> None:
@@ -246,14 +274,37 @@ def cmd_tmux_edit(args: List[str]) -> None:
         save_config(config)
 
         print(f"Saved {len(new_options)} tmux options")
-        print("\nUse 'train config tmux-setup' to apply to ~/.tmux.conf")
-
+        print("\nUse 'train config tmux apply' to write ~/.tmux.conf")
     finally:
         # Clean up temp file
         try:
             os.unlink(temp_path)
         except OSError:
             pass
+
+
+def _handle_tmux_namespace(args: List[str]) -> None:
+    """Dispatch nested tmux config commands."""
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(tmux_usage)
+        return
+
+    subcommand = args[0]
+    subargs = args[1:]
+    commands = {
+        "show": cmd_tmux_list,
+        "edit": cmd_tmux_edit,
+        "apply": cmd_tmux_setup,
+    }
+
+    try:
+        handler = dispatch_subcommand(subcommand, commands=commands)
+    except KeyError:
+        print(f"Unknown tmux subcommand: {subcommand}")
+        print(tmux_usage)
+        raise SystemExit(1)
+
+    handler(subargs)
 
 
 def main(args: List[str]) -> Optional[str]:
@@ -265,22 +316,25 @@ def main(args: List[str]) -> Optional[str]:
     subcommand = args[0]
     subargs = args[1:]
 
+    if subcommand == "tmux":
+        _handle_tmux_namespace(subargs)
+        return None
+
     commands = {
         "show": cmd_show,
         "get": cmd_get,
         "set": cmd_set,
         "reset": cmd_reset,
-        "tmux-setup": cmd_tmux_setup,
-        "tmux-list": cmd_tmux_list,
-        "tmux-edit": cmd_tmux_edit,
     }
 
-    if subcommand not in commands:
+    try:
+        handler = dispatch_subcommand(subcommand, commands=commands)
+    except KeyError:
         print(f"Unknown subcommand: {subcommand}")
         print(usage)
         sys.exit(1)
 
-    commands[subcommand](subargs)
+    handler(subargs)
     return None
 
 

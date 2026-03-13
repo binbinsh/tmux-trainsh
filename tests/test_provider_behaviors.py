@@ -5,13 +5,15 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from datetime import timedelta
+from contextlib import closing
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 from trainsh.core.models import Storage, StorageType
 from trainsh.core.recipe_models import RecipeModel
+from trainsh.core.runtime_db import DEFAULT_XCOM_RETENTION_DAYS, ensure_xcom_schema
 
 from tests.runtime_test_utils import isolated_executor
 
@@ -186,6 +188,48 @@ class ProviderBehaviorTests(unittest.TestCase):
                 self.assertTrue(ok)
                 self.assertEqual(json.loads(legacy), {"items": [9]})
 
+    def test_xcom_push_prunes_old_rows_and_uses_shared_schema_helper(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "xcom.db"
+            with closing(sqlite3.connect(db)) as conn:
+                ensure_xcom_schema(conn)
+                old_created_at = (datetime.now() - timedelta(days=DEFAULT_XCOM_RETENTION_DAYS + 1)).isoformat()
+                conn.execute(
+                    """
+                    INSERT INTO xcom (dag_id, task_id, run_id, map_index, key, value, created_at, execution_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("demo", "old-task", "old-run", 0, "stale", "1", old_created_at, old_created_at),
+                )
+                conn.commit()
+
+            with isolated_executor(RecipeModel(name="xcom-demo")) as (executor, _config_dir):
+                executor.ctx.job_id = "run-current"
+                ok, _ = executor._exec_provider_xcom_push(
+                    {
+                        "database": str(db),
+                        "task_id": "producer",
+                        "key": "payload",
+                        "value": {"items": [1]},
+                    }
+                )
+                self.assertTrue(ok)
+                ok, _ = executor._exec_provider_xcom_push(
+                    {
+                        "database": str(db),
+                        "task_id": "producer",
+                        "key": "payload-2",
+                        "value": {"items": [2]},
+                    }
+                )
+                self.assertTrue(ok)
+
+            with closing(sqlite3.connect(db)) as conn:
+                rows = conn.execute(
+                    "SELECT task_id, run_id, key FROM xcom ORDER BY created_at"
+                ).fetchall()
+            self.assertEqual(rows, [("producer", "run-current", "payload"), ("producer", "run-current", "payload-2")])
+
     def test_latest_only_checks_recipe_runs_table(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "runtime.db"
@@ -194,7 +238,7 @@ class ProviderBehaviorTests(unittest.TestCase):
                 current_started_at = executor.ctx.start_time.isoformat()
                 later = (executor.ctx.start_time + timedelta(seconds=5)).isoformat()
 
-                with sqlite3.connect(db) as conn:
+                with closing(sqlite3.connect(db)) as conn:
                     conn.execute("CREATE TABLE recipe_runs (recipe_name TEXT, run_id TEXT, started_at TEXT)")
                     conn.execute(
                         "INSERT INTO recipe_runs(recipe_name, run_id, started_at) VALUES (?, ?, ?)",
@@ -217,7 +261,7 @@ class ProviderBehaviorTests(unittest.TestCase):
                 current_started_at = executor.ctx.start_time.isoformat()
                 later = (executor.ctx.start_time + timedelta(seconds=5)).isoformat()
 
-                with sqlite3.connect(db) as conn:
+                with closing(sqlite3.connect(db)) as conn:
                     conn.execute("CREATE TABLE dag_run (dag_id TEXT, run_id TEXT, start_date TEXT)")
                     conn.execute(
                         "INSERT INTO dag_run(dag_id, run_id, start_date) VALUES (?, ?, ?)",

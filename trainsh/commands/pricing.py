@@ -4,10 +4,14 @@
 import argparse
 from typing import Optional
 
+from ..cli_utils import render_command_help
 from ..services.pricing import (
     Currency,
     ExchangeRates,
+    ensure_exchange_rates,
     fetch_exchange_rates,
+    get_display_currency,
+    get_pricing_context,
     load_pricing_settings,
     save_pricing_settings,
     format_currency,
@@ -18,13 +22,31 @@ from ..services.pricing import (
 )
 
 
+usage = render_command_help(
+    command="train pricing",
+    summary="Show exchange rates, display currency settings, and cloud cost estimates.",
+    usage_lines=("train pricing <rates|currency|colab|vast|convert> [args...]",),
+    notes=(
+        "Cross-currency views auto-refresh cached exchange rates when needed.",
+        "Exchange rates are refreshed at most once every 3 days unless you force --refresh.",
+    ),
+    examples=(
+        "train pricing rates --refresh",
+        "train pricing currency --set CNY",
+        "train pricing colab",
+        "train pricing vast",
+        "train pricing convert 10 USD CNY",
+    ),
+)
+
+
 def cmd_rates(args: argparse.Namespace) -> None:
     """Show or refresh exchange rates."""
     settings = load_pricing_settings()
 
     if args.refresh:
         print("Fetching exchange rates...")
-        rates = fetch_exchange_rates()
+        rates = fetch_exchange_rates(fallback_to_defaults=True)
         settings.exchange_rates = rates
         save_pricing_settings(settings)
         print(f"Updated at: {rates.updated_at}")
@@ -91,6 +113,11 @@ def cmd_colab(args: argparse.Namespace) -> None:
 
     # Show Colab pricing
     sub = settings.colab_subscription
+    settings, display_curr, rates = get_pricing_context(
+        product_currencies=[sub.currency],
+        display_currency=get_display_currency(),
+    )
+    sub = settings.colab_subscription
     print(f"Colab Subscription: {sub.name}")
     print(f"  Price: {format_currency(sub.price, sub.currency)}")
     print(f"  Total Units: {sub.total_units}")
@@ -101,16 +128,12 @@ def cmd_colab(args: argparse.Namespace) -> None:
         ColabGpuPricing(g["gpu_name"], g["units_per_hour"])
         for g in settings.colab_gpu_pricing
     ]
-    prices = calculate_colab_pricing(sub, gpu_pricing, settings.exchange_rates)
+    prices = calculate_colab_pricing(sub, gpu_pricing, rates)
 
     print(f"\nGPU Hourly Prices:")
     print("-" * 50)
-    # Read display currency from config.yaml via get_currency_settings()
-    from ..utils.vast_formatter import get_currency_settings
-    currency_settings = get_currency_settings()
-    display_curr = currency_settings.display_currency
     for p in prices:
-        converted = settings.exchange_rates.convert(p.price_usd_per_hour, "USD", display_curr)
+        converted = rates.convert(p.price_usd_per_hour, "USD", display_curr)
         print(f"  {p.gpu_name:8} {p.units_per_hour:>6.2f} units/hr  "
               f"${p.price_usd_per_hour:.4f}  {format_currency(converted, display_curr)}/hr")
 
@@ -120,10 +143,10 @@ def cmd_vast(args: argparse.Namespace) -> None:
     from ..services.vast_api import get_vast_client
     from ..utils.vast_formatter import get_currency_settings
 
-    settings = load_pricing_settings()
-    currency_settings = get_currency_settings()
-    display_curr = currency_settings.display_currency
-    rates = settings.exchange_rates
+    _settings, display_curr, rates = get_pricing_context(
+        product_currencies=["USD"],
+        display_currency=get_display_currency(),
+    )
 
     client = get_vast_client()
     instances = client.list_instances()
@@ -176,15 +199,11 @@ def cmd_vast(args: argparse.Namespace) -> None:
 def cmd_convert(args: argparse.Namespace) -> None:
     """Convert amount between currencies."""
     settings = load_pricing_settings()
-    rates = settings.exchange_rates
-
-    if not rates.rates:
-        print("No exchange rates cached. Run 'pricing rates --refresh' first.")
-        raise SystemExit(1)
 
     amount = args.amount
     from_curr = args.from_currency.upper()
     to_curr = args.to_currency.upper()
+    rates = ensure_exchange_rates([from_curr, to_curr], settings=settings)
 
     converted = rates.convert(amount, from_curr, to_curr)
     print(f"{format_currency(amount, from_curr)} = {format_currency(converted, to_curr)}")
@@ -192,6 +211,10 @@ def cmd_convert(args: argparse.Namespace) -> None:
 
 def main(args: list) -> Optional[str]:
     """Main entry point for pricing command."""
+    if not args or args[0] in {"-h", "--help", "help"}:
+        print(usage)
+        return None
+
     parser = argparse.ArgumentParser(
         prog="train pricing",
         description="Manage pricing and currency conversion",

@@ -29,6 +29,7 @@ class SqlitePoolManager:
         self.db_path = str(db_path)
         self._lock = threading.Lock()
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
+        self._closed = False
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self._ensure_schema()
@@ -164,7 +165,21 @@ class SqlitePoolManager:
                 self._upsert_pool(pool_name, 1, now=now)
 
     def close(self) -> None:
+        if self._closed:
+            return
         try:
             self.conn.close()
         except Exception:
             pass
+        self._closed = True
+
+    def __enter__(self) -> "SqlitePoolManager":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.close()
+        return False
+
+    def __del__(self):
+        if hasattr(self, "conn"):
+            self.close()

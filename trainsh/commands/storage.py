@@ -4,28 +4,35 @@
 import sys
 from typing import Optional, List
 
-from ..cli_utils import prompt_input
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
 
-usage = '''[subcommand] [args...]
+SUBCOMMAND_SPECS = (
+    SubcommandSpec("list", "List configured storage backends."),
+    SubcommandSpec("add", "Add a storage backend interactively."),
+    SubcommandSpec("show", "Inspect one backend's configuration."),
+    SubcommandSpec("check", "Check connectivity for one backend."),
+    SubcommandSpec("remove", "Delete a stored backend."),
+)
 
-Subcommands:
-  list             - List configured storage backends
-  add              - Add a new storage backend
-  show <name>      - Show storage details
-  rm <name>        - Remove a storage backend
-  test <name>      - Test connection to storage
-
-Supported storage types:
-  - local          Local filesystem
-  - ssh            SSH/SFTP
-  - gdrive         Google Drive
-  - r2             Cloudflare R2
-  - b2             Backblaze B2
-  - gcs            Google Cloud Storage
-  - smb            SMB/CIFS
-
-Storages are stored in: ~/.config/tmux-trainsh/storages.yaml
-'''
+usage = render_command_help(
+    command="train storage",
+    summary="Manage storage backends used by transfers and recipes.",
+    usage_lines=(
+        "train storage <subcommand> [args...]",
+        "train storage check <name>",
+    ),
+    subcommands=SUBCOMMAND_SPECS,
+    notes=(
+        "Supported types: local, ssh, gdrive, r2, b2, s3, gcs, smb.",
+        "Backends are stored in ~/.config/tmux-trainsh/storages.yaml.",
+    ),
+    examples=(
+        "train storage list",
+        "train storage add",
+        "train storage show artifacts",
+        "train storage check artifacts",
+    ),
+)
 
 
 def load_storages() -> dict:
@@ -106,8 +113,9 @@ def cmd_add(args: List[str]) -> None:
     print("  3. Google Drive")
     print("  4. Cloudflare R2")
     print("  5. Backblaze B2")
-    print("  6. Google Cloud Storage")
-    print("  7. SMB/CIFS")
+    print("  6. Amazon S3")
+    print("  7. Google Cloud Storage")
+    print("  8. SMB/CIFS")
     type_choice = prompt_input("Choice [1]: ", default="1")
     if type_choice is None:
         return
@@ -118,8 +126,9 @@ def cmd_add(args: List[str]) -> None:
         "3": StorageType.GOOGLE_DRIVE,
         "4": StorageType.R2,
         "5": StorageType.B2,
-        "6": StorageType.GCS,
-        "7": StorageType.SMB,
+        "6": StorageType.S3,
+        "7": StorageType.GCS,
+        "8": StorageType.SMB,
     }
     storage_type = type_map.get(type_choice, StorageType.LOCAL)
 
@@ -154,24 +163,46 @@ def cmd_add(args: List[str]) -> None:
         config["remote_name"] = remote_name
 
     elif storage_type == StorageType.R2:
+        account_id = prompt_input("Cloudflare Account ID: ")
+        if account_id is None:
+            return
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
         print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_R2_CREDENTIALS'")
-        print("Option 2: Global - 'train secrets set R2_CREDENTIALS'")
-        print("(Bundle includes Account ID plus API Token credentials; S3 API endpoint is auto-derived)")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY' and '{name.upper()}_SECRET_KEY'")
+        print("Option 2: Global - 'train secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
+        print("(Storage-specific credentials take priority over global ones)")
+        config["account_id"] = account_id
         config["bucket"] = bucket
+        config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
 
     elif storage_type == StorageType.B2:
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
         print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_B2_CREDENTIALS'")
-        print("Option 2: Global - 'train secrets set B2_CREDENTIALS'")
-        print("(Bundle includes Application Key ID and Application Key)")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_KEY_ID' and '{name.upper()}_APPLICATION_KEY'")
+        print("Option 2: Global - 'train secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
         config["bucket"] = bucket
+
+    elif storage_type == StorageType.S3:
+        bucket = prompt_input("Bucket name: ")
+        if bucket is None:
+            return
+        region = prompt_input("Region [us-east-1]: ", default="us-east-1")
+        if region is None:
+            return
+        endpoint = prompt_input("Custom endpoint (optional, for S3-compatible): ")
+        if endpoint is None:
+            return
+        print("\nCredentials will be automatically loaded from secrets.")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY_ID' and '{name.upper()}_SECRET_ACCESS_KEY'")
+        print("Option 2: Global - 'train secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
+        config["bucket"] = bucket
+        config["region"] = region
+        if endpoint:
+            config["endpoint"] = endpoint
 
     elif storage_type == StorageType.GCS:
         bucket = prompt_input("Bucket name: ")
@@ -243,7 +274,7 @@ def cmd_show(args: List[str]) -> None:
 def cmd_rm(args: List[str]) -> None:
     """Remove a storage backend."""
     if not args:
-        print("Usage: train storage rm <name>")
+        print("Usage: train storage remove <name>")
         sys.exit(1)
 
     name = args[0]
@@ -265,10 +296,8 @@ def cmd_rm(args: List[str]) -> None:
 
 def cmd_test(args: List[str]) -> None:
     """Test connection to storage."""
-    from ..core.models import StorageType
-
     if not args:
-        print("Usage: train storage test <name>")
+        print("Usage: train storage check <name>")
         sys.exit(1)
 
     name = args[0]
@@ -286,12 +315,9 @@ def cmd_test(args: List[str]) -> None:
         build_rclone_env,
         get_rclone_remote_name,
     )
+    from ..services.transfer_support import resolve_storage_remote_path
 
-    if storage.type == StorageType.S3:
-        print("Error: Amazon S3 support has been removed. Please migrate to R2 or B2.")
-        sys.exit(1)
-
-    if storage.type.value in ("gdrive", "r2", "b2", "gcs"):
+    if storage.type.value in ("gdrive", "r2", "b2", "s3", "gcs", "smb"):
         if not check_rclone_available():
             print("Error: rclone is required but not installed.")
             print("Install with: brew install rclone")
@@ -306,13 +332,8 @@ def cmd_test(args: List[str]) -> None:
 
         # Get the correct remote name
         remote_name = get_rclone_remote_name(storage)
-
-        # For object storage, also need to specify the bucket
-        bucket = storage.config.get("bucket", "")
-        if bucket:
-            rclone_path = f"{remote_name}:{bucket}"
-        else:
-            rclone_path = f"{remote_name}:"
+        remote_path = resolve_storage_remote_path(storage, "")
+        rclone_path = f"{remote_name}:{remote_path}" if remote_path else f"{remote_name}:"
 
         print(f"  Using rclone remote: {rclone_path}")
         if rclone_env:
@@ -340,12 +361,23 @@ def cmd_test(args: List[str]) -> None:
     elif storage.type.value == "ssh":
         # Test SSH connection
         import subprocess
-        host = storage.config.get("host", "")
-        if not host:
+        host_spec = str(storage.config.get("host") or storage.config.get("hostname") or "").strip()
+        user = str(storage.config.get("user") or storage.config.get("username") or "").strip()
+        if not host_spec:
             print("Error: No host configured for SSH storage.")
             sys.exit(1)
+
+        target = host_spec if "@" in host_spec or not user else f"{user}@{host_spec}"
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+        if storage.config.get("port"):
+            cmd.extend(["-p", str(storage.config["port"])])
+        key_path = str(storage.config.get("key_file") or storage.config.get("key_path") or "").strip()
+        if key_path:
+            cmd.extend(["-i", key_path])
+        cmd.extend([target, "echo", "ok"])
+
         result = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "echo", "ok"],
+            cmd,
             capture_output=True,
             text=True,
         )
@@ -379,16 +411,18 @@ def main(args: List[str]) -> Optional[str]:
         "list": cmd_list,
         "add": cmd_add,
         "show": cmd_show,
-        "rm": cmd_rm,
-        "test": cmd_test,
+        "check": cmd_test,
+        "remove": cmd_rm,
     }
 
-    if subcommand not in commands:
+    try:
+        handler = dispatch_subcommand(subcommand, commands=commands)
+    except KeyError:
         print(f"Unknown subcommand: {subcommand}")
         print(usage)
         sys.exit(1)
 
-    commands[subcommand](subargs)
+    handler(subargs)
     return None
 
 

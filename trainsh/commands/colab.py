@@ -5,27 +5,35 @@ import yaml
 import sys
 from typing import Optional, List
 
-from ..cli_utils import prompt_input
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
 from ..constants import CONFIG_DIR
 
-usage = '''[subcommand] [args...]
+SUBCOMMAND_SPECS = (
+    SubcommandSpec("list", "List saved Colab tunnel definitions."),
+    SubcommandSpec("connect", "Add a Colab tunnel definition."),
+    SubcommandSpec("ssh", "Open SSH to one saved Colab runtime."),
+    SubcommandSpec("run", "Run one remote shell command over SSH."),
+)
 
-Subcommands:
-  list             - List connected Colab notebooks
-  connect          - Connect to a Colab runtime
-  run <cmd>        - Run command on Colab
-  ssh              - SSH into Colab (requires ngrok/cloudflared)
-
-Note: Google Colab integration requires:
-  1. A running Colab notebook with SSH enabled
-  2. ngrok or cloudflared for tunneling
-  3. The tunnel URL/connection info
-
-Example Colab setup code:
-  !pip install colab_ssh
-  from colab_ssh import launch_ssh_cloudflared
-  launch_ssh_cloudflared(password="your_password")
-'''
+usage = render_command_help(
+    command="train colab",
+    summary="Quick helper for one-off Google Colab SSH tunnels.",
+    usage_lines=(
+        "train colab <subcommand> [args...]",
+        "train colab run <command>",
+    ),
+    subcommands=SUBCOMMAND_SPECS,
+    notes=(
+        "For reusable named connections inside recipes, prefer train host add and choose a Colab host type.",
+        "You need a running Colab notebook with SSH enabled plus a cloudflared or ngrok tunnel.",
+    ),
+    examples=(
+        "train colab connect",
+        "train colab list",
+        "train colab ssh my-colab",
+        "train colab run nvidia-smi",
+    ),
+)
 
 COLAB_FILE = CONFIG_DIR / "colab.yaml"
 
@@ -192,6 +200,7 @@ def cmd_run(args: List[str]) -> None:
         print("Usage: train colab run <command>")
         sys.exit(1)
 
+    import os
     import subprocess
 
     command = " ".join(args)
@@ -235,12 +244,14 @@ def main(args: List[str]) -> Optional[str]:
         "run": cmd_run,
     }
 
-    if subcommand not in commands:
+    try:
+        handler = dispatch_subcommand(subcommand, commands=commands)
+    except KeyError:
         print(f"Unknown subcommand: {subcommand}")
         print(usage)
         sys.exit(1)
 
-    commands[subcommand](subargs)
+    handler(subargs)
     return None
 
 

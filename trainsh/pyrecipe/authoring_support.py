@@ -1,16 +1,11 @@
-"""Helpers for the flat Python recipe authoring surface."""
+"""Helpers shared by the explicit Python recipe authoring surface."""
 
 from __future__ import annotations
 
-import inspect
 import re
-from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional
 
 from .models import PythonRecipeError
-
-if TYPE_CHECKING:
-    from .base import RecipeSpecCore
-    from .session_steps import RecipeSessionRef
 
 
 _STEP_OPTION_ALIASES = {
@@ -35,34 +30,6 @@ _STEP_OPTION_ALIASES = {
 _EQ_CONDITION = re.compile(
     r"^\s*(?P<left>[A-Za-z_][A-Za-z0-9_]*)\s*==\s*(?P<right>.+?)\s*$"
 )
-
-
-def bind_recipe(recipe: "RecipeSpecCore", *, frame: Optional[Any] = None) -> "RecipeSpecCore":
-    """Bind a recipe object into the caller module globals for loader discovery."""
-    target = frame or inspect.currentframe()
-    if target is None or target.f_back is None:
-        raise PythonRecipeError("unable to bind recipe to caller context")
-    caller = target.f_back
-    if frame is None and caller.f_back is not None:
-        caller = caller.f_back
-    caller_globals = caller.f_globals
-    caller_globals["__trainsh_recipe__"] = recipe
-    return recipe
-
-
-def current_recipe(*, frame: Optional[inspect.FrameInfo] = None) -> "RecipeSpecCore":
-    """Resolve the current authoring recipe from the caller module globals."""
-    target = frame or inspect.currentframe()
-    if target is None:
-        raise PythonRecipeError("unable to inspect current authoring context")
-    scope = target.f_back
-    while scope is not None:
-        recipe = scope.f_globals.get("__trainsh_recipe__")
-        if recipe is not None:
-            return recipe
-        scope = scope.f_back
-    raise PythonRecipeError("call recipe(...) before defining recipe steps")
-
 
 def normalize_after(after: Any) -> Optional[list[str]]:
     """Normalize a single dependency or collection into step ids."""
@@ -107,18 +74,6 @@ def split_step_call(kwargs: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, 
         call_kwargs["step_options"] = step_options
     return params, call_kwargs
 
-
-def invoke_recipe_method(recipe: "RecipeSpecCore", method_name: str, *args: Any, **kwargs: Any) -> Any:
-    """Call one RecipeSpec method using the flat authoring keywords."""
-    params, call_kwargs = split_step_call(kwargs)
-    method = getattr(recipe, method_name)
-    accepted = inspect.signature(method).parameters
-    for key, value in call_kwargs.items():
-        if key in accepted:
-            params[key] = value
-    return method(*args, **params)
-
-
 def normalize_condition(condition: str) -> str:
     """Translate a light-weight branch/check expression into runtime form."""
     text = str(condition or "").strip()
@@ -136,13 +91,6 @@ def normalize_condition(condition: str) -> str:
     if right.startswith(("'", '"')) and right.endswith(("'", '"')) and len(right) >= 2:
         right = right[1:-1]
     return f"var:{left}=={right}"
-
-
-def session_dependency(ref: Any) -> Optional[str]:
-    """Resolve a session reference into the step id that opened it."""
-    return _dependency_id(ref)
-
-
 def _dependency_id(value: Any) -> str:
     if value is None:
         return ""
@@ -156,11 +104,7 @@ def _dependency_id(value: Any) -> str:
 
 
 __all__ = [
-    "bind_recipe",
-    "current_recipe",
-    "invoke_recipe_method",
     "normalize_after",
     "normalize_condition",
-    "session_dependency",
     "split_step_call",
 ]

@@ -15,13 +15,13 @@ from ..core.dag_processor import DagProcessor
 
 
 usage = """Usage:
-  train schedule [run] [--forever|--once] [--dag NAME] [--dags-dir PATH]
-                 [--force] [--wait] [--include-invalid]
-                 [--loop-interval N] [--max-active-runs N]
-                 [--max-active-runs-per-dag N] [--iterations N]
-                 [--sqlite-db PATH]
-  train schedule list [--include-invalid] [--dags-dir PATH] [--sqlite-db PATH] [PATTERN...]
-  train schedule status [--rows N] [--sqlite-db PATH]
+  train recipe schedule [run] [--forever|--once] [--recipe NAME] [--recipes-dir PATH]
+                         [--force] [--wait] [--include-invalid]
+                         [--loop-interval N] [--max-active-runs N]
+                         [--max-active-runs-per-recipe N] [--iterations N]
+                         [--runtime-db PATH]
+  train recipe schedule list [--include-invalid] [--recipes-dir PATH] [--runtime-db PATH] [PATTERN...]
+  train recipe schedule status [--rows N] [--runtime-db PATH]
 """
 
 
@@ -95,37 +95,37 @@ def _parse_args(args: Sequence[str], *, default_mode: str = "run") -> Dict[str, 
             options["mode"] = "help"
             return options
 
-        if arg.startswith("--dag="):
+        if arg.startswith("--recipe="):
             options.setdefault("dag_ids", []).append(arg.split("=", 1)[1])
             i += 1
             continue
-        if arg in {"-d", "--dag"}:
+        if arg == "--recipe":
             if i + 1 >= len(args):
-                print("Missing value for --dag")
+                print("Missing value for --recipe")
                 raise SystemExit(1)
             options.setdefault("dag_ids", []).append(args[i + 1])
             i += 2
             continue
 
-        if arg.startswith("--dags-dir="):
+        if arg.startswith("--recipes-dir="):
             options["dags_dir"] = arg.split("=", 1)[1]
             i += 1
             continue
-        if arg in {"--dags-dir", "--recipes-dir"}:
+        if arg == "--recipes-dir":
             if i + 1 >= len(args):
-                print("Missing value for --dags-dir")
+                print("Missing value for --recipes-dir")
                 raise SystemExit(1)
             options["dags_dir"] = args[i + 1]
             i += 2
             continue
 
-        if arg.startswith("--sqlite-db="):
+        if arg.startswith("--runtime-db="):
             options["sqlite_db"] = arg.split("=", 1)[1]
             i += 1
             continue
-        if arg == "--sqlite-db":
+        if arg == "--runtime-db":
             if i + 1 >= len(args):
-                print("Missing value for --sqlite-db")
+                print("Missing value for --runtime-db")
                 raise SystemExit(1)
             options["sqlite_db"] = args[i + 1]
             i += 2
@@ -158,20 +158,20 @@ def _parse_args(args: Sequence[str], *, default_mode: str = "run") -> Dict[str, 
             i += 2
             continue
 
-        if arg.startswith("--max-active-runs-per-dag="):
+        if arg.startswith("--max-active-runs-per-recipe="):
             options["max_active_runs_per_dag"] = _to_int(
                 arg.split("=", 1)[1],
-                field="--max-active-runs-per-dag",
+                field="--max-active-runs-per-recipe",
             )
             i += 1
             continue
-        if arg == "--max-active-runs-per-dag":
+        if arg == "--max-active-runs-per-recipe":
             if i + 1 >= len(args):
-                print("Missing value for --max-active-runs-per-dag")
+                print("Missing value for --max-active-runs-per-recipe")
                 raise SystemExit(1)
             options["max_active_runs_per_dag"] = _to_int(
                 args[i + 1],
-                field="--max-active-runs-per-dag",
+                field="--max-active-runs-per-recipe",
             )
             i += 2
             continue
@@ -217,8 +217,10 @@ def _print_usage() -> None:
         usage
         + """
 Notes:
-  --force: run all matched dags ignoring schedule
-  --wait: when running, wait for started dags to finish"""
+  train recipe status shows live/manual jobs; train recipe schedule status shows scheduler history.
+  --recipe: target a specific scheduled recipe id
+  --force: run matched scheduled recipes even if they are not due yet
+  --wait: when running, wait for started recipes to finish"""
     )
 
 
@@ -257,6 +259,16 @@ def _is_running_state(state: str) -> bool:
     return str(state).lower() == "running"
 
 
+def _recipe_label(dag_id: object) -> str:
+    text = str(dag_id or "").strip()
+    if not text:
+        return "-"
+    try:
+        return Path(text).stem or text
+    except OSError:
+        return text
+
+
 def cmd_schedule_list(args: Sequence[str]) -> None:
     parsed = _parse_args(args, default_mode="list")
     if parsed.get("mode") == "help":
@@ -274,14 +286,14 @@ def cmd_schedule_list(args: Sequence[str]) -> None:
         dags = [dag for dag in dags if _matches(dag.dag_id, filters) or _matches(dag.recipe_name, filters)]
 
     if not dags:
-        print("No DAGs found.")
+        print("No scheduled recipes found.")
         return
 
     sqlite_db = str(parsed.get("sqlite_db") or "").strip() or str(CONFIG_DIR / "runtime.db")
     conn = sqlite3.connect(sqlite_db)
     conn.row_factory = sqlite3.Row
     try:
-        print("DAG_ID\tSCHEDULE\tSTATE\tLAST_RUN\tRUN_ID\tPATH")
+        print("RECIPE\tSCHEDULE\tSTATE\tLAST_RUN\tRUN_ID\tPATH")
         for dag in sorted(dags, key=lambda d: d.recipe_name):
             row = _latest_state_for_dag(conn, dag.dag_id)
             if row is None:
@@ -296,7 +308,7 @@ def cmd_schedule_list(args: Sequence[str]) -> None:
                 else:
                     last = "-"
             print(
-                f"{dag.dag_id}\t"
+                f"{dag.recipe_name}\t"
                 f"{dag.schedule or '-'}\t"
                 f"{state}\t"
                 f"{last}\t"
@@ -327,11 +339,11 @@ def cmd_schedule_status(args: Sequence[str]) -> None:
             print("No runs recorded.")
             return
 
-        print("DAG_ID\tRUN_ID\tSTATE\tRUN_TYPE\tSTARTED")
+        print("RECIPE\tRUN_ID\tSTATE\tRUN_TYPE\tSTARTED")
         for row in history:
             started = row["start_date"] or "-"
             print(
-                f"{row['dag_id']}\t"
+                f"{_recipe_label(row['dag_id'])}\t"
                 f"{row['run_id']}\t"
                 f"{row['state']}\t"
                 f"{row['run_type']}\t"
@@ -391,18 +403,18 @@ def cmd_schedule_run(args: Sequence[str]) -> None:
     )
 
     if not records:
-        print("No DAG was started.")
+        print("No scheduled recipe was started.")
         return
 
     if wait:
         failed = any(record.state in {DagRunState.FAILED, DagRunState.ERROR} for record in records)
         for record in records:
-            print(f"{record.state}\t{record.dag_id}\t{record.run_id}\t{record.message}")
+            print(f"{record.state}\t{_recipe_label(record.dag_id)}\t{record.run_id}\t{record.message}")
         if failed:
             raise SystemExit(1)
     else:
         for record in records:
-            print(f"started\t{record.dag_id}\t{record.run_id}\t{record.message}")
+            print(f"started\t{_recipe_label(record.dag_id)}\t{record.run_id}\t{record.message}")
 
 
 def cmd_schedule(args: List[str]) -> None:

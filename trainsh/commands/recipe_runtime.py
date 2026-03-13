@@ -9,60 +9,36 @@ import sys
 from typing import List, Optional
 
 from ..core.job_state import generate_job_id
-from ..core.tmux_naming import get_live_session_name, get_window_session_name
+from ..core.tmux_naming import get_live_session_name
 from .recipe import find_recipe
+from .recipe_shared import (
+    EXECUTOR_OPTIONS_FLAGS,
+    EXECUTOR_OPTION_FLAGS,
+    HELP_FLAGS,
+    SET_OPTION_FLAGS,
+    WORKER_OPTION_FLAGS,
+    _parse_assignment,
+    _parse_int_flag,
+    _print_jobs_usage,
+    _print_logs_usage,
+    _print_resume_usage,
+    _print_run_usage,
+    _print_status_usage,
+)
+from .recipe_views import (
+    _format_recent_event,
+    _short_text,
+    _show_execution_details,
+    _show_job_details,
+    cmd_jobs,
+    cmd_logs,
+    cmd_status,
+)
 from .runtime_dispatch import run_recipe_via_dag
 
 
-HELP_FLAGS = {"-h", "--help", "help"}
-
-
-def _print_run_usage(exit_code: int) -> None:
-    print("Usage: train run <name> [options]")
-    print()
-    print("Options:")
-    print("  --host NAME=HOST  Override host (e.g., --host gpu=vast:12345)")
-    print("  --var NAME=VALUE  Override variable")
-    print("  --pick-host NAME  Interactively select host from vast.ai")
-    print("  --executor NAME   Executor: sequential|thread_pool|process_pool|local_executor|airflow|celery|dask (aliases supported)")
-    print("                    kubernetes/executor is intentionally not supported in this runtime")
-    print("  --max-workers N   Worker count (default: 4)")
-    print("  --workers N       Alias for --max-workers")
-    print("  --concurrency N   Alias for --max-workers")
-    print("  --parallelism N   Alias for --max-workers")
-    print("  --executor-arg KEY=VALUE")
-    print("  --executor-kwargs JSON_OR_KV")
-    print("  --callback NAME   Callback sink: console|sqlite (repeatable or comma-separated)")
-    raise SystemExit(exit_code)
-
-
-def _print_resume_usage(exit_code: int) -> None:
-    print("Usage: train resume <name> [options]")
-    print()
-    print("Options:")
-    print("  --var NAME=VALUE  Override variable while resuming")
-    print()
-    print("Host overrides are not supported when resuming.")
-    raise SystemExit(exit_code)
-
-
-def _print_logs_usage(exit_code: int) -> None:
-    print("Usage: train logs [--list|--last|JOB_ID]")
-    raise SystemExit(exit_code)
-
-
-def _print_status_usage(exit_code: int) -> None:
-    print("Usage: train status [--list|--last|--all|JOB_ID]")
-    raise SystemExit(exit_code)
-
-
-def _print_jobs_usage(exit_code: int) -> None:
-    print("Usage: train jobs [--all]")
-    raise SystemExit(exit_code)
-
-
 def _maybe_auto_enter_tmux(
-    subcommand: str,
+    command_parts: List[str],
     args: List[str],
     *,
     recipe_name: str,
@@ -91,7 +67,7 @@ def _maybe_auto_enter_tmux(
         return False
 
     session_name = get_live_session_name(recipe_name, job_id, session_index)
-    inner_cmd = [sys.executable, "-m", "trainsh", subcommand, *args]
+    inner_cmd = [sys.executable, "-m", "trainsh", *command_parts, *args]
     command_prefix = ""
     if os.environ.get("TERM", "").lower() in {"", "dumb", "unknown"}:
         command_prefix = "TERM=xterm-256color "
@@ -180,7 +156,7 @@ def cmd_run(args: List[str]) -> None:
     var_overrides = {}
     pick_hosts = []
     callbacks = []
-    executor = "sequential"
+    executor: Optional[str] = None
     executor_kwargs = {}
     unsupported_executors = {
         "k8s",
@@ -233,73 +209,107 @@ def cmd_run(args: List[str]) -> None:
     i = 0
     while i < len(rest_args):
         arg = rest_args[i]
-        if arg == "--host" and i + 1 < len(rest_args):
-            i += 1
-            key, _, value = rest_args[i].partition("=")
+        if arg.startswith("--host="):
+            key, value = _parse_assignment(arg.split("=", 1)[1], flag_name="--host")
             host_overrides[key] = value
-        elif arg == "--var" and i + 1 < len(rest_args):
+        elif arg == "--host":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --host. Expected NAME=SPEC.")
+                raise SystemExit(1)
             i += 1
-            key, _, value = rest_args[i].partition("=")
+            key, value = _parse_assignment(rest_args[i], flag_name="--host")
+            host_overrides[key] = value
+        elif arg.startswith("--set="):
+            key, value = _parse_assignment(arg.split("=", 1)[1], flag_name="--set")
             var_overrides[key] = value
-        elif arg == "--pick-host" and i + 1 < len(rest_args):
+        elif arg == "--set":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --set. Expected NAME=VALUE.")
+                raise SystemExit(1)
+            i += 1
+            key, value = _parse_assignment(rest_args[i], flag_name="--set")
+            var_overrides[key] = value
+        elif arg.startswith("--pick-host="):
+            pick_host = arg.split("=", 1)[1].strip()
+            if not pick_host:
+                print("Missing value for --pick-host.")
+                raise SystemExit(1)
+            pick_hosts.append(pick_host)
+        elif arg == "--pick-host":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --pick-host.")
+                raise SystemExit(1)
             i += 1
             pick_hosts.append(rest_args[i])
-        elif arg == "--executor" and i + 1 < len(rest_args):
+        elif arg.startswith("--executor="):
+            executor = arg.split("=", 1)[1].strip()
+            normalized_executor = "".join(ch for ch in str(executor).lower() if ch.isalnum())
+            if normalized_executor in unsupported_executors:
+                print("Error: kubernetes executor is not supported in this runtime.")
+                raise SystemExit(1)
+        elif arg == "--executor":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --executor.")
+                raise SystemExit(1)
             i += 1
             executor = rest_args[i]
             normalized_executor = "".join(ch for ch in str(executor).lower() if ch.isalnum())
             if normalized_executor in unsupported_executors:
                 print("Error: kubernetes executor is not supported in this runtime.")
                 raise SystemExit(1)
-        elif arg == "--max-workers" and i + 1 < len(rest_args):
+        elif arg.startswith("--executor-workers="):
+            executor_kwargs["max_workers"] = _parse_int_flag(arg.split("=", 1)[1], flag_name="--executor-workers")
+        elif arg == "--executor-workers":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --executor-workers.")
+                raise SystemExit(1)
             i += 1
+            executor_kwargs["max_workers"] = _parse_int_flag(rest_args[i], flag_name="--executor-workers")
+        elif arg.startswith("--executor-option="):
+            key, value = _parse_assignment(arg.split("=", 1)[1], flag_name="--executor-option")
+            executor_kwargs[key] = _coerce_executor_kw_value(value)
+        elif arg == "--executor-option":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --executor-option. Expected KEY=VALUE.")
+                raise SystemExit(1)
+            i += 1
+            key, value = _parse_assignment(rest_args[i], flag_name="--executor-option")
+            executor_kwargs[key] = _coerce_executor_kw_value(value)
+        elif arg.startswith("--executor-options="):
             try:
-                executor_kwargs["max_workers"] = int(rest_args[i])
-            except ValueError:
-                print("Invalid --max-workers value, must be integer.")
+                executor_kwargs.update(_parse_executor_kwargs(arg.split("=", 1)[1]))
+            except (json.JSONDecodeError, ValueError) as exc:
+                print(f"Invalid --executor-options: {exc}")
                 raise SystemExit(1)
-        elif arg == "--workers" and i + 1 < len(rest_args):
-            i += 1
-            try:
-                executor_kwargs["workers"] = int(rest_args[i])
-            except ValueError:
-                print("Invalid --workers value, must be integer.")
+        elif arg == "--executor-options":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --executor-options.")
                 raise SystemExit(1)
-        elif arg == "--concurrency" and i + 1 < len(rest_args):
-            i += 1
-            try:
-                executor_kwargs["concurrency"] = int(rest_args[i])
-            except ValueError:
-                print("Invalid --concurrency value, must be integer.")
-                raise SystemExit(1)
-        elif arg == "--parallelism" and i + 1 < len(rest_args):
-            i += 1
-            try:
-                executor_kwargs["parallelism"] = int(rest_args[i])
-            except ValueError:
-                print("Invalid --parallelism value, must be integer.")
-                raise SystemExit(1)
-        elif arg == "--executor-arg" and i + 1 < len(rest_args):
-            i += 1
-            key, sep, value = rest_args[i].partition("=")
-            if not sep or not key:
-                print("Usage: --executor-arg KEY=VALUE")
-                raise SystemExit(1)
-            executor_kwargs[key.strip()] = _coerce_executor_kw_value(value.strip())
-        elif arg == "--executor-kwargs" and i + 1 < len(rest_args):
             i += 1
             try:
                 executor_kwargs.update(_parse_executor_kwargs(rest_args[i]))
             except (json.JSONDecodeError, ValueError) as exc:
-                print(f"Invalid --executor-kwargs: {exc}")
+                print(f"Invalid --executor-options: {exc}")
                 raise SystemExit(1)
-        elif arg == "--callback" and i + 1 < len(rest_args):
+        elif arg.startswith("--callback="):
+            parts = [part.strip() for part in arg.split("=", 1)[1].split(",") if part.strip()]
+            if not parts:
+                print("Missing value for --callback.")
+                raise SystemExit(1)
+            callbacks.extend(parts)
+        elif arg == "--callback":
+            if i + 1 >= len(rest_args):
+                print("Missing value for --callback.")
+                raise SystemExit(1)
             i += 1
             parts = [part.strip() for part in rest_args[i].split(",") if part.strip()]
             callbacks.extend(parts)
-        elif "=" in arg:
-            key, _, value = arg.partition("=")
-            var_overrides[key] = value
+        elif arg.startswith("-"):
+            print(f"Unknown option: {arg}")
+            _print_run_usage(1)
+        else:
+            print(f"Unexpected argument: {arg}")
+            _print_run_usage(1)
         i += 1
 
     for host_name in pick_hosts:
@@ -320,7 +330,7 @@ def cmd_run(args: List[str]) -> None:
     recipe_display_name = os.path.splitext(os.path.basename(recipe_path))[0]
 
     if _maybe_auto_enter_tmux(
-        "run",
+        ["recipe", "run"],
         args,
         recipe_name=recipe_display_name,
         job_id=run_job_id,
@@ -364,305 +374,6 @@ def cmd_run(args: List[str]) -> None:
     raise SystemExit(1)
 
 
-def cmd_logs(args: List[str]) -> None:
-    """View execution logs."""
-    if args and args[0] in HELP_FLAGS:
-        _print_logs_usage(0)
-
-    from ..core.execution_log import ExecutionLogReader
-
-    reader = ExecutionLogReader()
-
-    if not args or args[0] in ("--list", "-l"):
-        executions = reader.list_executions(limit=20)
-
-        if not executions:
-            print("No execution logs found.")
-            return
-
-        print("Recent executions:")
-        print("-" * 90)
-        print(f"{'Job ID':<12} {'Recipe':<20} {'Started':<24} {'Status':<10} {'Duration'}")
-        print("-" * 90)
-
-        for ex in executions:
-            job_id = ex.get("job_id", "")[:10]
-            recipe = ex.get("recipe", "")[:18]
-            started = ex.get("started", "")[:22]
-            success = ex.get("success")
-            duration_ms = ex.get("duration_ms", 0)
-
-            if success is None:
-                status = "running"
-            elif success:
-                status = "success"
-            else:
-                status = "failed"
-
-            duration_str = f"{duration_ms}ms" if duration_ms else "-"
-            print(f"{job_id:<12} {recipe:<20} {started:<24} {status:<10} {duration_str}")
-
-        print("-" * 90)
-        print(f"Total: {len(executions)} executions")
-        print("\nUse 'train logs <job-id>' to view details.")
-        return
-
-    if args[0] == "--last":
-        executions = reader.list_executions(limit=1)
-        if not executions:
-            print("No execution logs found.")
-            return
-        _show_execution_details(reader, executions[0]["job_id"])
-        return
-
-    _show_execution_details(reader, args[0])
-
-
-def _show_execution_details(reader, job_id: str) -> None:
-    """Show details of a specific execution."""
-    summary = reader.get_execution_summary(job_id)
-    if not summary:
-        print(f"Execution not found: {job_id}")
-        raise SystemExit(1)
-
-    print(f"Job ID: {summary['job_id']}")
-    print(f"Recipe: {summary['recipe']}")
-    print(f"Recipe Path: {summary.get('recipe_path', 'N/A')}")
-    print(f"Started: {summary['started']}")
-    print(f"Ended: {summary['ended'] or 'N/A'}")
-
-    success = summary.get("success")
-    if success is None:
-        status = "running"
-    elif success:
-        status = "success"
-    else:
-        status = "failed"
-    print(f"Status: {status}")
-
-    duration_ms = summary.get("duration_ms", 0)
-    if duration_ms:
-        print(f"Duration: {duration_ms}ms ({duration_ms / 1000:.2f}s)")
-
-    variables = summary.get("variables", {})
-    if variables:
-        print(f"\nVariables ({len(variables)}):")
-        for key, value in list(variables.items())[:10]:
-            pretty = value[:50] if len(str(value)) > 50 else value
-            print(f"  {key} = {pretty}")
-        if len(variables) > 10:
-            print(f"  ... and {len(variables) - 10} more")
-
-    hosts = summary.get("hosts", {})
-    if hosts:
-        print(f"\nHosts ({len(hosts)}):")
-        for key, value in hosts.items():
-            print(f"  @{key} = {value}")
-
-    steps = summary.get("steps", [])
-    if steps:
-        print(f"\nSteps ({len(steps)}):")
-        print("-" * 70)
-        for step in steps:
-            step_status = "OK" if step.get("success") else "FAIL"
-            step_duration = step.get("duration_ms", 0)
-            step_num = step.get("step_num", "?")
-            error = step.get("error", "")
-            result = step.get("result", "")
-
-            line = f"  {step_num}. [{step_status}]"
-            if step_duration:
-                line += f" ({step_duration}ms)"
-            if result and len(result) < 50:
-                line += f" -> {result}"
-            print(line)
-
-            if error:
-                print(f"      Error: {error}")
-        print("-" * 70)
-
-    from ..core.execution_log import get_jobs_dir
-
-    jobs_dir = get_jobs_dir()
-    log_files = list(jobs_dir.glob(f"*_{job_id}.jsonl.gz")) + list(jobs_dir.glob(f"*_{job_id}.jsonl"))
-    if not log_files:
-        log_files = list(jobs_dir.glob(f"{job_id}.jsonl.gz")) + list(jobs_dir.glob(f"{job_id}.jsonl"))
-    if log_files:
-        print(f"\nLog file: {log_files[0]}")
-
-
-def cmd_status(args: List[str]) -> None:
-    """View running recipe sessions."""
-    if args and args[0] in HELP_FLAGS:
-        _print_status_usage(0)
-
-    from ..core.job_state import JobStateManager
-
-    state_manager = JobStateManager()
-    print("Recipe sessions:")
-
-    if args and args[0] in ("--last", "-1"):
-        running_jobs = state_manager.list_running()
-        if running_jobs:
-            _show_job_details(running_jobs[0])
-            return
-
-        jobs = state_manager.list_all(limit=1)
-        if not jobs:
-            print("No recipe jobs found.")
-            print("Run a recipe with 'train run <name>'")
-            return
-        print("No running jobs found. Showing latest job instead.")
-        print()
-        _show_job_details(jobs[0])
-        return
-
-    if args and args[0] not in ("--list", "-l", "--all", "-a"):
-        job_id = args[0]
-        job = state_manager.load(job_id)
-
-        if not job:
-            for candidate in state_manager.list_all():
-                if candidate.job_id.startswith(job_id):
-                    job = candidate
-                    break
-
-        if not job:
-            print(f"Job not found: {job_id}")
-            print("Use 'train status' to list jobs.")
-            raise SystemExit(1)
-
-        _show_job_details(job)
-        return
-
-    all_jobs = "--all" in args or "-a" in args
-    jobs = state_manager.list_all() if all_jobs else state_manager.list_running()
-
-    if not jobs:
-        print("No running recipe jobs.")
-        print("Run a recipe with 'train run <name>'")
-        return
-
-    print("Recipe Jobs:")
-    print("-" * 80)
-    print(f"{'ID':<10} {'Recipe':<20} {'Status':<12} {'Step':<10} {'Updated':<25}")
-    print("-" * 80)
-
-    for job in jobs:
-        job_id = job.job_id[:8]
-        recipe = job.recipe_name[:18]
-        status = job.status[:10]
-        step = f"{job.current_step + 1}/{job.total_steps}"
-        updated = job.updated_at[:23]
-        print(f"{job_id:<10} {recipe:<20} {status:<12} {step:<10} {updated:<25}")
-
-    print("-" * 80)
-    print(f"Total: {len(jobs)} jobs")
-
-    if not all_jobs:
-        print("\nUse '--all' to show completed/failed jobs.")
-        print("Use '--last' to show the latest running job.")
-
-
-def _window_session_name(job, window_name: str, fallback_index: int) -> str:
-    """Resolve tmux session name for a recipe window."""
-    mapped = getattr(job, "window_sessions", {}).get(window_name)
-    if mapped:
-        return mapped
-    return get_window_session_name(job.recipe_name, job.job_id, fallback_index)
-
-
-def _show_attach_commands(job) -> None:
-    """Show attach commands for bridge/local/remote window sessions."""
-    from ..core.executor_utils import _build_ssh_args
-    from ..core.local_tmux import LocalTmuxClient
-    from ..core.remote_tmux import RemoteTmuxClient
-
-    printed = False
-    if getattr(job, "bridge_session", ""):
-        print("\nAttach Commands:")
-        print(f"  bridge: tmux attach -t {job.bridge_session}")
-        printed = True
-
-    if not job.hosts:
-        return
-
-    local_tmux = LocalTmuxClient()
-    if not printed:
-        print("\nAttach Commands:")
-
-    for fallback_index, (window_name, host_spec) in enumerate(job.hosts.items()):
-        session_name = _window_session_name(job, window_name, fallback_index)
-        try:
-            if host_spec == "local":
-                attach_cmd = local_tmux.build_attach_command(session_name, nested=False)
-            else:
-                attach_cmd = RemoteTmuxClient(host_spec, _build_ssh_args).build_attach_command(
-                    session_name,
-                    status_mode="keep",
-                )
-            print(f"  @{window_name}: {attach_cmd}")
-        except Exception:
-            print(f"  @{window_name}: tmux attach -t {session_name}")
-
-
-def _show_job_details(job) -> None:
-    """Show details of a specific job."""
-    from ..core.tmux_session import TmuxSession, session_exists
-
-    print(f"Job ID: {job.job_id}")
-    print(f"Recipe: {job.recipe_name}")
-    print(f"Recipe Path: {job.recipe_path}")
-    print(f"Status: {job.status}")
-    print(f"Progress: Step {job.current_step + 1}/{job.total_steps}")
-    print(f"Created: {job.created_at}")
-    print(f"Updated: {job.updated_at}")
-
-    tmux_session_name = (
-        getattr(job, "tmux_session", "")
-        or getattr(job, "bridge_session", "")
-        or next(iter(getattr(job, "window_sessions", {}).values()), "")
-    )
-    print(f"Tmux Session: {tmux_session_name or '(none)'}")
-    if getattr(job, "bridge_session", "") and job.bridge_session != tmux_session_name:
-        print(f"Bridge Session: {job.bridge_session}")
-
-    if job.hosts:
-        print("\nHosts:")
-        for name, spec in job.hosts.items():
-            print(f"  @{name} = {spec}")
-        _show_attach_commands(job)
-
-    if job.vast_instance_id:
-        print(f"\nVast.ai Instance: {job.vast_instance_id}")
-        if job.vast_start_time:
-            print(f"  Started: {job.vast_start_time}")
-
-    print("-" * 60)
-
-    if job.status == "running" and tmux_session_name and session_exists(tmux_session_name):
-        try:
-            tmux = TmuxSession(tmux_session_name, create=False)
-            panes = tmux.list_panes()
-            if panes:
-                print("\nActive Panes:")
-                for pane in panes:
-                    print(f"  {pane.pane_id}: {pane.window_name} ({pane.current_command})")
-
-                print("\nLive Output (last 20 lines):")
-                output = tmux.capture(panes[0].pane_id, start=-20)
-                for line in output.split("\n"):
-                    print(f"  {line}")
-        except Exception as exc:
-            print(f"\n(Could not capture output: {exc})")
-        return
-
-    if job.status == "running":
-        print("\n(Tmux session no longer exists)")
-        return
-    print(f"\n(Job {job.status})")
-
-
 def cmd_resume(args: List[str]) -> None:
     """Resume a failed/interrupted Python recipe."""
     if not args:
@@ -677,20 +388,26 @@ def cmd_resume(args: List[str]) -> None:
     i = 0
     while i < len(rest_args):
         arg = rest_args[i]
-        if arg == "--host":
+        if arg == "--host" or arg.startswith("--host="):
             print("Host overrides are not supported when resuming.")
-            print("Start a fresh run with 'train run <name> --host NAME=HOST' instead.")
+            print("Start a fresh run with 'train recipe run <name> --host NAME=HOST' instead.")
             raise SystemExit(1)
-        if arg == "--var":
+        if arg.startswith("--set="):
+            key, value = _parse_assignment(arg.split("=", 1)[1], flag_name="--set")
+            var_overrides[key] = value
+        elif arg == "--set":
             if i + 1 >= len(rest_args):
-                print("Missing value for --var. Expected NAME=VALUE.")
+                print("Missing value for --set. Expected NAME=VALUE.")
                 raise SystemExit(1)
             i += 1
-            key, _, value = rest_args[i].partition("=")
+            key, value = _parse_assignment(rest_args[i], flag_name="--set")
             var_overrides[key] = value
-        elif "=" in arg:
-            key, _, value = arg.partition("=")
-            var_overrides[key] = value
+        elif arg.startswith("-"):
+            print(f"Unknown option: {arg}")
+            _print_resume_usage(1)
+        else:
+            print(f"Unexpected argument: {arg}")
+            _print_resume_usage(1)
         i += 1
 
     recipe_path = find_recipe(name)
@@ -704,7 +421,7 @@ def cmd_resume(args: List[str]) -> None:
     saved_state = state_manager.find_resumable(os.path.abspath(recipe_path))
     if not saved_state:
         print(f"No resumable state found for: {name}")
-        print("Use 'train run' to start a fresh execution.")
+        print("Use 'train recipe run' to start a fresh execution.")
         raise SystemExit(1)
 
     resume_job_id = os.environ.get("TRAINSH_JOB_ID") or saved_state.job_id
@@ -712,7 +429,7 @@ def cmd_resume(args: List[str]) -> None:
     recipe_display_name = os.path.splitext(os.path.basename(recipe_path))[0]
 
     if _maybe_auto_enter_tmux(
-        "resume",
+        ["recipe", "resume"],
         args,
         recipe_name=recipe_display_name,
         job_id=resume_job_id,
@@ -748,41 +465,5 @@ def cmd_resume(args: List[str]) -> None:
         print("Recipe completed successfully!")
         return
     print("Recipe execution failed.")
-    print(f"Run 'train resume {name}' to retry from the failed step.")
+    print(f"Run 'train recipe resume {name}' to retry from the failed step.")
     raise SystemExit(1)
-
-
-def cmd_jobs(args: List[str]) -> None:
-    """List all job states."""
-    if args and args[0] in HELP_FLAGS:
-        _print_jobs_usage(0)
-
-    from ..core.job_state import JobStateManager
-
-    state_manager = JobStateManager()
-    show_all = "--all" in args or "-a" in args
-    limit = 100 if show_all else 20
-    jobs = state_manager.list_all(limit=limit)
-
-    if not jobs:
-        print("No job states found.")
-        return
-
-    print("Recipe Jobs:")
-    print("-" * 90)
-    print(f"{'ID':<10} {'Recipe':<25} {'Status':<12} {'Step':<10} {'Updated':<25}")
-    print("-" * 90)
-
-    for job in jobs:
-        job_id = job.job_id[:8]
-        recipe = job.recipe_name[:23]
-        status = job.status[:10]
-        step = f"{job.current_step + 1}/{job.total_steps}"
-        updated = job.updated_at[:23]
-        print(f"{job_id:<10} {recipe:<25} {status:<12} {step:<10} {updated:<25}")
-
-    print("-" * 90)
-    print(f"Total: {len(jobs)} jobs")
-
-    if not show_all and len(jobs) >= 20:
-        print("\nUse '--all' to show all jobs.")

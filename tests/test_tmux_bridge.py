@@ -23,7 +23,9 @@ class BridgeAttachCommandTests(unittest.TestCase):
     def _executor(self) -> DSLExecutor:
         recipe = RecipeModel(name="test")
         with patch("trainsh.core.executor_main.load_config", return_value={"tmux": {}}):
-            return DSLExecutor(recipe, log_callback=lambda _msg: None, recipe_path=None)
+            executor = DSLExecutor(recipe, log_callback=lambda _msg: None, recipe_path=None)
+        self.addCleanup(executor.close)
+        return executor
 
     def test_local_attach_command(self):
         executor = self._executor()
@@ -90,6 +92,7 @@ class TmuxClientFactoryTests(unittest.TestCase):
         recipe = RecipeModel(name="test")
         with patch("trainsh.core.executor_main.load_config", return_value={"tmux": {}}):
             executor = DSLExecutor(recipe, log_callback=lambda _msg: None, recipe_path=None)
+        self.addCleanup(executor.close)
 
         local_client = executor.get_tmux_client("local")
         remote_a = executor.get_tmux_client("user@host -p 22")

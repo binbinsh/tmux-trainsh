@@ -23,7 +23,7 @@ def run_recipe_via_dag(
     var_overrides: Optional[Dict[str, str]] = None,
     resume: bool = False,
     initial_session_index: int = 0,
-    executor_name: str = "sequential",
+    executor_name: Optional[str] = None,
     executor_kwargs: Optional[Dict[str, object]] = None,
     callbacks: Optional[Sequence[str]] = None,
     callback_sinks: Optional[Sequence] = None,
@@ -36,6 +36,7 @@ def run_recipe_via_dag(
         executor_kwargs=executor_kwargs,
         callbacks=callbacks,
         callback_sinks=callback_sinks,
+        prefer_runtime_options=executor_name is not None or bool(executor_kwargs),
         log_callback=log_callback,
     )
     return executor.run(

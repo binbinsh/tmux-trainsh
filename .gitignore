@@ -10,3 +10,7 @@ vendors/
 .env
 uv.lock
 site/
+.coverage
+.coverage.*
+coverage.json
+nanochat-output/

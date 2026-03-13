@@ -36,6 +36,26 @@ class SqlitePoolManagerTests(unittest.TestCase):
             finally:
                 manager.close()
 
+    def test_context_manager_and_missing_pool_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "runtime.db"
+            with SqlitePoolManager(str(db_path), default_slots={"default": 2}) as manager:
+                stats = manager.get_stats("missing")
+                self.assertEqual(stats.pool, "missing")
+                self.assertTrue(manager.has_capacity("missing", 0))
+                self.assertTrue(manager.try_acquire("fresh", 0))
+                manager.release("fresh", 0)
+                manager.release("unknown", 1)
+                self.assertGreaterEqual(manager.get_stats("unknown").slots, 1)
+            self.assertTrue(manager._closed)
+            manager.close()
+
+        manager = SqlitePoolManager(":memory:")
+        manager.conn.close()
+        manager.conn = unittest.mock.MagicMock(close=unittest.mock.MagicMock(side_effect=RuntimeError("boom")))
+        manager.close()
+        self.assertTrue(manager._closed)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -219,6 +219,12 @@ class RecipeProviderBasicMixin:
         max_dph: Optional[Any] = None,
         limit: Optional[int] = None,
         skip_if_set: bool = True,
+        auto_select: bool = False,
+        create_if_missing: bool = False,
+        image: Optional[str] = None,
+        disk_gb: Optional[Any] = None,
+        label: Optional[str] = None,
+        direct: Optional[bool] = None,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
@@ -238,6 +244,16 @@ class RecipeProviderBasicMixin:
             params["max_dph"] = max_dph
         if limit is not None:
             params["limit"] = limit
+        params["auto_select"] = bool(auto_select)
+        params["create_if_missing"] = bool(create_if_missing)
+        if image is not None:
+            params["image"] = image
+        if disk_gb is not None:
+            params["disk_gb"] = disk_gb
+        if label is not None:
+            params["label"] = label
+        if direct is not None:
+            params["direct"] = bool(direct)
         return self.provider(
             "vast",
             "pick",
@@ -296,7 +312,7 @@ class RecipeProviderBasicMixin:
             step_options=step_options,
         )
 
-    def set_var(
+    def assign(
         self,
         name: str,
         value: Any,
@@ -305,7 +321,7 @@ class RecipeProviderBasicMixin:
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Set recipe variable."""
+        """Set one runtime variable explicitly."""
         return self.provider(
             "util",
             "set_var",

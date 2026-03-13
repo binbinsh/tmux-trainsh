@@ -1,0 +1,10 @@
+[run]
+source = trainsh
+omit =
+    trainsh/examples/*
+parallel = true
+patch =
+    subprocess
+
+[report]
+show_missing = true

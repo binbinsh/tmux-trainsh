@@ -28,6 +28,27 @@ class WaitHelper:
         ssh_args = self.build_ssh_args(host, command=cmd, tty=False)
         return subprocess.run(ssh_args, capture_output=True, text=True, timeout=timeout)
 
+    def run_tmux_cmd(self, host: str, cmd: str, timeout: int = 10) -> Any:
+        """Run a raw tmux command on the target host."""
+        tmux_client = self.executor.get_tmux_client(host)
+        return tmux_client.run_line(cmd, timeout=timeout)
+
+    def _build_wait_ssh_args(self, host: str, command: str) -> list[str]:
+        """Build SSH args for lightweight polling with fail-fast connection options."""
+        ssh_args = self.build_ssh_args(host, command=command, tty=False)
+        return [
+            ssh_args[0],
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=2",
+            *ssh_args[1:],
+        ]
+
     def get_pane_recent_output(self, host: str, session: str, lines: int = 5) -> str:
         """Get recent output from a tmux pane."""
         result = self.executor.get_tmux_client(host).capture_pane(session, start=f"-{lines * 10}")
@@ -98,7 +119,7 @@ class WaitHelper:
 
         if timeout > 3600:
             self.executor.log(f"  Long wait ({self.format_duration(timeout)})")
-            self.executor.log("  If you disconnect, run 'train resume <name>' to continue later")
+            self.executor.log("  If you disconnect, run 'train recipe resume <name>' to continue later")
 
         # Give commands a brief head start before polling for idle.
         time.sleep(min(5, max(1, timeout // 6)))
@@ -163,11 +184,13 @@ class WaitHelper:
         start = time.time()
         poll_interval = 1 if pattern else 30
         ssh_failures = 0
+        last_ssh_error = ""
+        ssh_failure_notice_logged = False
         poll_count = 0
 
         if timeout > 3600:
             self.executor.log(f"  Long wait ({self.format_duration(timeout)})")
-            self.executor.log("  If you disconnect, run 'train resume <name>' to continue later")
+            self.executor.log("  If you disconnect, run 'train recipe resume <name>' to continue later")
 
         while time.time() - start < timeout:
             poll_count += 1
@@ -202,7 +225,7 @@ class WaitHelper:
                 if window.host != "local":
                     try:
                         check_cmd = f"test -f {filepath} && echo exists"
-                        ssh_args = self.build_ssh_args(window.host, command=check_cmd, tty=False)
+                        ssh_args = self._build_wait_ssh_args(window.host, check_cmd)
                         ssh_start = time.time()
                         result = subprocess.run(
                             ssh_args,
@@ -220,18 +243,27 @@ class WaitHelper:
                                 self.executor.logger.log_detail("wait_file_found", f"File found: {filepath}", {"elapsed_sec": elapsed})
                             return True, f"File found: {filepath}"
 
+                        if result.returncode == 255:
+                            raise OSError(result.stderr.strip() or "ssh transport exited 255")
+
                         ssh_failures = 0
+                        last_ssh_error = ""
+                        ssh_failure_notice_logged = False
                     except (subprocess.TimeoutExpired, OSError) as e:
                         ssh_failures += 1
-                        self.executor.log(f"  SSH check failed ({ssh_failures}/{self.executor.ssh_max_retries}): {e}")
+                        last_ssh_error = str(e)
+                        self.executor.log(f"  SSH check failed (transient #{ssh_failures}): {e}")
                         if self.executor.logger:
                             self.executor.logger.log_detail("wait_ssh_failure", "SSH check failed", {
                                 "failure_count": ssh_failures,
                                 "max_retries": self.executor.ssh_max_retries,
                                 "error": str(e),
                             })
-                        if ssh_failures >= self.executor.ssh_max_retries:
-                            return False, f"Too many SSH failures: {e}"
+                        if ssh_failures >= self.executor.ssh_max_retries and not ssh_failure_notice_logged:
+                            ssh_failure_notice_logged = True
+                            self.executor.log(
+                                "  SSH polling is unstable; continuing until the overall wait timeout instead of failing early"
+                            )
                         backoff = min(
                             self.executor.ssh_retry_base_interval * (2 ** (ssh_failures - 1)),
                             self.executor.ssh_retry_max_interval
@@ -279,4 +311,7 @@ class WaitHelper:
             self.executor.log(f"  Waiting... ({remaining_str} remaining of {timeout_str})")
             time.sleep(poll_interval)
 
-        return False, f"Timeout after {self.format_duration(timeout)}"
+        timeout_msg = f"Timeout after {self.format_duration(timeout)}"
+        if last_ssh_error:
+            timeout_msg += f" (last SSH error: {last_ssh_error})"
+        return False, timeout_msg

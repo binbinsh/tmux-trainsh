@@ -3,14 +3,92 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from ..core.models import Storage as RuntimeStorage
 from ..core.recipe_models import RecipeStepModel, StepType
 
 
 class PythonRecipeError(ValueError):
     """Raised when a python recipe definition is invalid."""
+
+
+@dataclass(frozen=True)
+class StoragePath:
+    """Typed storage path bound to one storage resource."""
+
+    storage: "Storage"
+    path: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", os.fspath(self.path))
+
+
+@dataclass(frozen=True)
+class HostPath:
+    """Typed remote path bound to one host resource."""
+
+    host: "Host"
+    path: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", os.fspath(self.path))
+
+
+@dataclass(frozen=True)
+class Host:
+    """Explicit host resource used by the Python recipe API."""
+
+    spec: str
+    name: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "spec", str(self.spec).strip())
+        if not self.spec:
+            raise PythonRecipeError("host spec cannot be empty")
+
+    def path(self, value: os.PathLike[str] | str) -> HostPath:
+        return HostPath(self, os.fspath(value))
+
+
+@dataclass(frozen=True)
+class Storage:
+    """Explicit storage resource used by the Python recipe API."""
+
+    spec: Any
+    name: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        value = self.spec
+        if isinstance(value, RuntimeStorage):
+            normalized = value
+        elif isinstance(value, dict):
+            normalized = RuntimeStorage.from_dict(value)
+        else:
+            normalized = str(value).strip()
+            if not normalized:
+                raise PythonRecipeError("storage spec cannot be empty")
+        object.__setattr__(self, "spec", normalized)
+
+    def path(self, value: os.PathLike[str] | str) -> StoragePath:
+        return StoragePath(self, os.fspath(value))
+
+
+@dataclass(frozen=True)
+class VastHost(Host):
+    """Typed Vast.ai host resource."""
+
+    instance_id: str = field(default="")
+
+    def __init__(self, instance_id: Any, *, name: Optional[str] = None):
+        resolved = str(instance_id).strip()
+        if not resolved:
+            raise PythonRecipeError("vast instance id cannot be empty")
+        object.__setattr__(self, "instance_id", resolved)
+        object.__setattr__(self, "spec", f"vast:{resolved}")
+        object.__setattr__(self, "name", name)
 
 
 @dataclass

@@ -12,6 +12,13 @@ import sqlite3
 import threading
 
 from .constants import CONFIG_DIR
+from .core.runtime_db import (
+    connect_runtime_db,
+    ensure_runtime_schema,
+    json_dumps,
+    replace_run_hosts,
+    replace_run_storages,
+)
 
 
 class CallbackSink(Protocol):
@@ -55,6 +62,16 @@ class CallbackManager:
                 # Keep execution resilient if custom sinks fail.
                 print(f"[trainsh-runtime] callback sink failed: {exc}")
 
+    def close(self) -> None:
+        """Close any sinks that expose a close hook."""
+        for sink in self.sinks:
+            close = getattr(sink, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    print(f"[trainsh-runtime] callback sink close failed: {exc}")
+
 
 class ConsoleCallbackSink:
     """Print concise progress lines to console."""
@@ -89,145 +106,17 @@ class SqliteCallbackSink:
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = Path(db_path or CONFIG_DIR / "runtime.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn = connect_runtime_db(self.db_path, check_same_thread=False)
         self._lock = threading.Lock()
+        self._closed = False
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
         """Initialize callback tables."""
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS recipe_runs (
-                run_id TEXT PRIMARY KEY,
-                recipe_name TEXT NOT NULL,
-                recipe_path TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                ended_at TEXT,
-                duration_ms INTEGER,
-                success INTEGER,
-                metadata_json TEXT,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS recipe_events (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id TEXT NOT NULL,
-                event_name TEXT NOT NULL,
-                step_num INTEGER,
-                payload_json TEXT,
-                ts TEXT NOT NULL
-            )
-            """
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_recipe_events_run_ts ON recipe_events (run_id, ts)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_recipe_runs_status ON recipe_runs (status, updated_at)"
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dag (
-                dag_id TEXT PRIMARY KEY,
-                file_path TEXT,
-                is_paused INTEGER NOT NULL DEFAULT 0,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                owner TEXT DEFAULT 'trainsh',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dag_run (
-                dag_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                state TEXT NOT NULL,
-                run_type TEXT DEFAULT 'manual',
-                execution_date TEXT,
-                start_date TEXT NOT NULL,
-                end_date TEXT,
-                external_trigger INTEGER DEFAULT 1,
-                conf TEXT,
-                PRIMARY KEY (dag_id, run_id)
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS task_instance (
-                dag_id TEXT NOT NULL,
-                task_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                state TEXT NOT NULL,
-                start_date TEXT,
-                end_date TEXT,
-                duration_ms INTEGER,
-                operator TEXT,
-                host TEXT,
-                pool TEXT,
-                trigger_rule TEXT,
-                details_json TEXT,
-                output TEXT,
-                try_number INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY (dag_id, task_id, run_id)
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS xcom (
-                dag_id TEXT NOT NULL,
-                task_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                map_index INTEGER NOT NULL DEFAULT 0,
-                key TEXT NOT NULL,
-                value TEXT,
-                created_at TEXT NOT NULL,
-                execution_date TEXT,
-                PRIMARY KEY (dag_id, task_id, run_id, map_index, key)
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS slot_pool (
-                pool TEXT PRIMARY KEY,
-                slots INTEGER NOT NULL DEFAULT 1,
-                occupied INTEGER NOT NULL DEFAULT 0,
-                description TEXT DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_dag_run_dag_start ON dag_run (dag_id, start_date DESC)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_dag_run_run_id ON dag_run (run_id)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_task_instance_run_task ON task_instance (run_id, dag_id, task_id)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_xcom_run_task_key ON xcom (run_id, dag_id, task_id, key)"
-        )
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_slot_pool_updated_at ON slot_pool (updated_at)")
-        self.conn.commit()
+        ensure_runtime_schema(self.conn)
 
     def _serialize(self, payload: Dict[str, Any]) -> str:
-        try:
-            return json.dumps(payload, ensure_ascii=False)
-        except TypeError:
-            return json.dumps(str(payload), ensure_ascii=False)
+        return json_dumps(payload)
 
     @staticmethod
     def _as_bool(value: Any, default: bool = False) -> bool:
@@ -266,6 +155,8 @@ class SqliteCallbackSink:
         return parsed
 
     def send(self, event: CallbackEvent) -> None:
+        if self._closed:
+            return
         with self._lock:
             now = datetime.now().isoformat()
             payload_json = self._serialize(event.payload)
@@ -275,6 +166,12 @@ class SqliteCallbackSink:
             execution_date = self._coerce_text(event.payload.get("execution_date"), "")
 
             if event.event == "execution_start":
+                hosts = event.payload.get("hosts")
+                if isinstance(hosts, dict):
+                    replace_run_hosts(self.conn, event.run_id, hosts)
+                storages = event.payload.get("storages")
+                if isinstance(storages, dict):
+                    replace_run_storages(self.conn, event.run_id, storages)
                 self.conn.execute(
                     """
                     INSERT INTO dag (
@@ -533,6 +430,19 @@ class SqliteCallbackSink:
                 ),
             )
             self.conn.commit()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        self._closed = True
+
+    def __del__(self):
+        if hasattr(self, "conn"):
+            self.close()
 
 
 def _sink_factory(name: str, **kwargs: Any) -> CallbackSink:

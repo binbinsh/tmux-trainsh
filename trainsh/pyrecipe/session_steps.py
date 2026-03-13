@@ -3,15 +3,30 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import shlex
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 
 from ..core.recipe_models import RecipeStepModel, StepType
-from .authoring_support import split_step_call
+from .authoring_support import normalize_after, split_step_call
 from .models import PythonRecipeError
 
 if TYPE_CHECKING:
     from .base import RecipeSpecCore
+
+
+def official_uv_install_command(*, force: bool = False) -> str:
+    """Build a shell command that installs uv via the official Astral script."""
+    if force:
+        return (
+            'curl -LsSf https://astral.sh/uv/install.sh | sh && '
+            'export PATH="$HOME/.local/bin:$PATH" && hash -r && uv --version'
+        )
+    return (
+        'if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then '
+        'curl -LsSf https://astral.sh/uv/install.sh | sh; '
+        'fi && export PATH="$HOME/.local/bin:$PATH" && hash -r && uv --version'
+    )
 
 
 @dataclass(frozen=True)
@@ -34,6 +49,18 @@ class RecipeSessionRef:
             merged.append(dep)
         return merged
 
+    def after(self, *dependencies: Any) -> "RecipeSessionRef":
+        """Return a new session ref with extra default dependencies."""
+        normalized: list[str] = []
+        for item in dependencies:
+            normalized.extend(normalize_after(item) or [])
+        if self.open_step_id and normalized:
+            self.recipe.link_step_dependencies(self.open_step_id, normalized)
+        return replace(
+            self,
+            default_depends_on=tuple(self._merge_depends(normalized)),
+        )
+
     def _session_call(
         self,
         *,
@@ -55,6 +82,9 @@ class RecipeSessionRef:
         merged_depends = self._merge_depends(
             [*(depends_on or []), *(authoring.get("depends_on") or [])]
         )
+        linear_last = self.recipe.current_linear_dependency()
+        if linear_last is not None:
+            merged_depends = self._merge_depends([*merged_depends, linear_last])
         merged_options = dict(step_options or {})
         merged_options.update(authoring.get("step_options") or {})
         return (
@@ -69,10 +99,11 @@ class RecipeSessionRef:
 
     def run(
         self,
-        command: str,
+        command: Any,
         *,
         timeout: Any = 0,
         background: bool = False,
+        stdout: Any = None,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
@@ -92,6 +123,7 @@ class RecipeSessionRef:
             command,
             timeout=timeout,
             background=background,
+            stdout=stdout,
             id=resolved_id,
             depends_on=merged_depends,
             step_options=merged_options,
@@ -100,6 +132,57 @@ class RecipeSessionRef:
     def bg(self, command: str, **kwargs: Any) -> str:
         """Compact alias for a background command."""
         return self.run(command, background=True, **kwargs)
+
+    def install_uv(
+        self,
+        *,
+        force: bool = False,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+        after: Any = None,
+        **kwargs: Any,
+    ) -> str:
+        """Install uv in this tmux session using the official Astral install script."""
+        return self.run(
+            official_uv_install_command(force=force),
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+            after=after,
+            **kwargs,
+        )
+
+    def capture_pane(
+        self,
+        *,
+        target: str,
+        lines: int = 400,
+        output: Any,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+        after: Any = None,
+        **kwargs: Any,
+    ) -> str:
+        """Capture one tmux pane into a file on the session host."""
+        command = [
+            "tmux",
+            "capture-pane",
+            "-pt",
+            str(target),
+            "-S",
+            f"-{max(0, int(lines))}",
+        ]
+        return self.run(
+            command,
+            stdout=output,
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+            after=after,
+            **kwargs,
+        )
 
     def wait(
         self,
@@ -200,10 +283,19 @@ class RecipeSessionMixin:
         self,
         name: str,
         *,
+        host: Any = None,
         open_step_id: Optional[str] = None,
+        id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
     ) -> RecipeSessionRef:
-        """Bind a proxy to an existing session/window name."""
+        """Bind a proxy to an existing session/window name or open one on demand."""
+        if host is not None:
+            return self.tmux_session(
+                self.resolve_host(host),
+                as_=name,
+                id=id,
+                depends_on=depends_on,
+            )
         session_name = self._clean_session(name)
         merged = []
         seen = set()
@@ -254,10 +346,11 @@ class RecipeSessionMixin:
     def session_run(
         self,
         session: str,
-        command: str,
+        command: Any,
         *,
         timeout: Any = 0,
         background: bool = False,
+        stdout: Any = None,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
@@ -266,10 +359,17 @@ class RecipeSessionMixin:
         session_name = self._clean_session(session)
         timeout_secs = self._normalize_timeout(timeout) if self._timeout_text(timeout) else 0
 
+        if isinstance(command, (list, tuple)):
+            command_text = shlex.join(str(item) for item in command)
+        else:
+            command_text = str(command)
+        if stdout is not None:
+            command_text = f"{command_text} > {shlex.quote(self.resolve_endpoint(stdout))}"
+
         raw = f"@{session_name}"
         if timeout_secs > 0:
             raw += f" timeout={self._timeout_text(timeout) or timeout_secs}"
-        raw += f" > {command}"
+        raw += f" > {command_text}"
         if self._normalize_bool(background, default=False):
             raw += " &"
 
@@ -278,7 +378,7 @@ class RecipeSessionMixin:
             line_num=0,
             raw=raw,
             host=session_name,
-            commands=str(command),
+            commands=command_text,
             background=self._normalize_bool(background, default=False),
             timeout=max(0, int(timeout_secs)),
         )

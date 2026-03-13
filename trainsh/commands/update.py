@@ -4,17 +4,22 @@
 import sys
 from typing import Optional, List
 
-usage = '''[--help] [--check]
+from ..cli_utils import render_command_help
 
-Check for updates and automatically upgrade tmux-trainsh.
-
-Options:
-  --check    Only check for updates, don't install
-
-Examples:
-  train update          # Check and install update
-  train update --check  # Only check, show update command
-'''
+usage = render_command_help(
+    command="train update",
+    summary="Check for updates and optionally install them.",
+    usage_lines=(
+        "train update",
+        "train update --check",
+    ),
+    options=("--check            Only check for updates; do not install.",),
+    notes=("Installs by detecting whether tmux-trainsh came from uv, pip, or another supported method.",),
+    examples=(
+        "train update",
+        "train update --check",
+    ),
+)
 
 
 def main(args: List[str]) -> Optional[str]:

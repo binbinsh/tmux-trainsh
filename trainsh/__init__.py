@@ -7,6 +7,8 @@ import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from .pyrecipe import Host, HostPath, Recipe, Storage, StoragePath, VastHost, load_python_recipe, official_uv_install_command
+
 
 def _read_local_version() -> str:
     """Read fallback version from local pyproject.toml."""
@@ -20,6 +22,12 @@ def _read_local_version() -> str:
     except OSError:
         pass
     return "0.0.0-dev"
+
+
+def _should_prefer_local_version() -> bool:
+    """Prefer the working tree version when running from a source checkout."""
+    root = Path(__file__).resolve().parents[1]
+    return (root / ".git").exists() and (root / "pyproject.toml").exists()
 
 
 def _resolve_build_number() -> int:
@@ -46,10 +54,13 @@ def _resolve_build_number() -> int:
 
     return 0
 
+_local_version = _read_local_version()
 try:
-    __version__ = version("tmux-trainsh")
+    _installed_version = version("tmux-trainsh")
 except PackageNotFoundError:
-    __version__ = _read_local_version()
+    __version__ = _local_version
+else:
+    __version__ = _local_version if _should_prefer_local_version() else _installed_version
 
 __build_number__ = _resolve_build_number()
 if __build_number__ > 0:
@@ -62,3 +73,19 @@ def main(args: list[str]) -> str | None:
     """Entry point for trainsh command."""
     from .main import main as trainsh_main
     return trainsh_main(["trainsh"] + list(args))
+
+
+__all__ = [
+    "Host",
+    "HostPath",
+    "Recipe",
+    "Storage",
+    "StoragePath",
+    "VastHost",
+    "__build_number__",
+    "__display_version__",
+    "__version__",
+    "load_python_recipe",
+    "main",
+    "official_uv_install_command",
+]

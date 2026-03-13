@@ -5,27 +5,38 @@ import sys
 import os
 from typing import Optional, List
 
-from ..cli_utils import prompt_input
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
 
-usage = '''[subcommand] [args...]
+SUBCOMMAND_SPECS = (
+    SubcommandSpec("list", "List your current Vast.ai instances."),
+    SubcommandSpec("show", "Inspect one instance in detail."),
+    SubcommandSpec("ssh", "Open SSH to a running instance."),
+    SubcommandSpec("start", "Start an instance."),
+    SubcommandSpec("stop", "Stop an instance."),
+    SubcommandSpec("reboot", "Reboot an instance."),
+    SubcommandSpec("remove", "Destroy an instance."),
+    SubcommandSpec("search", "Search available GPU offers."),
+    SubcommandSpec("keys", "List registered SSH public keys."),
+    SubcommandSpec("attach-key", "Upload a local SSH public key."),
+)
 
-Subcommands:
-  list              - List your Vast.ai instances
-  show <id>         - Show instance details
-  ssh <id>          - SSH into instance
-  start <id>        - Start instance
-  stop <id>         - Stop instance
-  rm <id>           - Remove instance
-  reboot <id>       - Reboot instance
-  search            - Search for GPU offers
-  keys              - List SSH keys
-  attach-key [path] - Attach local SSH key (default: ~/.ssh/id_rsa.pub)
-
-Examples:
-  train vast list
-  train vast ssh 12345
-  train vast start 12345
-'''
+usage = render_command_help(
+    command="train vast",
+    summary="Manage Vast.ai instances and offers.",
+    usage_lines=(
+        "train vast <subcommand> [args...]",
+        "train vast ssh <instance-id>",
+        "train vast search",
+    ),
+    subcommands=SUBCOMMAND_SPECS,
+    notes=("Requires VAST_API_KEY. Configure it with train secrets set VAST_API_KEY.",),
+    examples=(
+        "train vast list",
+        "train vast search",
+        "train vast ssh 12345",
+        "train vast remove 12345",
+    ),
+)
 
 
 def cmd_list(args: List[str]) -> None:
@@ -127,7 +138,7 @@ def cmd_stop(args: List[str]) -> None:
 def cmd_rm(args: List[str]) -> None:
     """Remove instance."""
     if not args:
-        print("Usage: train vast rm <instance_id>")
+        print("Usage: train vast remove <instance_id>")
         sys.exit(1)
 
     inst_id = int(args[0])
@@ -260,20 +271,22 @@ def main(args: List[str]) -> Optional[str]:
         "ssh": cmd_ssh,
         "start": cmd_start,
         "stop": cmd_stop,
-        "rm": cmd_rm,
         "reboot": cmd_reboot,
         "search": cmd_search,
         "keys": cmd_keys,
         "attach-key": cmd_attach_key,
+        "remove": cmd_rm,
     }
 
-    if subcommand not in commands:
+    try:
+        handler = dispatch_subcommand(subcommand, commands=commands)
+    except KeyError:
         print(f"Unknown subcommand: {subcommand}")
         print(usage)
         sys.exit(1)
 
     try:
-        commands[subcommand](subargs)
+        handler(subargs)
     except Exception as e:
         if "VAST_API_KEY" in str(e) or "API key" in str(e).lower():
             print(f"Error: {e}")

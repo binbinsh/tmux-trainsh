@@ -139,7 +139,7 @@ class BridgeExecutionHelper:
 
         if timeout > 3600:
             self.log(f"  Long wait ({self.format_duration(timeout)})")
-            self.log("  If you disconnect, run 'train resume <name>' to continue later")
+            self.log("  If you disconnect, run 'train recipe resume <name>' to continue later")
 
         time.sleep(5)
 
@@ -245,4 +245,3 @@ class BridgeExecutionHelper:
                 "window_name": window.name,
             })
             return None
-

@@ -152,6 +152,12 @@ class VastControlHelper:
         max_dph = None
         limit = 20
         skip_if_set = True
+        auto_select = False
+        create_if_missing = False
+        image = "pytorch/pytorch:latest"
+        disk_gb = 50.0
+        label = None
+        direct = False
 
         for arg in args:
             if "=" in arg:
@@ -183,6 +189,21 @@ class VastControlHelper:
                         return False, f"Invalid limit: {value}"
                 elif key == "skip_if_set":
                     skip_if_set = value.lower() in ("1", "true", "yes", "y")
+                elif key == "auto_select":
+                    auto_select = value.lower() in ("1", "true", "yes", "y")
+                elif key == "create_if_missing":
+                    create_if_missing = value.lower() in ("1", "true", "yes", "y")
+                elif key == "image":
+                    image = value or image
+                elif key in ("disk_gb", "disk"):
+                    try:
+                        disk_gb = float(value)
+                    except ValueError:
+                        return False, f"Invalid disk_gb: {value}"
+                elif key == "label":
+                    label = value or None
+                elif key == "direct":
+                    direct = value.lower() in ("1", "true", "yes", "y")
                 continue
             if host_name is None:
                 host_name = self.executor._interpolate(arg)
@@ -203,6 +224,12 @@ class VastControlHelper:
             "max_dph": max_dph,
             "limit": limit,
             "skip_if_set": skip_if_set,
+            "auto_select": auto_select,
+            "create_if_missing": create_if_missing,
+            "image": image,
+            "disk_gb": disk_gb,
+            "label": label,
+            "direct": direct,
         }
         if self.executor.logger:
             self.executor.logger.log_detail("vast_pick", "Picking Vast instance", pick_filters)
@@ -227,8 +254,10 @@ class VastControlHelper:
         try:
             client = get_vast_client()
             instances = client.list_instances()
-            if not instances:
+            if not instances and not create_if_missing:
                 return False, "No Vast.ai instances found"
+            if not instances:
+                instances = []
 
             if self.executor.logger:
                 instances_info = [
@@ -257,9 +286,58 @@ class VastControlHelper:
 
             instances = [i for i in instances if matches_filters(i)]
             if not instances:
+                if not create_if_missing:
+                    if self.executor.logger:
+                        self.executor.logger.log_detail("vast_pick", "No instances match filters", pick_filters)
+                    return False, "No Vast.ai instances match filters"
+
+                offers = client.search_offers(
+                    gpu_name=gpu_name,
+                    num_gpus=num_gpus,
+                    min_gpu_ram=min_gpu_ram,
+                    max_dph=max_dph,
+                    limit=limit,
+                )
+                if not offers:
+                    if self.executor.logger:
+                        self.executor.logger.log_detail("vast_pick", "No offers match filters", pick_filters)
+                    return False, "No Vast.ai offers match filters"
+
+                offers = sorted(
+                    offers,
+                    key=lambda offer: (
+                        float(getattr(offer, "dph_total", 0.0) or 0.0),
+                        -float(getattr(offer, "reliability2", 0.0) or 0.0),
+                    ),
+                )
+                selected_offer = offers[0]
+                new_id = client.create_instance(
+                    offer_id=selected_offer.id,
+                    image=image,
+                    disk=disk_gb,
+                    label=label or host_name,
+                    direct=direct,
+                )
+                self.executor.ctx.variables["_vast_instance_id"] = str(new_id)
+                self.executor.ctx.variables["VAST_ID"] = str(new_id)
+                self.executor.recipe.hosts[host_name] = f"vast:{new_id}"
+
                 if self.executor.logger:
-                    self.executor.logger.log_detail("vast_pick", "No instances match filters", pick_filters)
-                return False, "No Vast.ai instances match filters"
+                    self.executor.logger.log_vast(
+                        "create_instance",
+                        new_id,
+                        pick_filters,
+                        {
+                            "offer_id": selected_offer.id,
+                            "gpu_name": getattr(selected_offer, "gpu_name", None),
+                            "num_gpus": getattr(selected_offer, "num_gpus", None),
+                            "dph_total": getattr(selected_offer, "dph_total", None),
+                        },
+                        True,
+                    )
+                    self.executor.logger.log_variable("_vast_instance_id", str(new_id), "vast.pick")
+                    self.executor.logger.log_variable("VAST_ID", str(new_id), "vast.pick")
+                return True, f"Created instance {new_id} from offer {selected_offer.id}"
 
             if limit and limit > 0:
                 instances = instances[:limit]
@@ -280,6 +358,28 @@ class VastControlHelper:
                     for i in instances
                 ]
                 self.executor.logger.log_detail("vast_pick", f"Filtered to {len(instances)} instances", {"filtered_instances": filtered_info})
+
+            if auto_select:
+                selected = instances[0]
+                self.executor.ctx.variables["_vast_instance_id"] = str(selected.id)
+                self.executor.ctx.variables["VAST_ID"] = str(selected.id)
+                self.executor.recipe.hosts[host_name] = f"vast:{selected.id}"
+                if self.executor.logger:
+                    self.executor.logger.log_vast(
+                        "pick_selected",
+                        selected.id,
+                        pick_filters,
+                        {
+                            "selected_id": selected.id,
+                            "gpu_name": selected.gpu_name,
+                            "status": selected.actual_status,
+                            "auto_select": True,
+                        },
+                        True,
+                    )
+                    self.executor.logger.log_variable("_vast_instance_id", str(selected.id), "vast.pick")
+                    self.executor.logger.log_variable("VAST_ID", str(selected.id), "vast.pick")
+                return True, f"Selected instance {selected.id}"
 
             from ..utils.vast_formatter import format_instance_header, format_instance_row, get_currency_settings
 
@@ -489,7 +589,11 @@ class VastControlHelper:
                                 "status": last_status,
                                 "ssh_host": self.executor.ctx.variables["_vast_ssh_host"],
                                 "ssh_port": self.executor.ctx.variables["_vast_ssh_port"],
-                                "connection_method": "direct" if instance.public_ipaddr in working_ssh_spec else "proxy",
+                                "connection_method": (
+                                    "direct"
+                                    if (instance.public_ipaddr and instance.public_ipaddr in working_ssh_spec)
+                                    else "proxy"
+                                ),
                                 "elapsed_sec": elapsed,
                                 "poll_count": poll_count,
                             }, True)
@@ -681,11 +785,10 @@ class VastControlHelper:
             duration_secs = (datetime.now() - saved_start).total_seconds()
             cost_usd = hourly_usd * (duration_secs / 3600.0)
 
-            settings = load_pricing_settings()
             from ..utils.vast_formatter import get_currency_settings
             currency_settings = get_currency_settings()
             display_curr = currency_settings.display_currency
-            rates = settings.exchange_rates
+            rates = getattr(currency_settings, "rates", load_pricing_settings().exchange_rates)
 
             usage_str = self.format_duration(duration_secs)
             cost_line = f"${cost_usd:.4f}"

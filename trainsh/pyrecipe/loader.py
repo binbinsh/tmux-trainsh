@@ -39,10 +39,6 @@ def load_python_recipe(path: str) -> RecipeSpec:
     if isinstance(explicit, RecipeSpec):
         return explicit
 
-    bound_recipe = getattr(module, "__trainsh_recipe__", None)
-    if isinstance(bound_recipe, RecipeSpec):
-        return bound_recipe
-
     for item in vars(module).values():
         if isinstance(item, RecipeSpec):
             loaded.append(item)

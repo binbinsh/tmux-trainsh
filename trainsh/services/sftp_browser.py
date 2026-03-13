@@ -26,11 +26,12 @@ class FileEntry:
         """Get human-readable file size."""
         if self.is_dir:
             return "<DIR>"
+        size = float(self.size)
         for unit in ["B", "KB", "MB", "GB", "TB"]:
-            if self.size < 1024:
-                return f"{self.size:.1f} {unit}"
-            self.size /= 1024
-        return f"{self.size:.1f} PB"
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} PB"
 
     @property
     def icon(self) -> str:
