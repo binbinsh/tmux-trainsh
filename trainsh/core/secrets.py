@@ -191,37 +191,56 @@ def resolve_secret_bundle_alias(key: str) -> Optional[tuple[str, Optional[str], 
     return None
 
 
-def bundle_component_aliases(composite_key: str, provider: str) -> Dict[str, str]:
-    """Return component aliases covered by a composite secret bundle."""
+def bundle_component_alias_groups(composite_key: str, provider: str) -> Dict[str, tuple[str, ...]]:
+    """Return canonical and legacy component aliases for a composite bundle key."""
     normalized = normalize_secret_key(composite_key)
     if provider == "r2":
         if normalized == SecretKeys.R2_CREDENTIALS:
             return {
-                "account_id": SecretKeys.R2_ACCOUNT_ID,
-                "access_key_id": SecretKeys.R2_ACCESS_KEY_ID,
-                "secret_access_key": SecretKeys.R2_SECRET_ACCESS_KEY,
-                "endpoint": "R2_ENDPOINT",
+                "account_id": (SecretKeys.R2_ACCOUNT_ID,),
+                "access_key_id": (SecretKeys.R2_ACCESS_KEY_ID,),
+                "secret_access_key": (SecretKeys.R2_SECRET_ACCESS_KEY,),
+                "endpoint": ("R2_ENDPOINT",),
             }
         prefix = normalized[: -len("_R2_CREDENTIALS")]
         return {
-            "account_id": f"{prefix}_ACCOUNT_ID",
-            "access_key_id": f"{prefix}_ACCESS_KEY_ID",
-            "secret_access_key": f"{prefix}_SECRET_ACCESS_KEY",
-            "endpoint": f"{prefix}_ENDPOINT",
+            "account_id": (f"{prefix}_ACCOUNT_ID",),
+            "access_key_id": (f"{prefix}_ACCESS_KEY_ID",),
+            "secret_access_key": (f"{prefix}_SECRET_ACCESS_KEY",),
+            "endpoint": (f"{prefix}_ENDPOINT",),
         }
 
     if normalized == SecretKeys.B2_CREDENTIALS:
         return {
-            "application_key_id": SecretKeys.B2_APPLICATION_KEY_ID,
-            "application_key": SecretKeys.B2_APPLICATION_KEY,
-            "endpoint": "B2_ENDPOINT",
+            "application_key_id": (SecretKeys.B2_APPLICATION_KEY_ID,),
+            "application_key": (SecretKeys.B2_APPLICATION_KEY,),
+            "endpoint": ("B2_ENDPOINT",),
         }
     prefix = normalized[: -len("_B2_CREDENTIALS")]
     return {
-        "application_key_id": f"{prefix}_APPLICATION_KEY_ID",
-        "application_key": f"{prefix}_APPLICATION_KEY",
-        "endpoint": f"{prefix}_ENDPOINT",
+        "application_key_id": (f"{prefix}_APPLICATION_KEY_ID",),
+        "application_key": (f"{prefix}_APPLICATION_KEY",),
+        "endpoint": (f"{prefix}_ENDPOINT",),
     }
+
+
+def bundle_component_aliases(composite_key: str, provider: str) -> Dict[str, str]:
+    """Return component aliases covered by a composite secret bundle."""
+    return {
+        field: aliases[0]
+        for field, aliases in bundle_component_alias_groups(composite_key, provider).items()
+    }
+
+
+def bundle_component_cleanup_aliases(composite_key: str, provider: str) -> List[str]:
+    """Return all component aliases that should be cleared for a bundle."""
+    aliases: List[str] = []
+    for group in bundle_component_alias_groups(composite_key, provider).values():
+        for alias in group:
+            normalized = normalize_secret_key(alias)
+            if normalized not in aliases:
+                aliases.append(normalized)
+    return aliases
 
 
 # ---------------------------------------------------------------------------
@@ -777,12 +796,13 @@ class SecretsManager:
         if payload:
             return normalize_storage_bundle_payload(provider, payload)
 
-        aliases = bundle_component_aliases(composite_key, provider)
-        legacy_payload = {
-            field: value
-            for field, alias in aliases.items()
-            if (value := self._get_direct_value(alias))
-        }
+        legacy_payload: Dict[str, str] = {}
+        for field, aliases in bundle_component_alias_groups(composite_key, provider).items():
+            for alias in aliases:
+                value = self._get_direct_value(alias)
+                if value:
+                    legacy_payload[field] = value
+                    break
         return normalize_storage_bundle_payload(provider, legacy_payload or None)
 
     def get(self, key: str) -> Optional[str]:
@@ -825,8 +845,7 @@ class SecretsManager:
         backend.set(normalized, serialized)
         self._cache[normalized] = serialized
 
-        for alias in bundle_component_aliases(normalized, provider).values():
-            alias_key = normalize_secret_key(alias)
+        for alias_key in bundle_component_cleanup_aliases(normalized, provider):
             self._cache.pop(alias_key, None)
             if alias_key != normalized:
                 try:
@@ -842,15 +861,14 @@ class SecretsManager:
         self._cache.pop(normalized, None)
         self._cache.pop(target_key, None)
         if bundle_alias is not None:
-            for alias in bundle_component_aliases(target_key, bundle_alias[2]).values():
-                self._cache.pop(normalize_secret_key(alias), None)
+            for alias_key in bundle_component_cleanup_aliases(target_key, bundle_alias[2]):
+                self._cache.pop(alias_key, None)
 
         backend = self._get_backend()
         if backend is not None:
             backend.delete(target_key)
             if bundle_alias is not None:
-                for alias in bundle_component_aliases(target_key, bundle_alias[2]).values():
-                    alias_key = normalize_secret_key(alias)
+                for alias_key in bundle_component_cleanup_aliases(target_key, bundle_alias[2]):
                     if alias_key != target_key:
                         try:
                             backend.delete(alias_key)
@@ -891,24 +909,30 @@ class SecretsManager:
             except Exception:
                 pass
 
+        candidate_keys = list(predefined)
+        candidate_lookup = {normalize_secret_key(key) for key in candidate_keys}
+        extra_bundle_keys = {
+            bundle_alias[0]
+            for key in present
+            if (bundle_alias := resolve_secret_bundle_alias(key)) is not None
+        }
+        for key in sorted(extra_bundle_keys):
+            if key not in candidate_lookup:
+                candidate_keys.append(key)
+                candidate_lookup.add(key)
+
         available: List[str] = []
-        for key in predefined:
+        for key in candidate_keys:
             normalized = normalize_secret_key(key)
             bundle_alias = resolve_secret_bundle_alias(normalized)
             if bundle_alias is None:
-                if normalized in present:
+                if normalized in present or self.get(normalized) is not None:
                     available.append(key)
                 continue
 
             composite_key, _field_name, provider = bundle_alias
-            aliases = {
-                normalize_secret_key(composite_key),
-                *(
-                    normalize_secret_key(alias)
-                    for alias in bundle_component_aliases(composite_key, provider).values()
-                ),
-            }
-            if present.intersection(aliases):
+            aliases = {normalize_secret_key(composite_key), *bundle_component_cleanup_aliases(composite_key, provider)}
+            if present.intersection(aliases) or self.get(composite_key) is not None:
                 available.append(key)
 
         return available

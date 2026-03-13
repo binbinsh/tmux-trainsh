@@ -53,9 +53,9 @@ class TransferEngineHelpersTests(unittest.TestCase):
     def test_build_rclone_env_and_remote_name(self):
         secrets = MagicMock()
         secrets.get.side_effect = lambda key: {
-            "ARTIFACTS_ACCESS_KEY": "AKIA",
-            "ARTIFACTS_SECRET_KEY": "SECRET",
-            "B2_KEY_ID": "b2id",
+            "ARTIFACTS_ACCESS_KEY_ID": "AKIA",
+            "ARTIFACTS_SECRET_ACCESS_KEY": "SECRET",
+            "B2_APPLICATION_KEY_ID": "b2id",
             "B2_APPLICATION_KEY": "b2key",
             "GOOGLE_DRIVE_CREDENTIALS": '{"token":"abc"}',
         }.get(key)

@@ -33,21 +33,95 @@ usage = render_command_help(
 )
 
 
+LISTED_SECRET_KEYS = (
+    "VAST_API_KEY",
+    "HF_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GITHUB_TOKEN",
+    "GOOGLE_DRIVE_CREDENTIALS",
+    "R2_CREDENTIALS",
+    "B2_CREDENTIALS",
+)
+
+
+def _prompt_bundle_payload(provider: str) -> Optional[dict[str, str]]:
+    """Prompt for a cloud storage credential bundle."""
+    if provider == "r2":
+        account_id = prompt_input("Cloudflare Account ID: ")
+        if not account_id:
+            return None
+        access_key_id = getpass.getpass("R2 Access Key ID: ")
+        if not access_key_id:
+            return None
+        secret_access_key = getpass.getpass("R2 Secret Access Key: ")
+        if not secret_access_key:
+            return None
+        return {
+            "account_id": account_id.strip(),
+            "access_key_id": access_key_id.strip(),
+            "secret_access_key": secret_access_key.strip(),
+        }
+
+    if provider == "b2":
+        application_key_id = getpass.getpass("B2 Application Key ID: ")
+        if not application_key_id:
+            return None
+        application_key = getpass.getpass("B2 Application Key: ")
+        if not application_key:
+            return None
+        return {
+            "application_key_id": application_key_id.strip(),
+            "application_key": application_key.strip(),
+        }
+
+    return None
+
+
 def cmd_list(args: List[str]) -> None:
     """List configured secrets."""
-    from ..core.secrets import get_secrets_manager, get_configured_backend_name
-    from ..constants import SecretKeys
+    from ..core.secrets import (
+        get_configured_backend_name,
+        get_secrets_manager,
+        normalize_secret_key,
+        resolve_secret_bundle_alias,
+    )
 
     secrets = get_secrets_manager()
+    configured_keys = list(getattr(secrets, "list_keys", lambda: [])())
+    configured_lookup = {normalize_secret_key(key) for key in configured_keys}
+    display_keys = list(LISTED_SECRET_KEYS)
+    for key in configured_keys:
+        normalized = normalize_secret_key(key)
+        if normalized not in LISTED_SECRET_KEYS and normalized not in display_keys:
+            display_keys.append(normalized)
 
-    predefined = [
-        SecretKeys.VAST_API_KEY,
-        SecretKeys.HF_TOKEN,
-        SecretKeys.OPENAI_API_KEY,
-        SecretKeys.ANTHROPIC_API_KEY,
-        SecretKeys.GITHUB_TOKEN,
-        SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
-    ]
+    backend = getattr(secrets, "_get_backend", lambda: None)()
+
+    def is_set(key: str) -> bool:
+        normalized = normalize_secret_key(key)
+        if normalized in configured_lookup:
+            return True
+        exists = getattr(secrets, "exists", None)
+        if callable(exists):
+            try:
+                return bool(exists(normalized))
+            except Exception:
+                pass
+        getter = getattr(secrets, "get", None)
+        if callable(getter):
+            try:
+                return getter(normalized) not in (None, "")
+            except Exception:
+                pass
+        if backend is not None:
+            try:
+                bundle_alias = resolve_secret_bundle_alias(normalized)
+                probe_key = bundle_alias[0] if bundle_alias is not None else normalized
+                return backend.get(probe_key) not in (None, "")
+            except Exception:
+                return False
+        return False
 
     backend_name = get_configured_backend_name()
     if backend_name:
@@ -62,23 +136,15 @@ def cmd_list(args: List[str]) -> None:
     print("-" * 40)
 
     found = 0
-    backend = secrets._get_backend()
-    for key in predefined:
-        if backend is not None:
-            try:
-                value = backend.get(key)
-            except Exception:
-                value = None
-            exists = value is not None and value != ""
-        else:
-            exists = False
+    for key in display_keys:
+        exists = is_set(key)
         status = "[set]" if exists else "[not set]"
         print(f"  {key:<30} {status}")
         if exists:
             found += 1
 
     print("-" * 40)
-    print(f"Total: {found}/{len(predefined)} configured")
+    print(f"Total: {found}/{len(display_keys)} configured")
 
 
 def cmd_set(args: List[str]) -> None:
@@ -88,9 +154,23 @@ def cmd_set(args: List[str]) -> None:
         print("\nExample: train secrets set VAST_API_KEY")
         sys.exit(1)
 
-    from ..core.secrets import get_secrets_manager
+    from ..core.secrets import get_secrets_manager, resolve_secret_bundle_alias
 
     key = args[0].upper()
+    bundle_alias = resolve_secret_bundle_alias(key)
+    if bundle_alias is not None and bundle_alias[1] is None:
+        payload = _prompt_bundle_payload(bundle_alias[2])
+        if not payload:
+            print("Cancelled - no value provided.")
+            return
+        secrets = get_secrets_manager()
+        try:
+            secrets.set_bundle(bundle_alias[0], payload)
+            print(f"Successfully set {bundle_alias[0]}")
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        return
 
     # Prompt for value (hidden input)
     try:

@@ -170,8 +170,8 @@ def cmd_add(args: List[str]) -> None:
         if bucket is None:
             return
         print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY' and '{name.upper()}_SECRET_KEY'")
-        print("Option 2: Global - 'train secrets set R2_ACCESS_KEY' and 'R2_SECRET_KEY'")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY_ID' and '{name.upper()}_SECRET_ACCESS_KEY'")
+        print("Option 2: Global - 'train secrets set R2_ACCESS_KEY_ID' and 'R2_SECRET_ACCESS_KEY'")
         print("(Storage-specific credentials take priority over global ones)")
         config["account_id"] = account_id
         config["bucket"] = bucket
@@ -182,8 +182,8 @@ def cmd_add(args: List[str]) -> None:
         if bucket is None:
             return
         print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_KEY_ID' and '{name.upper()}_APPLICATION_KEY'")
-        print("Option 2: Global - 'train secrets set B2_KEY_ID' and 'B2_APPLICATION_KEY'")
+        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_APPLICATION_KEY_ID' and '{name.upper()}_APPLICATION_KEY'")
+        print("Option 2: Global - 'train secrets set B2_APPLICATION_KEY_ID' and 'B2_APPLICATION_KEY'")
         config["bucket"] = bucket
 
     elif storage_type == StorageType.S3:

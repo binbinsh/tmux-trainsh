@@ -69,8 +69,8 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
     This allows us to configure remotes without modifying ~/.config/rclone/rclone.conf
 
     Credentials are loaded in priority order:
-    1. Storage-specific secrets: {STORAGE_NAME}_ACCESS_KEY, etc.
-    2. Global secrets: R2_ACCESS_KEY, AWS_ACCESS_KEY_ID, etc.
+    1. Storage-specific secrets: {STORAGE_NAME}_ACCESS_KEY_ID, etc.
+    2. Global secrets: R2_ACCESS_KEY_ID, AWS_ACCESS_KEY_ID, etc.
     3. Config values stored in storage.config
     """
     resolved_remote_name = remote_name or get_rclone_remote_name(storage) or storage.name
@@ -96,8 +96,8 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         env[f"RCLONE_CONFIG_{name}_PROVIDER"] = "Cloudflare"
         env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
 
-        access_key = get_credential("ACCESS_KEY", SecretKeys.R2_ACCESS_KEY, "access_key_id")
-        secret_key = get_credential("SECRET_KEY", SecretKeys.R2_SECRET_KEY, "secret_access_key")
+        access_key = get_credential("ACCESS_KEY_ID", SecretKeys.R2_ACCESS_KEY_ID, "access_key_id")
+        secret_key = get_credential("SECRET_ACCESS_KEY", SecretKeys.R2_SECRET_ACCESS_KEY, "secret_access_key")
 
         if access_key:
             env[f"RCLONE_CONFIG_{name}_ACCESS_KEY_ID"] = access_key
@@ -130,7 +130,7 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
     elif storage.type == StorageType.B2:
         env[f"RCLONE_CONFIG_{name}_TYPE"] = "b2"
 
-        key_id = get_credential("KEY_ID", SecretKeys.B2_KEY_ID, "key_id")
+        key_id = get_credential("APPLICATION_KEY_ID", SecretKeys.B2_APPLICATION_KEY_ID, "application_key_id")
         app_key = get_credential("APPLICATION_KEY", SecretKeys.B2_APPLICATION_KEY, "application_key")
 
         if key_id:
