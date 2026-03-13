@@ -46,7 +46,7 @@ COMMANDS = [
     ("gui --help", "Unknown command"),
     ("exec --help", "Use 'train recipe run"),
     ("recipes --help", "Use 'train recipe"),
-    ("run --help", "Use 'train recipe run"),
+    ("run --help", "train recipe run <recipe>"),
     ("resume", "Use 'train recipe resume"),
     ("status", "Use 'train recipe status"),
     ("logs", "Use 'train recipe logs"),

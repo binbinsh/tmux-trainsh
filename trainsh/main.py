@@ -27,7 +27,6 @@ Config files live under:
 
 COMMAND_HINTS = {
     "recipes": "Use 'train recipe list|show|new|edit|remove' for recipe file management.",
-    "run": "Use 'train recipe run <recipe>' to execute a recipe.",
     "resume": "Use 'train recipe resume <recipe>' to resume a recipe.",
     "status": "Use 'train recipe status' to inspect live/manual job state.",
     "logs": "Use 'train recipe logs' to inspect execution details.",
@@ -97,6 +96,7 @@ def main(args: list[str]) -> Optional[str]:
 
     handlers = {
         "recipe": recipe_main,
+        "run": lambda args: recipe_main(["run", *args]),
         "transfer": transfer_main,
         "host": host_main,
         "storage": storage_main,

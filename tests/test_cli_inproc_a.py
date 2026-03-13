@@ -60,10 +60,17 @@ class MainRoutingTests(CaptureMixin, unittest.TestCase):
         config_main.assert_called_once_with(["show"])
         self.assertEqual(out, "")
 
+    def test_main_routes_run_alias_to_recipe_namespace(self):
+        with patch("trainsh.commands.recipe_cmd.main") as recipe_main:
+            out, _err, code = self.capture(train_main, ["train", "run", "demo", "--help"])
+        self.assertIsNone(code)
+        recipe_main.assert_called_once_with(["run", "demo", "--help"])
+        self.assertEqual(out, "")
+
     def test_main_unknown_command_prints_hint(self):
-        out, _err, code = self.capture(train_main, ["train", "run"])
+        out, _err, code = self.capture(train_main, ["train", "exec"])
         self.assertEqual(code, 1)
-        self.assertIn("Unknown command: run", out)
+        self.assertIn("Unknown command: exec", out)
         self.assertIn("Use 'train recipe run <recipe>'", out)
 
 

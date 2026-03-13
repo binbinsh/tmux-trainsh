@@ -33,7 +33,6 @@ TOP_LEVEL_ENTRIES: tuple[HelpEntry, ...] = (
 
 COMMON_MISTAKES: tuple[tuple[str, str], ...] = (
     ("train recipes ...", "use `train recipe ...`"),
-    ("train run ...", "use `train recipe run ...`"),
     ("train schedule ...", "use `train recipe schedule ...`"),
     ("train host connect", "use `train host ssh`"),
     ("train storage test", "use `train storage check`"),
@@ -99,6 +98,7 @@ Options
   --callback NAME             console|sqlite; repeat or pass comma-separated values
 
 Notes
+  `train run <name>` is a top-level alias for `train recipe run <name>`.
   kubernetes executor aliases are intentionally unsupported in this runtime.
 """,
     "resume": """Resume A Recipe
