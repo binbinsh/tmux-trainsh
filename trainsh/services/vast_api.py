@@ -115,7 +115,10 @@ class VastAPIClient:
             VastInstance object
         """
         response = self._request(f"instances/{instance_id}")
-        return self._parse_instance(response.get("instances", {}))
+        raw = response.get("instances")
+        if raw is None:
+            raise VastAPIError(404, f'{{"success":false,"error":"no_such_instance","msg":"Instance {instance_id} not found."}}')
+        return self._parse_instance(raw)
 
     def start_instance(self, instance_id: int) -> None:
         """
