@@ -96,6 +96,7 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         env[f"RCLONE_CONFIG_{name}_PROVIDER"] = "Cloudflare"
         env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
 
+        account_id = get_credential("ACCOUNT_ID", SecretKeys.R2_ACCOUNT_ID, "account_id")
         access_key = get_credential("ACCESS_KEY_ID", SecretKeys.R2_ACCESS_KEY_ID, "access_key_id")
         secret_key = get_credential("SECRET_ACCESS_KEY", SecretKeys.R2_SECRET_ACCESS_KEY, "secret_access_key")
 
@@ -104,9 +105,9 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         if secret_key:
             env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] = secret_key
 
-        endpoint = config.get("endpoint", "")
-        if not endpoint and config.get("account_id"):
-            endpoint = f"https://{config['account_id']}.r2.cloudflarestorage.com"
+        endpoint = get_credential("ENDPOINT", "R2_ENDPOINT", "endpoint")
+        if not endpoint and account_id:
+            endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
         if endpoint:
             env[f"RCLONE_CONFIG_{name}_ENDPOINT"] = endpoint
 
