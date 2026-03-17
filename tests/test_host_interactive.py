@@ -4,7 +4,7 @@ from contextlib import ExitStack, contextmanager, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from trainsh.commands import host
 from trainsh.core.models import AuthMethod, Host, HostType
@@ -17,6 +17,7 @@ def patched_host_store():
         config_dir.mkdir(parents=True, exist_ok=True)
         stack.enter_context(patch("trainsh.constants.CONFIG_DIR", config_dir))
         stack.enter_context(patch("trainsh.constants.HOSTS_FILE", config_dir / "hosts.yaml"))
+        stack.enter_context(patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("disabled in tests")))
         yield config_dir
 
 
@@ -67,6 +68,23 @@ class HostCommandDeepTests(unittest.TestCase):
         )
         data.update(overrides)
         return Host(**data)
+
+    def _vast_instance(self, **overrides):
+        data = dict(
+            id=123,
+            label="vast-exited",
+            actual_status="exited",
+            template_name="tmpl",
+            num_gpus=1,
+            dph_total=0.5,
+            disk_space=100.0,
+            public_ipaddr=None,
+            direct_port_start=None,
+            ssh_host=None,
+            ssh_port=None,
+        )
+        data.update(overrides)
+        return SimpleNamespace(**data)
 
     def test_candidate_helpers(self):
         self.assertEqual(host._normalize_connection_candidates(["a"]), ["a"])
@@ -363,12 +381,17 @@ class HostCommandDeepTests(unittest.TestCase):
                     out, code = capture_output(host.cmd_edit, ["colab-box"])
                 self.assertIsNone(code)
 
-            vast_host = Host(name="vast-box", type=HostType.VASTAI, hostname="vast", username="root")
+            vast_host = Host(name="vast-box", type=HostType.VASTAI, hostname="vast", username="root", vast_instance_id="77")
             host.save_hosts({"vast-box": vast_host})
-            with patch("trainsh.commands.host.prompt_input", side_effect=["vast-box"]):
+            client = SimpleNamespace(label_instance=MagicMock())
+            with patch("trainsh.commands.host.prompt_input", side_effect=["vast renamed"]), patch(
+                "trainsh.services.vast_api.get_vast_client", return_value=client
+            ):
                 out, code = capture_output(host.cmd_edit, ["vast-box"])
-            self.assertEqual(code, 1)
-            self.assertIn("Edit is not supported for host type: vastai", out)
+            self.assertIsNone(code)
+            self.assertIn("Updated Vast.ai label: vast renamed", out)
+            self.assertIn("Host alias: vast-renamed", out)
+            client.label_instance.assert_called_once_with(77, "vast renamed")
 
     def test_cmd_edit_missing_and_main_add_dispatch(self):
         with patched_host_store():
@@ -486,6 +509,56 @@ class HostCommandDeepTests(unittest.TestCase):
                 out, code = capture_output(host.cmd_browse, ["gpu-box", "/tmp"])
             self.assertIsNone(code)
             self.assertIn("Copied to clipboard!", out)
+
+    def test_auto_discovered_vast_host_supports_host_commands(self):
+        with patched_host_store():
+            browser = SimpleNamespace(
+                navigate=lambda path: [],
+                get_home_directory=lambda: "/home/demo",
+                path_exists=lambda path: False,
+                read_file_head=lambda path, lines=30: "head\n",
+            )
+            ssh = SimpleNamespace(test_connection=lambda: True, connect_interactive=lambda: 0)
+            client = SimpleNamespace(
+                list_instances=lambda: [self._vast_instance()],
+                rm_instance=MagicMock(),
+            )
+
+            with patch("trainsh.services.vast_api.get_vast_client", return_value=client):
+                loaded = host.load_hosts()
+                self.assertIn("vast-exited", loaded)
+                self.assertEqual(loaded["vast-exited"].vast_status, "exited")
+
+                out, code = capture_output(host.cmd_list, [])
+                self.assertIsNone(code)
+                self.assertIn("vast-exited", out)
+                self.assertIn("exited", out)
+
+                out, code = capture_output(host.cmd_show, ["vast-exited"])
+                self.assertIsNone(code)
+                self.assertIn("Auto-discovered: yes", out)
+
+                with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh):
+                    out, code = capture_output(host.cmd_test, ["vast-exited"])
+                    self.assertIsNone(code)
+                    self.assertIn("Connection successful!", out)
+
+                    out, code = capture_output(host.cmd_ssh, ["vast-exited"])
+                    self.assertIsNone(code)
+                    self.assertIn("Connecting to Vast.ai #123", out)
+
+                    with patch("trainsh.services.sftp_browser.RemoteFileBrowser", return_value=browser), patch(
+                        "builtins.input", side_effect=["q"]
+                    ):
+                        out, code = capture_output(host.cmd_browse, ["vast-exited"])
+                    self.assertIsNone(code)
+                    self.assertIn("File Browser: Vast.ai #123", out)
+
+                with patch("trainsh.commands.host.prompt_input", return_value="y"):
+                    out, code = capture_output(host.cmd_rm, ["vast-exited"])
+                self.assertIsNone(code)
+                self.assertIn("Vast.ai instance removed: 123", out)
+                client.rm_instance.assert_called_once_with(123)
 
 
 if __name__ == "__main__":

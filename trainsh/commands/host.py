@@ -25,7 +25,7 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("ssh", "Open an SSH session using the stored connection settings."),
     SubcommandSpec("files", "Browse remote files over SFTP."),
     SubcommandSpec("check", "Check whether a host is reachable."),
-    SubcommandSpec("remove", "Delete a stored host definition."),
+    SubcommandSpec("remove", "Delete a stored host definition or destroy a Vast.ai instance."),
 )
 
 usage = render_command_help(
@@ -39,6 +39,7 @@ usage = render_command_help(
     subcommands=SUBCOMMAND_SPECS,
     notes=(
         "Hosts are stored in ~/.config/tmux-trainsh/hosts.yaml.",
+        "When VAST_API_KEY is configured, Vast.ai instances are auto-discovered here, including stopped/exited ones.",
         "Use train vast for provider-side instance lifecycle operations.",
         "Use train colab for quick one-off Colab tunnel helpers; prefer train host add for reusable configs.",
     ),
@@ -52,8 +53,11 @@ usage = render_command_help(
 )
 
 
-def load_hosts() -> dict:
-    """Load hosts from configuration."""
+AUTO_DISCOVERED_VAST_ENV = "_auto_discovered_vast"
+
+
+def _load_configured_hosts() -> dict:
+    """Load hosts stored on disk."""
     from ..constants import HOSTS_FILE
     import yaml
 
@@ -72,6 +76,80 @@ def load_hosts() -> dict:
     return hosts
 
 
+def _sanitize_vast_host_name(value: str) -> str:
+    """Normalize a Vast label into a CLI-friendly host alias."""
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip().lower())
+    return normalized.strip("-.")
+
+
+def _pick_vast_host_alias(instance, configured_hosts: dict, auto_hosts: dict) -> str:
+    """Choose a stable alias for one Vast instance."""
+    candidates = []
+    raw_label = str(getattr(instance, "label", "") or "").strip()
+    label_alias = _sanitize_vast_host_name(raw_label)
+    if label_alias:
+        candidates.append(label_alias)
+        candidates.append(f"{label_alias}-{instance.id}")
+    candidates.append(f"vast-{instance.id}")
+
+    seen = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate not in configured_hosts and candidate not in auto_hosts:
+            return candidate
+    return f"vast-{instance.id}"
+
+
+def _build_vast_host(instance, name: str):
+    """Convert a Vast instance into a temporary Host entry."""
+    from ..services.host_resolver import build_host_from_vast_instance
+
+    return build_host_from_vast_instance(instance, name=name, auto_discovered=True)
+
+
+def _load_auto_vast_hosts(configured_hosts: dict) -> dict:
+    """Load temporary host entries from current Vast.ai instances."""
+    from ..services.vast_api import get_vast_client
+
+    try:
+        client = get_vast_client()
+        instances = client.list_instances()
+    except Exception:
+        return {}
+
+    auto_hosts = {}
+    for instance in instances:
+        alias = _pick_vast_host_alias(instance, configured_hosts, auto_hosts)
+        auto_hosts[alias] = _build_vast_host(instance, alias)
+    return auto_hosts
+
+
+def load_hosts(include_auto_vast: bool = True) -> dict:
+    """Load stored hosts plus auto-discovered Vast.ai instances."""
+    hosts = _load_configured_hosts()
+    if not include_auto_vast:
+        return hosts
+    hosts.update(_load_auto_vast_hosts(hosts))
+    return hosts
+
+
+def _is_auto_discovered_vast_host(host) -> bool:
+    """Whether a host entry came from live Vast discovery."""
+    return bool((host.env_vars or {}).get(AUTO_DISCOVERED_VAST_ENV))
+
+
+def _host_location(host) -> str:
+    """Render the best available endpoint for list/show output."""
+    if host.hostname:
+        user_part = f"{host.username}@" if host.username else ""
+        return f"{user_part}{host.hostname}:{host.port}"
+    if host.vast_instance_id:
+        return f"vast:{host.vast_instance_id}"
+    return "(hostname unavailable)"
+
+
 def _host_to_dict(host) -> dict:
     """Convert a host to a filtered dict (no None values)."""
     return {k: v for k, v in host.to_dict().items() if v is not None}
@@ -84,7 +162,12 @@ def save_hosts(hosts: dict) -> None:
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    data = {"hosts": [_host_to_dict(h) for h in hosts.values()]}
+    persisted_hosts = [
+        _host_to_dict(host)
+        for host in hosts.values()
+        if not _is_auto_discovered_vast_host(host)
+    ]
+    data = {"hosts": persisted_hosts}
 
     with open(HOSTS_FILE, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
@@ -104,17 +187,26 @@ def cmd_list(args: List[str]) -> None:
     print("Configured hosts:")
     print("-" * 60)
 
+    auto_vast_count = 0
     for name, host in hosts.items():
         status = ""
         if host.type == HostType.VASTAI and host.vast_instance_id:
-            status = f" [Vast.ai #{host.vast_instance_id}]"
+            auto_vast_count += int(_is_auto_discovered_vast_host(host))
+            status_parts = [f"Vast.ai #{host.vast_instance_id}"]
+            if host.vast_status:
+                status_parts.append(str(host.vast_status))
+            if _is_auto_discovered_vast_host(host):
+                status_parts.append("auto")
+            status = f" [{' / '.join(status_parts)}]"
         elif host.type == HostType.COLAB:
             tunnel = host.env_vars.get("tunnel_type", "cloudflared")
             status = f" [Colab/{tunnel}]"
-        print(f"  {name:<20} {host.username}@{host.hostname}:{host.port}{status}")
+        print(f"  {name:<20} {_host_location(host)}{status}")
 
     print("-" * 60)
     print(f"Total: {len(hosts)} hosts")
+    if auto_vast_count:
+        print(f"Auto-discovered Vast.ai hosts: {auto_vast_count}")
 
 
 def cmd_show(args: List[str]) -> None:
@@ -135,10 +227,12 @@ def cmd_show(args: List[str]) -> None:
     host = hosts[name]
     print(f"Host: {host.display_name}")
     print(f"  Type: {host.type.value}")
-    print(f"  Hostname: {host.hostname}")
+    print(f"  Hostname: {host.hostname or '(not available until instance is running)'}")
     print(f"  Port: {host.port}")
     print(f"  Username: {host.username}")
     print(f"  Auth: {host.auth_method.value}")
+    if _is_auto_discovered_vast_host(host):
+        print("  Auto-discovered: yes")
     if host.ssh_key_path:
         print(f"  SSH Key: {host.ssh_key_path}")
     if host.jump_host:
@@ -202,7 +296,11 @@ def cmd_ssh(args: List[str]) -> None:
         os.system(ssh_cmd)
     else:
         from ..services.ssh import SSHClient
-        ssh = SSHClient.from_host(host)
+        try:
+            ssh = SSHClient.from_host(host)
+        except Exception as exc:
+            print(f"Connection setup failed: {exc}")
+            sys.exit(1)
         exit_code = ssh.connect_interactive()
         if exit_code != 0:
             sys.exit(exit_code)
@@ -225,7 +323,11 @@ def cmd_test(args: List[str]) -> None:
     print(f"Testing connection to {host.display_name}...")
 
     from ..services.ssh import SSHClient
-    ssh = SSHClient.from_host(host)
+    try:
+        ssh = SSHClient.from_host(host)
+    except Exception as exc:
+        print(f"Connection setup failed: {exc}")
+        sys.exit(1)
 
     if ssh.test_connection():
         print("Connection successful!")
@@ -241,15 +343,30 @@ def cmd_rm(args: List[str]) -> None:
         sys.exit(1)
 
     name = args[0]
-    hosts = load_hosts()
+    hosts = load_hosts(include_auto_vast=False)
+    target_host = hosts.get(name)
 
-    if name not in hosts:
-        print(f"Host not found: {name}")
-        sys.exit(1)
+    if target_host is None:
+        all_hosts = load_hosts()
+        target_host = all_hosts.get(name)
+        if target_host is None:
+            print(f"Host not found: {name}")
+            sys.exit(1)
 
     confirm = prompt_input(f"Remove host '{name}'? (y/N): ")
     if confirm is None or confirm.lower() != "y":
         print("Cancelled.")
+        return
+
+    if target_host.vast_instance_id:
+        from ..services.vast_api import get_vast_client
+
+        client = get_vast_client()
+        client.rm_instance(int(target_host.vast_instance_id))
+        if name in hosts:
+            del hosts[name]
+            save_hosts(hosts)
+        print(f"Vast.ai instance removed: {target_host.vast_instance_id}")
         return
 
     del hosts[name]

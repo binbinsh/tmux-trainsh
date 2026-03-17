@@ -107,28 +107,29 @@ class TransferEngine:
         if use_gitignore:
             args.append("--filter=:- .gitignore")
 
-        # Build source/destination with SSH host
-        if host:
-            ssh_cmd = f"ssh -p {host.port}"
-            if host.ssh_key_path:
-                key_path = os.path.expanduser(host.ssh_key_path)
-                if os.path.exists(key_path):
-                    ssh_cmd += f" -i {key_path}"
-            args.extend(["-e", ssh_cmd])
-
-            host_prefix = f"{host.username}@{host.hostname}:" if host.username else f"{host.hostname}:"
-
-            if upload:
-                args.append(os.path.expanduser(source))
-                args.append(f"{host_prefix}{destination}")
-            else:
-                args.append(f"{host_prefix}{source}")
-                args.append(os.path.expanduser(destination))
-        else:
-            args.append(os.path.expanduser(source))
-            args.append(os.path.expanduser(destination))
-
         try:
+            # Build source/destination with SSH host
+            if host:
+                host = self._prepare_host(host)
+                ssh_cmd = f"ssh -p {host.port}"
+                if host.ssh_key_path:
+                    key_path = os.path.expanduser(host.ssh_key_path)
+                    if os.path.exists(key_path):
+                        ssh_cmd += f" -i {key_path}"
+                args.extend(["-e", ssh_cmd])
+
+                host_prefix = f"{host.username}@{host.hostname}:" if host.username else f"{host.hostname}:"
+
+                if upload:
+                    args.append(os.path.expanduser(source))
+                    args.append(f"{host_prefix}{destination}")
+                else:
+                    args.append(f"{host_prefix}{source}")
+                    args.append(os.path.expanduser(destination))
+            else:
+                args.append(os.path.expanduser(source))
+                args.append(os.path.expanduser(destination))
+
             # Run rsync with real-time output for progress
             import sys
             process = subprocess.Popen(
@@ -326,57 +327,58 @@ class TransferEngine:
         Returns:
             TransferResult with status
         """
-        hosts = hosts or {}
-        storages = storages or {}
+        try:
+            hosts = hosts or {}
+            storages = storages or {}
 
-        # Determine transfer method based on endpoint types
-        tool = self._select_transfer_tool(source, destination, storages)
+            # Determine transfer method based on endpoint types
+            tool = self._select_transfer_tool(source, destination, storages)
 
-        if tool == "rclone":
-            # Get storage objects for credentials
-            src_storage = storages.get(source.storage_id) if source.storage_id else None
-            dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
-            src_host = hosts.get(source.host_id) if source.host_id else None
-            dst_host = hosts.get(destination.host_id) if destination.host_id else None
+            if tool == "rclone":
+                # Get storage objects for credentials
+                src_storage = storages.get(source.storage_id) if source.storage_id else None
+                dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
+                src_host = hosts.get(source.host_id) if source.host_id else None
+                dst_host = hosts.get(destination.host_id) if destination.host_id else None
 
-            if src_host and dst_storage is not None:
-                return self._transfer_host_with_cloud_storage(
-                    source=source,
-                    destination=destination,
-                    src_host=src_host,
-                    dst_storage=dst_storage,
-                    delete=delete,
-                    exclude=exclude,
+                if src_host and dst_storage is not None:
+                    return self._transfer_host_with_cloud_storage(
+                        source=source,
+                        destination=destination,
+                        src_host=src_host,
+                        dst_storage=dst_storage,
+                        delete=delete,
+                        exclude=exclude,
+                        dry_run=dry_run,
+                        hosts=hosts,
+                        storages=storages,
+                    )
+                if src_storage is not None and dst_host:
+                    return self._transfer_cloud_storage_with_host(
+                        source=source,
+                        destination=destination,
+                        src_storage=src_storage,
+                        dst_host=dst_host,
+                        delete=delete,
+                        exclude=exclude,
+                        dry_run=dry_run,
+                        hosts=hosts,
+                        storages=storages,
+                    )
+
+                # Resolve paths using appropriate remote names
+                src_path = self._resolve_endpoint_for_rclone(source, hosts, storages)
+                dst_path = self._resolve_endpoint_for_rclone(destination, hosts, storages)
+
+                return self.rclone(
+                    source=src_path,
+                    destination=dst_path,
+                    operation="sync" if delete else "copy",
                     dry_run=dry_run,
-                    hosts=hosts,
-                    storages=storages,
-                )
-            if src_storage is not None and dst_host:
-                return self._transfer_cloud_storage_with_host(
-                    source=source,
-                    destination=destination,
                     src_storage=src_storage,
-                    dst_host=dst_host,
-                    delete=delete,
-                    exclude=exclude,
-                    dry_run=dry_run,
-                    hosts=hosts,
-                    storages=storages,
+                    dst_storage=dst_storage,
                 )
 
-            # Resolve paths using appropriate remote names
-            src_path = self._resolve_endpoint_for_rclone(source, hosts, storages)
-            dst_path = self._resolve_endpoint_for_rclone(destination, hosts, storages)
-
-            return self.rclone(
-                source=src_path,
-                destination=dst_path,
-                operation="sync" if delete else "copy",
-                dry_run=dry_run,
-                src_storage=src_storage,
-                dst_storage=dst_storage,
-            )
-        else:
             # Use rsync for local/SSH/host transfers
             src_host = hosts.get(source.host_id) if source.host_id else None
             dst_host = hosts.get(destination.host_id) if destination.host_id else None
@@ -430,6 +432,12 @@ class TransferEngine:
                 exclude=exclude,
                 dry_run=dry_run,
             )
+        except Exception as e:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message=str(e),
+            )
 
     def _select_transfer_tool(
         self,
@@ -468,6 +476,15 @@ class TransferEngine:
             username=config.get("user") or config.get("username") or parsed_user,
             ssh_key_path=config.get("key_file") or config.get("key_path"),
         )
+
+    def _prepare_host(self, host: Host) -> Host:
+        """Resolve provider-backed hosts before using them in transfers."""
+        if host.type != HostType.VASTAI or not host.vast_instance_id:
+            return host
+
+        from .host_resolver import prepare_vast_host
+
+        return prepare_vast_host(host)
 
     def _storage_rooted_path(self, storage: Storage, path: str) -> str:
         """Resolve a transfer path within a local or SSH storage root."""
@@ -601,6 +618,8 @@ class TransferEngine:
     def _check_host_connectivity(self, src: Host, dst: Host) -> bool:
         """Check if src_host can SSH to dst_host directly."""
         try:
+            src = self._prepare_host(src)
+            dst = self._prepare_host(dst)
             # Build SSH command to check connectivity
             dst_spec = f"{dst.username}@{dst.hostname}" if dst.username else dst.hostname
             check_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no"
@@ -633,6 +652,8 @@ class TransferEngine:
         dry_run: bool = False,
     ) -> TransferResult:
         """Execute rsync from src_host to dst_host directly."""
+        src_host = self._prepare_host(src_host)
+        dst_host = self._prepare_host(dst_host)
         # Build rsync command to run on src_host
         rsync_parts = ["rsync", "-avz", "--progress"]
         if delete:
@@ -795,6 +816,7 @@ class TransferEngine:
 
     def _build_ssh_args(self, host: Host) -> List[str]:
         """Build SSH command arguments for a host."""
+        host = self._prepare_host(host)
         args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no"]
 
         if host.port != 22:
@@ -836,6 +858,7 @@ class TransferEngine:
 
     def _build_scp_spec(self, host: Host, path: str) -> str:
         """Build SCP path specification for a host."""
+        host = self._prepare_host(host)
         host_spec = f"{host.username}@{host.hostname}" if host.username else host.hostname
         return f"{host_spec}:{path}"
 
@@ -852,6 +875,7 @@ class TransferEngine:
         elif endpoint.type == "host" and endpoint.host_id:
             host = hosts.get(endpoint.host_id)
             if host:
+                host = self._prepare_host(host)
                 return f"{host.username}@{host.hostname}:{endpoint.path}"
             return endpoint.path
         elif endpoint.type == "storage" and endpoint.storage_id:
@@ -895,6 +919,7 @@ class TransferEngine:
             # Host endpoints shouldn't use rclone, but handle gracefully
             host = hosts.get(endpoint.host_id)
             if host:
+                host = self._prepare_host(host)
                 return f"{host.username}@{host.hostname}:{endpoint.path}"
             return endpoint.path
         return endpoint.path

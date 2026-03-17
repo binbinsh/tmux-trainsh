@@ -601,6 +601,19 @@ def cmd_edit(args: List[str]) -> None:
         host.port = port
         host.username = username
         host.env_vars = env_vars
+    elif host.type == HostType.VASTAI and host.vast_instance_id:
+        from ..services.vast_api import get_vast_client
+
+        new_alias = host_cmd._sanitize_vast_host_name(new_name) or f"vast-{host.vast_instance_id}"
+        if new_alias != name and new_alias in hosts:
+            print(f"Host already exists: {new_alias}")
+            sys.exit(1)
+
+        client = get_vast_client()
+        client.label_instance(int(host.vast_instance_id), new_name)
+        print(f"Updated Vast.ai label: {new_name}")
+        print(f"Host alias: {new_alias}")
+        return
     else:
         print(f"Edit is not supported for host type: {host.type.value}")
         sys.exit(1)
@@ -636,7 +649,11 @@ def cmd_browse(args: List[str]) -> None:
     from ..services.sftp_browser import RemoteFileBrowser
     from ..services.ssh import SSHClient
 
-    ssh = SSHClient.from_host(host)
+    try:
+        ssh = SSHClient.from_host(host)
+    except Exception as exc:
+        print(f"Connection setup failed: {exc}")
+        sys.exit(1)
 
     if not ssh.test_connection():
         print("Connection failed.")

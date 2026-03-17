@@ -18,6 +18,7 @@ def patched_config_files():
         stack.enter_context(patch("trainsh.constants.CONFIG_DIR", config_dir))
         stack.enter_context(patch("trainsh.constants.HOSTS_FILE", config_dir / "hosts.yaml"))
         stack.enter_context(patch("trainsh.constants.STORAGES_FILE", config_dir / "storages.yaml"))
+        stack.enter_context(patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("disabled in tests")))
         stack.enter_context(patch.object(colab, "CONFIG_DIR", config_dir))
         stack.enter_context(patch.object(colab, "COLAB_FILE", config_dir / "colab.yaml"))
         yield config_dir
@@ -133,10 +134,16 @@ class HostCommandTests(unittest.TestCase):
                 text = capture_output(host.cmd_browse, ["gpu-box"])
             self.assertIn("File Browser: gpu-box", text)
 
-            vast_host = Host(name="vast-box", type=HostType.VASTAI, hostname="vast", username="root")
+            vast_host = Host(name="vast-box", type=HostType.VASTAI, hostname="vast", username="root", vast_instance_id="7")
             host.save_hosts({"vast-box": vast_host})
-            with patch("trainsh.commands.host.prompt_input", return_value="vast-box"), self.assertRaises(SystemExit):
-                host.cmd_edit(["vast-box"])
+            client = MagicMock()
+            text = ""
+            with patch("trainsh.commands.host.prompt_input", return_value="vast label"), patch(
+                "trainsh.services.vast_api.get_vast_client", return_value=client
+            ):
+                text = capture_output(host.cmd_edit, ["vast-box"])
+            self.assertIn("Updated Vast.ai label: vast label", text)
+            client.label_instance.assert_called_once_with(7, "vast label")
 
 
 class StorageCommandTests(unittest.TestCase):

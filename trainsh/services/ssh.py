@@ -7,7 +7,7 @@ from typing import Optional, List, Tuple, Any
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from ..core.models import Host
+from ..core.models import Host, HostType
 
 
 @dataclass
@@ -83,6 +83,11 @@ class SSHClient:
     @classmethod
     def from_host(cls, host: Host) -> "SSHClient":
         """Create an SSH client from a Host object."""
+        if host.type == HostType.VASTAI and host.vast_instance_id:
+            from .host_resolver import prepare_vast_host
+
+            host = prepare_vast_host(host)
+
         env_vars = host.env_vars or {}
         primary = SSHConnectionTarget(
             hostname=host.hostname,

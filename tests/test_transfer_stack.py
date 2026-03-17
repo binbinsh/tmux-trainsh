@@ -193,6 +193,14 @@ class TransferEngineHelpersTests(unittest.TestCase):
             ssh_args = engine._build_ssh_args(self._host(env_vars={"tunnel_type": ""}))
         self.assertIn("-J", ssh_args)
         self.assertEqual(engine._build_scp_spec(self._host(username="root"), "/tmp/out"), "root@gpu.example.com:/tmp/out")
+        with patch(
+            "trainsh.services.host_resolver.prepare_vast_host",
+            return_value=self._host(name="vast", hostname="vast.example.com", port=2200, env_vars={}),
+        ):
+            self.assertEqual(
+                engine._build_scp_spec(Host(name="vast", type=HostType.VASTAI, vast_instance_id="123", username="root"), "/tmp/out"),
+                "root@vast.example.com:/tmp/out",
+            )
 
         resolved = engine._resolve_endpoint(
             TransferEndpoint(type="storage", path="/logs", storage_id="artifacts"),
