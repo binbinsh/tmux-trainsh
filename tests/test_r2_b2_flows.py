@@ -177,6 +177,10 @@ class R2B2FlowTests(unittest.TestCase):
                 "copy",
                 "--progress",
                 "--dry-run",
+                "--transfers", "32",
+                "--checkers", "64",
+                "--s3-upload-concurrency", "16",
+                "--s3-chunk-size", "64M",
                 str(source),
                 f"{expected_remote}:logs-bucket/checkpoints",
             ],
@@ -232,12 +236,16 @@ class R2B2FlowTests(unittest.TestCase):
             [
                 "copy",
                 "--progress",
+                "--transfers", "32",
+                "--checkers", "64",
+                "--s3-upload-concurrency", "16",
+                "--s3-chunk-size", "64M",
                 f"{remote_name}:model-cache/models",
                 str(destination),
             ],
         )
         env = calls[0]["env"]
-        remote_env = remote_name.upper()
+        remote_env = remote_name.upper().replace("-", "_").replace(" ", "_")
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_TYPE"], "b2")
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_ACCOUNT"], "b2-key-id")
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_KEY"], "b2-app-key")
@@ -365,7 +373,7 @@ class R2B2FlowTests(unittest.TestCase):
         self.assertEqual(download_call["argv"][2], remote_path)
 
         env = upload_call["env"]
-        remote_env = remote_name.upper()
+        remote_env = remote_name.upper().replace("-", "_").replace(" ", "_")
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_TYPE"], "s3")
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_ACCESS_KEY_ID"], "runtime-ak")
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_SECRET_ACCESS_KEY"], "runtime-sk")

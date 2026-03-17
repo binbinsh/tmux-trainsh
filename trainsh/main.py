@@ -93,7 +93,6 @@ def main(args: list[str]) -> Optional[str]:
     from .commands.pricing import main as pricing_main
     from .commands.update import main as update_main
     from .commands.config_cmd import main as config_main
-
     handlers = {
         "recipe": recipe_main,
         "run": lambda args: recipe_main(["run", *args]),

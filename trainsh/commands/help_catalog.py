@@ -180,9 +180,22 @@ Endpoint Forms
   /local/path                     Local filesystem path
   @host:/path                     Configured host alias
   host:<name>:/path               Explicit host endpoint
-  storage:<name>:/path            Explicit storage endpoint
+  storage:<name>:/path            Named storage endpoint
+  r2:<bucket>/[prefix]            Cloudflare R2 (no pre-configuration needed)
+  s3:<bucket>/[prefix]            Amazon S3
+  b2:<bucket>/[prefix]            Backblaze B2
+  gcs:<bucket>/[prefix]           Google Cloud Storage
+
+Options
+  --transfers N                   Parallel rclone transfers (default: 32 for cloud)
+  --checkers N                    Parallel rclone checkers (default: 64 for cloud)
+  --upload-concurrency N          S3 multipart threads per file (default: 16 for cloud)
+  --chunk-size SIZE               Multipart chunk size (default: 64M for cloud)
+  --include PAT                   rclone include pattern (repeatable)
 
 Notes
+  Cloud endpoints (r2:/s3:/b2:/gcs:) resolve credentials from secrets automatically.
+  No 'train storage add' step is needed for cloud endpoint prefixes.
   Storage endpoints can point to local, SSH, or cloud-backed named storage.
   Host <-> cloud storage transfers relay through a local temp directory.
   --dry-run works for direct rsync/rclone paths; relayed transfers fail fast instead.

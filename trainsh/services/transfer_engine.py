@@ -46,14 +46,19 @@ class TransferEngine:
     def __init__(
         self,
         progress_callback: Optional[Callable[[TransferProgress], None]] = None,
+        rclone_options: Optional[dict] = None,
     ):
         """
         Initialize the transfer engine.
 
         Args:
             progress_callback: Optional callback for progress updates
+            rclone_options: Optional dict of rclone tuning options.
+                Supported keys: transfers, checkers, s3_upload_concurrency,
+                s3_chunk_size, include (list), exclude (list).
         """
         self.progress_callback = progress_callback
+        self.rclone_options: dict = rclone_options if rclone_options is not None else {}
 
     def rsync(
         self,
@@ -203,6 +208,21 @@ class TransferEngine:
 
         if delete and operation == "sync":
             args.append("--delete-after")
+
+        # Apply rclone tuning options from self.rclone_options
+        opts = self.rclone_options
+        if opts.get("transfers"):
+            args.extend(["--transfers", str(opts["transfers"])])
+        if opts.get("checkers"):
+            args.extend(["--checkers", str(opts["checkers"])])
+        if opts.get("s3_upload_concurrency"):
+            args.extend(["--s3-upload-concurrency", str(opts["s3_upload_concurrency"])])
+        if opts.get("s3_chunk_size"):
+            args.extend(["--s3-chunk-size", str(opts["s3_chunk_size"])])
+        for pat in opts.get("include", []):
+            args.extend(["--include", pat])
+        for pat in opts.get("exclude", []):
+            args.extend(["--exclude", pat])
 
         args.extend([source, destination])
 
