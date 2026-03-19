@@ -11,12 +11,9 @@ README is the quick overview and landing page. The canonical command reference s
 ```bash
 train help
 train --help
-train recipe --help
-train host --help
-train transfer --help
 ```
 
-Those commands are generated from the same canonical help source.
+Those two commands are the canonical help entry points.
 
 ## Install
 
@@ -39,19 +36,17 @@ Or use the install script:
 curl -LsSf https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.sh | bash
 ```
 
-## Core Entry Points
+## Main Command Groups
 
-```bash
-train recipe --help
-train host --help
-train storage --help
-train transfer --help
-train secrets --help
-train config --help
-train vast --help
-train colab --help
-train pricing --help
-```
+- `train recipe` for recipe files, execution, status, logs, jobs, and schedules
+- `train host` for named SSH or Colab hosts
+- `train storage` for named storage backends
+- `train transfer` for local, host, and storage copies
+- `train secrets` for credentials
+- `train config` for config and tmux settings
+- `train vast` for Vast.ai instances
+- `train colab` for one-off Colab tunnels
+- `train pricing` for exchange rates and cost estimates
 
 ## Quick Start
 
