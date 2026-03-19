@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .help_catalog import render_command_help, render_top_level_help
+
 
 HELP_FLAGS = {"-h", "--help", "help"}
 SET_OPTION_FLAGS = {"--set"}
@@ -11,72 +13,37 @@ EXECUTOR_OPTIONS_FLAGS = {"--executor-options"}
 
 
 def _print_run_usage(exit_code: int) -> None:
-    print("Usage:")
-    print("  train recipe run <recipe> [options]")
-    print()
-    print("What It Does:")
-    print("  Load one Python recipe, build its dependency graph, and execute it now.")
-    print()
-    print("Primary Options:")
-    print("  --host NAME=SPEC           Override one recipe host (e.g. gpu=vast:12345)")
-    print("  --set NAME=VALUE           Override one recipe variable")
-    print("  --pick-host NAME           Interactively choose a running Vast host for one recipe host")
-    print("  --executor NAME            sequential|thread_pool|process_pool|local|airflow|celery|dask|debug")
-    print("  --executor-workers N       Preferred worker count override")
-    print("  --executor-option KEY=VAL  Repeatable executor option override")
-    print("  --executor-options SPEC    JSON object or comma-separated key=value list")
-    print("  --callback NAME            Callback sink: console|sqlite (repeatable or comma-separated)")
-    print()
-    print("Examples:")
-    print("  train recipe run nanochat")
-    print("  train recipe run nanochat --host gpu=vast:12345")
-    print("  train recipe run nanochat --executor thread_pool --executor-workers 4 --callback console")
-    print()
-    print("Notes:")
-    print("  kubernetes executor aliases are intentionally unsupported in this runtime.")
+    print(render_command_help("run"))
+    raise SystemExit(exit_code)
+
+
+def _print_exec_usage(exit_code: int) -> None:
+    print(render_command_help("exec"))
     raise SystemExit(exit_code)
 
 
 def _print_resume_usage(exit_code: int) -> None:
-    print("Usage:")
-    print("  train recipe resume <recipe> [options]")
-    print()
-    print("Primary Options:")
-    print("  --set NAME=VALUE           Override one recipe variable while resuming")
-    print()
-    print("Notes:")
-    print("  Host overrides are not supported when resuming.")
-    print("  Start a fresh run with `train recipe run` if host placement needs to change.")
+    print(render_command_help("resume"))
     raise SystemExit(exit_code)
 
 
 def _print_logs_usage(exit_code: int) -> None:
-    print("Usage:")
-    print("  train recipe logs")
-    print("  train recipe logs --last")
-    print("  train recipe logs <job-id>")
-    print()
-    print("Use `train recipe logs` for detailed step-level output.")
+    print(render_command_help("logs"))
     raise SystemExit(exit_code)
 
 
 def _print_status_usage(exit_code: int) -> None:
-    print("Usage:")
-    print("  train recipe status")
-    print("  train recipe status --last")
-    print("  train recipe status --all")
-    print("  train recipe status <job-id>")
-    print()
-    print("Use `train recipe status` for live/manual runs and tmux session state.")
-    print("Use `train recipe schedule status` for scheduler-triggered run history.")
+    print(render_command_help("status"))
     raise SystemExit(exit_code)
 
 
 def _print_jobs_usage(exit_code: int) -> None:
-    print("Usage:")
-    print("  train recipe jobs [--all]")
-    print()
-    print("Use `train recipe jobs` for a compact recent-jobs table.")
+    print(render_command_help("jobs"))
+    raise SystemExit(exit_code)
+
+
+def _print_full_help(exit_code: int) -> None:
+    print(render_top_level_help())
     raise SystemExit(exit_code)
 
 

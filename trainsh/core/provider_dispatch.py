@@ -198,22 +198,6 @@ class ExecutorProviderDispatchMixin:
             return self._exec_provider_calculate_cost(params)
         if provider == "util" and operation == "wait_condition":
             return self._exec_provider_wait_condition(params)
-        if provider == "sqlite" and operation in {
-            "query",
-            "select",
-            "read",
-        }:
-            return self._exec_provider_sqlite_query(params)
-        if provider == "sqlite" and operation in {
-            "exec",
-            "execute",
-            "run",
-        }:
-            return self._exec_provider_sqlite_exec(params)
-        if provider == "sqlite" and operation in {
-            "script",
-        }:
-            return self._exec_provider_sqlite_script(params)
         if provider == "util" and operation == "ssh_command":
             return self._exec_provider_ssh_command(params)
         if provider == "util" and operation == "uv_run":
@@ -314,4 +298,3 @@ class ExecutorProviderDispatchMixin:
             return self._exec_provider_notice(params)
 
         return False, f"Unsupported provider step: {provider}.{operation}"
-

@@ -63,7 +63,7 @@ class RecipeProviderMiscMixin:
         run_id: Optional[str] = None,
         dag_id: Optional[str] = None,
         map_index: int = 0,
-        database: Optional[str] = None,
+        runtime_state: Optional[str] = None,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
@@ -84,8 +84,8 @@ class RecipeProviderMiscMixin:
             params["run_id"] = str(run_id)
         if dag_id is not None:
             params["dag_id"] = str(dag_id)
-        if database is not None:
-            params["database"] = str(database)
+        if runtime_state is not None:
+            params["runtime_state"] = str(runtime_state)
         return self.provider(
             "util",
             "xcom_push",
@@ -107,7 +107,7 @@ class RecipeProviderMiscMixin:
         default: Any = None,
         output_var: Optional[str] = None,
         decode_json: bool = False,
-        database: Optional[str] = None,
+        runtime_state: Optional[str] = None,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
@@ -133,8 +133,8 @@ class RecipeProviderMiscMixin:
             params["default"] = default
         if output_var is not None:
             params["output_var"] = str(output_var)
-        if database is not None:
-            params["database"] = str(database)
+        if runtime_state is not None:
+            params["runtime_state"] = str(runtime_state)
         return self.provider(
             "util",
             "xcom_pull",

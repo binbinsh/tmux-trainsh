@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from contextlib import contextmanager
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future, as_completed
@@ -13,9 +11,10 @@ from uuid import uuid4
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from ..constants import CONFIG_DIR
+from ..constants import RUNTIME_STATE_DIR
 from .dag_executor import DagExecutionResult, DagExecutor
 from .dag_processor import DagProcessor, ParsedDag
+from .runtime_store import RuntimeStore
 
 
 class DagRunState:
@@ -51,7 +50,7 @@ class DagScheduler:
         dags_dir: Optional[str | Path] = None,
         max_active_runs: int = 16,
         max_active_runs_per_dag: int = 1,
-        sqlite_db: Optional[str] = None,
+        runtime_state: Optional[str] = None,
         loop_interval: int = 60,
     ):
         self.processor = dag_processor or DagProcessor([str(dags_dir)] if dags_dir else None)
@@ -59,7 +58,8 @@ class DagScheduler:
         self.max_active_runs = max(1, int(max_active_runs))
         self.max_active_runs_per_dag = max(1, int(max_active_runs_per_dag))
         self.loop_interval = max(1, int(loop_interval))
-        self.sqlite_db = sqlite_db or str(CONFIG_DIR / "runtime.db")
+        self.runtime_state = runtime_state or str(RUNTIME_STATE_DIR)
+        self.store = RuntimeStore(self.runtime_state)
 
         self._running_lock = threading.Lock()
         self._active: Dict[Future, DagRunRecord] = {}
@@ -226,49 +226,10 @@ class DagScheduler:
             return sum(1 for rec in self._active.values() if rec.dag_id == dag_id)
 
     def _latest_run_start(self, dag_id: str) -> Optional[datetime]:
-        with self._sqlite_conn() as conn:
-            if conn is None:
-                return None
-            if not self._has_table(conn, "dag_run"):
-                return None
-            cur = conn.execute(
-                """
-                SELECT start_date
-                FROM dag_run
-                WHERE dag_id = ?
-                ORDER BY start_date DESC
-                LIMIT 1
-                """,
-                (dag_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            raw = str(row[0] or "")
-            return self._parse_time(raw)
+        return self.store.latest_run_start(dag_id)
 
     def _count_db_running(self, dag_id: Optional[str] = None) -> int:
-        with self._sqlite_conn() as conn:
-            if conn is None:
-                return 0
-            if not self._has_table(conn, "dag_run"):
-                return 0
-            if dag_id is None:
-                query = "SELECT COUNT(1) FROM dag_run WHERE state = 'running'"
-                row = conn.execute(query).fetchone()
-            else:
-                query = "SELECT COUNT(1) FROM dag_run WHERE dag_id = ? AND state = 'running'"
-                row = conn.execute(query, (dag_id,)).fetchone()
-            if not row:
-                return 0
-            return int(row[0] or 0)
-
-    def _has_table(self, conn: sqlite3.Connection, name: str) -> bool:
-        cur = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (name,),
-        )
-        return cur.fetchone() is not None
+        return self.store.count_running_runs(dag_id)
 
     def _parse_time(self, value: str) -> Optional[datetime]:
         if not value:
@@ -280,22 +241,6 @@ class DagScheduler:
                 return datetime.fromtimestamp(float(value), tz=timezone.utc)
             except Exception:
                 return None
-
-    @contextmanager
-    def _sqlite_conn(self):
-        try:
-            conn = sqlite3.connect(self.sqlite_db, check_same_thread=False)
-        except Exception:
-            conn = None
-        try:
-            if conn is None:
-                yield None
-            else:
-                conn.row_factory = sqlite3.Row
-                yield conn
-        finally:
-            if conn is not None:
-                conn.close()
 
     def _matches_filter(self, dag: ParsedDag, filters: set[str]) -> bool:
         if not filters:

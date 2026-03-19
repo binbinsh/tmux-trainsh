@@ -20,10 +20,22 @@ class ExecuteHelper:
         self.build_ssh_args = build_ssh_args
         self.window_cls = window_cls
 
+    def _command_timeout(self, step: Any) -> Optional[int]:
+        """Normalize execute-step timeout to subprocess/tmux semantics."""
+        timeout = getattr(step, "timeout", 0)
+        if timeout is None:
+            return None
+        try:
+            timeout_secs = int(timeout)
+        except Exception:
+            return None
+        return timeout_secs if timeout_secs > 0 else None
+
     def exec_execute(self, step: Any) -> tuple[bool, str]:
         """Execute command: @session > command."""
         window_name = step.host
         commands = self.executor._interpolate(step.commands)
+        timeout = self._command_timeout(step)
 
         if self.executor.logger:
             self.executor.logger.log_detail("execute", f"Executing command on {window_name}", {
@@ -39,14 +51,13 @@ class ExecuteHelper:
         bridge_result = self.executor._exec_via_bridge(
             window=window,
             commands=commands,
-            timeout=step.timeout or 600,
+            timeout=timeout,
             background=step.background,
             start_time=time.time(),
         )
         if bridge_result is not None:
             return bridge_result
 
-        timeout = step.timeout or 600
         start_time = time.time()
         host = window.host
         remote_session = window.remote_session

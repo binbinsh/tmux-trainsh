@@ -1,19 +1,19 @@
 import json
 import os
 import socket
-import sqlite3
 import tempfile
 import threading
 import unittest
-from contextlib import closing
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from trainsh.core.models import Storage, StorageType
 from trainsh.core.recipe_models import RecipeModel
-from trainsh.core.runtime_db import DEFAULT_XCOM_RETENTION_DAYS, ensure_xcom_schema
+from trainsh.core.runtime_db import DEFAULT_XCOM_RETENTION_DAYS
+from trainsh.core.runtime_store import RuntimeStore
 
 from tests.runtime_test_utils import isolated_executor
 
@@ -60,80 +60,19 @@ class ProviderBehaviorTests(unittest.TestCase):
         )
 
     def test_sqlite_query_modes_bindings_and_output_vars(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db = Path(tmpdir) / "demo.db"
-            with isolated_executor(RecipeModel(name="sqlite-demo")) as (executor, _config_dir):
-                ok, _ = executor._exec_provider_sqlite_script(
-                    {
-                        "database": str(db),
-                        "script": """
-                        CREATE TABLE items (name TEXT, qty INTEGER);
-                        INSERT INTO items(name, qty) VALUES ('alpha', 1);
-                        INSERT INTO items(name, qty) VALUES ('beta', 2);
-                        """,
-                    }
-                )
-                self.assertTrue(ok)
-
-                ok, _ = executor._exec_provider_sqlite_exec(
-                    {
-                        "database": str(db),
-                        "sql": "INSERT INTO items(name, qty) VALUES (?, ?)",
-                        "params": '["gamma", 3]',
-                        "output_var": "ROWCOUNT",
-                    }
-                )
-                self.assertTrue(ok)
-                self.assertEqual(executor.ctx.variables["ROWCOUNT"], "1")
-
-                ok, all_rows = executor._exec_provider_sqlite_query(
-                    {
-                        "database": str(db),
-                        "sql": "SELECT name, qty FROM items WHERE qty >= ? ORDER BY qty",
-                        "params": "[2]",
-                        "mode": "all",
-                        "output_var": "ROWS",
-                    }
-                )
-                self.assertTrue(ok)
-                self.assertEqual(
-                    json.loads(all_rows),
-                    [{"name": "beta", "qty": 2}, {"name": "gamma", "qty": 3}],
-                )
-                self.assertEqual(json.loads(executor.ctx.variables["ROWS"])[0]["name"], "beta")
-
-                ok, first_row = executor._exec_provider_sqlite_query(
-                    {
-                        "database": str(db),
-                        "sql": "SELECT name, qty FROM items ORDER BY qty",
-                        "mode": "one",
-                        "output_var": "FIRST",
-                    }
-                )
-                self.assertTrue(ok)
-                self.assertEqual(json.loads(first_row), {"name": "alpha", "qty": 1})
-                self.assertEqual(json.loads(executor.ctx.variables["FIRST"])["qty"], 1)
-
-                ok, scalar = executor._exec_provider_sqlite_query(
-                    {
-                        "database": str(db),
-                        "sql": "SELECT COUNT(*) FROM items",
-                        "mode": "value",
-                        "output_var": "COUNT",
-                    }
-                )
-                self.assertTrue(ok)
-                self.assertEqual(scalar, "3")
-                self.assertEqual(executor.ctx.variables["COUNT"], "3")
+        with isolated_executor(RecipeModel(name="sqlite-demo")) as (executor, _config_dir):
+            ok, msg = executor._exec_provider(SimpleNamespace(provider="sqlite", operation="query", params={"sql": "select 1"}, id="q"))
+        self.assertFalse(ok)
+        self.assertIn("Unsupported provider step", msg)
 
     def test_xcom_push_pull_decode_json_and_prior_dates(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = Path(tmpdir) / "xcom.db"
+            db = Path(tmpdir) / "xcom"
             with isolated_executor(RecipeModel(name="xcom-demo")) as (executor, _config_dir):
                 executor.ctx.job_id = "run-current"
                 ok, _ = executor._exec_provider_xcom_push(
                     {
-                        "database": str(db),
+                        "runtime_state": str(db),
                         "task_id": "producer",
                         "key": "payload",
                         "value": {"items": [1, 2]},
@@ -143,7 +82,7 @@ class ProviderBehaviorTests(unittest.TestCase):
 
                 ok, pulled = executor._exec_provider_xcom_pull(
                     {
-                        "database": str(db),
+                        "runtime_state": str(db),
                         "task_ids": ["producer"],
                         "key": "payload",
                         "decode_json": True,
@@ -156,7 +95,7 @@ class ProviderBehaviorTests(unittest.TestCase):
 
                 ok, _ = executor._exec_provider_xcom_push(
                     {
-                        "database": str(db),
+                        "runtime_state": str(db),
                         "task_id": "legacy_task",
                         "run_id": "run-legacy",
                         "key": "payload",
@@ -168,7 +107,7 @@ class ProviderBehaviorTests(unittest.TestCase):
 
                 ok, missing = executor._exec_provider_xcom_pull(
                     {
-                        "database": str(db),
+                        "runtime_state": str(db),
                         "task_ids": ["legacy_task"],
                         "key": "payload",
                     }
@@ -178,7 +117,7 @@ class ProviderBehaviorTests(unittest.TestCase):
 
                 ok, legacy = executor._exec_provider_xcom_pull(
                     {
-                        "database": str(db),
+                        "runtime_state": str(db),
                         "task_ids": ["legacy_task"],
                         "key": "payload",
                         "include_prior_dates": True,
@@ -190,24 +129,27 @@ class ProviderBehaviorTests(unittest.TestCase):
 
     def test_xcom_push_prunes_old_rows_and_uses_shared_schema_helper(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = Path(tmpdir) / "xcom.db"
-            with closing(sqlite3.connect(db)) as conn:
-                ensure_xcom_schema(conn)
-                old_created_at = (datetime.now() - timedelta(days=DEFAULT_XCOM_RETENTION_DAYS + 1)).isoformat()
-                conn.execute(
-                    """
-                    INSERT INTO xcom (dag_id, task_id, run_id, map_index, key, value, created_at, execution_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    ("demo", "old-task", "old-run", 0, "stale", "1", old_created_at, old_created_at),
-                )
-                conn.commit()
+            db = Path(tmpdir) / "xcom"
+            old_created_at = (datetime.now() - timedelta(days=DEFAULT_XCOM_RETENTION_DAYS + 1)).isoformat()
+            RuntimeStore(db).append_xcom(
+                {
+                    "dag_id": "demo",
+                    "task_id": "old-task",
+                    "run_id": "old-run",
+                    "map_index": 0,
+                    "key": "stale",
+                    "value": "1",
+                    "created_at": old_created_at,
+                    "execution_date": old_created_at,
+                    "updated_at": old_created_at,
+                }
+            )
 
             with isolated_executor(RecipeModel(name="xcom-demo")) as (executor, _config_dir):
                 executor.ctx.job_id = "run-current"
                 ok, _ = executor._exec_provider_xcom_push(
                     {
-                        "database": str(db),
+                        "runtime_state": str(db),
                         "task_id": "producer",
                         "key": "payload",
                         "value": {"items": [1]},
@@ -216,7 +158,7 @@ class ProviderBehaviorTests(unittest.TestCase):
                 self.assertTrue(ok)
                 ok, _ = executor._exec_provider_xcom_push(
                     {
-                        "database": str(db),
+                        "runtime_state": str(db),
                         "task_id": "producer",
                         "key": "payload-2",
                         "value": {"items": [2]},
@@ -224,30 +166,35 @@ class ProviderBehaviorTests(unittest.TestCase):
                 )
                 self.assertTrue(ok)
 
-            with closing(sqlite3.connect(db)) as conn:
-                rows = conn.execute(
-                    "SELECT task_id, run_id, key FROM xcom ORDER BY created_at"
-                ).fetchall()
-            self.assertEqual(rows, [("producer", "run-current", "payload"), ("producer", "run-current", "payload-2")])
+            rows = RuntimeStore(db)._iter_jsonl(RuntimeStore(db).xcom_path)
+            rows = [(row["task_id"], row["run_id"], row["key"]) for row in rows]
+            self.assertEqual(
+                rows,
+                [("old-task", "old-run", "stale"), ("producer", "run-current", "payload"), ("producer", "run-current", "payload-2")],
+            )
 
     def test_latest_only_checks_recipe_runs_table(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = Path(tmpdir) / "runtime.db"
+            db = Path(tmpdir) / "runtime"
             with isolated_executor(RecipeModel(name="latest-demo")) as (executor, _config_dir):
                 executor.ctx.job_id = "run-current"
-                current_started_at = executor.ctx.start_time.isoformat()
                 later = (executor.ctx.start_time + timedelta(seconds=5)).isoformat()
 
-                with closing(sqlite3.connect(db)) as conn:
-                    conn.execute("CREATE TABLE recipe_runs (recipe_name TEXT, run_id TEXT, started_at TEXT)")
-                    conn.execute(
-                        "INSERT INTO recipe_runs(recipe_name, run_id, started_at) VALUES (?, ?, ?)",
-                        ("latest-demo", "run-newer", later),
-                    )
-                    conn.commit()
+                RuntimeStore(db).append_run(
+                    {
+                        "run_id": "run-newer",
+                        "dag_id": "latest-demo",
+                        "recipe_name": "latest-demo",
+                        "recipe_path": "/tmp/latest-demo.pyrecipe",
+                        "state": "success",
+                        "status": "succeeded",
+                        "started_at": later,
+                        "updated_at": later,
+                    }
+                )
 
                 ok, message = executor._exec_provider_latest_only(
-                    {"sqlite_db": str(db), "message": "skip newer"}
+                    {"runtime_state": str(db), "message": "skip newer"}
                 )
 
         self.assertFalse(ok)
@@ -255,22 +202,26 @@ class ProviderBehaviorTests(unittest.TestCase):
 
     def test_latest_only_falls_back_to_dag_run_table(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = Path(tmpdir) / "runtime.db"
+            db = Path(tmpdir) / "runtime"
             with isolated_executor(RecipeModel(name="latest-demo")) as (executor, _config_dir):
                 executor.ctx.job_id = "run-current"
-                current_started_at = executor.ctx.start_time.isoformat()
                 later = (executor.ctx.start_time + timedelta(seconds=5)).isoformat()
 
-                with closing(sqlite3.connect(db)) as conn:
-                    conn.execute("CREATE TABLE dag_run (dag_id TEXT, run_id TEXT, start_date TEXT)")
-                    conn.execute(
-                        "INSERT INTO dag_run(dag_id, run_id, start_date) VALUES (?, ?, ?)",
-                        ("latest-demo", "run-newer", later),
-                    )
-                    conn.commit()
+                RuntimeStore(db).append_run(
+                    {
+                        "run_id": "run-newer",
+                        "dag_id": "latest-demo",
+                        "recipe_name": "latest-demo",
+                        "recipe_path": "/tmp/latest-demo.pyrecipe",
+                        "state": "success",
+                        "status": "succeeded",
+                        "started_at": later,
+                        "updated_at": later,
+                    }
+                )
 
                 ok, message = executor._exec_provider_latest_only(
-                    {"sqlite_db": str(db), "message": "skip dag newer"}
+                    {"runtime_state": str(db), "message": "skip dag newer"}
                 )
 
         self.assertFalse(ok)

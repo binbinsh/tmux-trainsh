@@ -45,7 +45,7 @@ class RecipeProviderConditionMixin:
         *,
         enabled: bool = True,
         message: str = "Skipped by latest_only",
-        sqlite_db: Optional[str] = None,
+        runtime_state: Optional[str] = None,
         fail_if_unknown: bool = False,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
@@ -53,14 +53,14 @@ class RecipeProviderConditionMixin:
     ) -> str:
         """Keep only the latest run for this recipe.
 
-        Uses runtime sqlite state when available. If sqlite is unavailable:
+        Uses runtime JSONL state when available. If state is unavailable:
         - with ``fail_if_unknown=True`` it fails
         - otherwise it passes and continues.
         """
         params: Dict[str, Any] = {
             "enabled": bool(enabled),
             "message": message,
-            "sqlite_db": sqlite_db,
+            "runtime_state": runtime_state,
             "fail_if_unknown": bool(fail_if_unknown),
         }
         return self.provider(

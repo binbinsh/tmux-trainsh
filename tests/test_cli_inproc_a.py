@@ -67,45 +67,41 @@ class MainRoutingTests(CaptureMixin, unittest.TestCase):
         recipe_main.assert_called_once_with(["run", "demo", "--help"])
         self.assertEqual(out, "")
 
-    def test_main_unknown_command_prints_hint(self):
-        out, _err, code = self.capture(train_main, ["train", "exec"])
-        self.assertEqual(code, 1)
-        self.assertIn("Unknown command: exec", out)
-        self.assertIn("Use 'train recipe run <recipe>'", out)
+    def test_main_routes_exec_alias_to_recipe_namespace(self):
+        with patch("trainsh.commands.recipe_cmd.main") as recipe_main:
+            out, _err, code = self.capture(train_main, ["train", "exec", "demo", "--help"])
+        self.assertIsNone(code)
+        recipe_main.assert_called_once_with(["exec", "demo", "--help"])
+        self.assertEqual(out, "")
 
 
 class HelpCatalogTests(unittest.TestCase):
     def test_rendered_help_includes_groups_and_topics(self):
         top = help_catalog.render_top_level_help()
-        index = help_catalog.render_help_index()
         recipe_help = help_catalog.render_command_help("recipe")
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("Command Groups", top)
         self.assertIn("Common Mistakes", top)
-        self.assertIn("Recommended Topics", index)
-        self.assertIn("Recipe lifecycle", index)
+        self.assertIn("Recommended Topics", top)
+        self.assertIn("Recipe lifecycle", top)
         self.assertIn("train recipe run <name>", recipe_help)
+        self.assertEqual(readme, help_catalog.render_readme_overview())
 
 
 class HelpCommandTests(CaptureMixin, unittest.TestCase):
-    def test_help_topics_cover_default_alias_and_unknown(self):
+    def test_help_command_only_accepts_top_level_entry(self):
         out, _err, code = self.capture(help_cmd.main, [])
         self.assertIsNone(code)
         self.assertIn("Recommended Topics", out)
 
-        out, _err, code = self.capture(help_cmd.main, ["python-recipes"])
-        self.assertIsNone(code)
-        self.assertIn("Python Recipe Syntax", out)
-        self.assertIn("Recipe Command", out)
-
-        out, _err, code = self.capture(help_cmd.main, ["status"])
-        self.assertIsNone(code)
-        self.assertIn("Run Status vs Scheduler History", out)
+        out, _err, code = self.capture(help_cmd.main, ["exec"])
+        self.assertEqual(code, 1)
+        self.assertIn("train help takes no topic", out)
 
         out, _err, code = self.capture(help_cmd.main, ["does-not-exist"])
         self.assertEqual(code, 1)
-        self.assertIn("Unknown help topic", out)
-        self.assertIn("Recommended Topics", out)
+        self.assertIn("train help takes no topic", out)
 
 
 class ConfigCommandTests(CaptureMixin, unittest.TestCase):

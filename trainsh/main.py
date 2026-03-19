@@ -8,21 +8,7 @@ from typing import Optional
 from .commands.help_catalog import render_top_level_help
 
 usage = render_top_level_help()
-
-help_text = f"""tmux-trainsh: GPU training workflow automation in the terminal.
-
-Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends
-(Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.
-
-{render_top_level_help()}
-
-Config files live under:
-  ~/.config/tmux-trainsh/
-  ├── config.yaml
-  ├── hosts.yaml
-  ├── storages.yaml
-  └── recipes/
-"""
+help_text = usage
 
 
 COMMAND_HINTS = {
@@ -32,7 +18,6 @@ COMMAND_HINTS = {
     "logs": "Use 'train recipe logs' to inspect execution details.",
     "jobs": "Use 'train recipe jobs' for the recent-jobs table.",
     "schedule": "Use 'train recipe schedule <run|list|status>' for scheduled recipes.",
-    "exec": "Use 'train recipe run <recipe>' to execute a recipe.",
     "hosts": "Use 'train host' (singular) for named host definitions.",
     "storages": "Use 'train storage' (singular) for storage backends.",
     "log": "Use 'train recipe logs' for detailed execution logs.",
@@ -43,7 +28,7 @@ COMMAND_HINTS = {
 def option_text() -> str:
     return '''\
 --help -h
-Show the command index and top-level navigation.
+Show the canonical full CLI reference.
 
 --version -V
 Print the installed tmux-trainsh version.
@@ -52,13 +37,12 @@ Print the installed tmux-trainsh version.
 
 def main(args: list[str]) -> Optional[str]:
     """Main entry point for train."""
-    from .constants import CONFIG_DIR, RECIPES_DIR
+    from .constants import CONFIG_DIR
 
     # Ensure config directories exist
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    RECIPES_DIR.mkdir(parents=True, exist_ok=True)
 
-    # No subcommand - show usage
+    # No subcommand - show the canonical reference.
     if len(args) < 2:
         print(usage)
         raise SystemExit(0)
@@ -96,6 +80,7 @@ def main(args: list[str]) -> Optional[str]:
     handlers = {
         "recipe": recipe_main,
         "run": lambda args: recipe_main(["run", *args]),
+        "exec": lambda args: recipe_main(["exec", *args]),
         "transfer": transfer_main,
         "host": host_main,
         "storage": storage_main,

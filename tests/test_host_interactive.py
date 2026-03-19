@@ -17,6 +17,10 @@ def patched_host_store():
         config_dir.mkdir(parents=True, exist_ok=True)
         stack.enter_context(patch("trainsh.constants.CONFIG_DIR", config_dir))
         stack.enter_context(patch("trainsh.constants.HOSTS_FILE", config_dir / "hosts.yaml"))
+        stack.enter_context(patch("trainsh.core.secrets.CONFIG_DIR", config_dir))
+        stack.enter_context(patch("trainsh.core.secrets.CONFIG_FILE", config_dir / "config.yaml"))
+        stack.enter_context(patch("trainsh.core.secrets._ENC_FILE", config_dir / "secrets.enc"))
+        stack.enter_context(patch("trainsh.core.secrets._secrets_manager", None))
         stack.enter_context(patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("disabled in tests")))
         yield config_dir
 
@@ -202,13 +206,51 @@ class HostCommandDeepTests(unittest.TestCase):
                 "trainsh.commands.host.prompt_input",
                 side_effect=[
                     "gpu-pass", "1", "gpu3.example.com", "22", "bob",
-                    "3", "", "n", "", "n",
+                    "3", "y", "", "n", "", "n",
                 ],
-            ):
+            ), patch("trainsh.commands.host_interactive.getpass.getpass", return_value="pw-secret"):
                 out, code = capture_output(host.cmd_add, [])
             self.assertIsNone(code)
             created = host.load_hosts()["gpu-pass"]
             self.assertEqual(created.auth_method, AuthMethod.PASSWORD)
+            self.assertNotIn("ssh_password_secret", created.env_vars)
+
+    def test_cmd_add_imports_private_key_into_secrets(self):
+        with patched_host_store(), tempfile.TemporaryDirectory() as tmpdir:
+            key_path = Path(tmpdir) / "id_ed25519"
+            key_path.write_text("PRIVATE KEY\n", encoding="utf-8")
+            secrets = MagicMock()
+            with patch("trainsh.services.secret_materialize.get_secrets_manager", return_value=secrets), patch(
+                "trainsh.commands.host.prompt_input",
+                side_effect=[
+                    "gpu-secret", "1", "gpu.example.com", "22", "root",
+                    "1", "secret", str(key_path), "", "n", "", "n",
+                ],
+            ):
+                out, code = capture_output(host.cmd_add, [])
+            self.assertIsNone(code)
+            self.assertIn("Stored SSH private key in train secrets.", out)
+            created = host.load_hosts()["gpu-secret"]
+            self.assertIsNone(created.ssh_key_path)
+            self.assertNotIn("ssh_key_secret", created.env_vars)
+            secrets.set.assert_called_once()
+
+    def test_cmd_add_stores_password_in_secrets(self):
+        with patched_host_store():
+            secrets = MagicMock()
+            with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets), patch(
+                "trainsh.commands.host.prompt_input",
+                side_effect=[
+                    "gpu-pass-secret", "1", "gpu.example.com", "22", "root",
+                    "3", "y", "", "n", "", "n",
+                ],
+            ), patch("trainsh.commands.host_interactive.getpass.getpass", return_value="supersecret"):
+                out, code = capture_output(host.cmd_add, [])
+            self.assertIsNone(code)
+            self.assertIn("Stored SSH password in train secrets.", out)
+            created = host.load_hosts()["gpu-pass-secret"]
+            self.assertNotIn("ssh_password_secret", created.env_vars)
+            secrets.set.assert_called_once_with("GPU_PASS_SECRET_SSH_PASSWORD", "supersecret")
 
     def test_cmd_add_cancellation_and_required_fields(self):
         with patched_host_store():
@@ -285,6 +327,24 @@ class HostCommandDeepTests(unittest.TestCase):
             self.assertNotIn("tunnel_type", edited.env_vars)
             self.assertNotIn("proxy_command", edited.env_vars)
             self.assertEqual(edited.env_vars["connection_candidates"][0]["hostname"], "gpu-new")
+
+    def test_cmd_show_hides_secret_names(self):
+        with patched_host_store():
+            host.save_hosts(
+                {
+                    "gpu-box": self._ssh_host(
+                        ssh_key_path=None,
+                        auth_method=AuthMethod.PASSWORD,
+                        env_vars={"ssh_password_secret": "GPU_BOX_SSH_PASSWORD"},
+                    )
+                }
+            )
+            secrets = SimpleNamespace(exists=lambda key: key == "GPU_BOX_SSH_PASSWORD")
+            with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets):
+                out, code = capture_output(host.cmd_show, ["gpu-box"])
+            self.assertIsNone(code)
+            self.assertIn("SSH Password: managed by train secrets", out)
+            self.assertNotIn("GPU_BOX_SSH_PASSWORD", out)
 
     def test_cmd_edit_ssh_conflict_and_validation_paths(self):
         with patched_host_store():

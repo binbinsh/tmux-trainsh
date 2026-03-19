@@ -52,6 +52,17 @@ class Host:
     def path(self, value: os.PathLike[str] | str) -> HostPath:
         return HostPath(self, os.fspath(value))
 
+    def tmux(self, name: str = "main", **kwargs: Any):
+        """Open or reuse a tmux-backed context on this host for the active recipe."""
+        from .base import get_active_recipe
+
+        recipe = get_active_recipe()
+        if recipe is None:
+            raise PythonRecipeError("no active Recipe is available for host.tmux(...)")
+        if "close" not in kwargs:
+            kwargs["close"] = True
+        return recipe._tmux_ref(name, host=self, **kwargs)
+
 
 @dataclass(frozen=True)
 class Storage:
@@ -89,6 +100,9 @@ class VastHost(Host):
         object.__setattr__(self, "instance_id", resolved)
         object.__setattr__(self, "spec", f"vast:{resolved}")
         object.__setattr__(self, "name", name)
+
+
+local = Host("local", name="local")
 
 
 @dataclass

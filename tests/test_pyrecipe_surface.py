@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trainsh import Recipe, official_uv_install_command
+from trainsh import Recipe, local, official_uv_install_command
 from trainsh.core.models import Storage as RuntimeStorage, StorageType
 from trainsh.pyrecipe.control_steps import RecipeControlMixin
 from trainsh.pyrecipe.models import Host, PythonRecipeError, Storage
@@ -75,7 +75,7 @@ class PyrecipeSurfaceTests(unittest.TestCase):
         self.assertEqual(steps["ssh_alias"].operation, "ssh_command")
         self.assertEqual(steps["uv"].operation, "uv_run")
 
-        session = recipe.session("main", host="gpu", id="open_main")
+        session = Host("gpu", name="gpu").tmux("main", id="open_main")
         install_uv = session.install_uv(id="install_uv")
         steps = {step.id: step for step in recipe.steps}
         self.assertIn("astral.sh/uv/install.sh", steps["install_uv"].raw)
@@ -268,9 +268,9 @@ class PyrecipeSurfaceTests(unittest.TestCase):
         with self.assertRaises(PythonRecipeError):
             recipe.link_step_dependencies("follow", ["follow"])
 
-        with recipe.linear():
-            a = recipe.empty(id="a")
-            b = recipe.empty(id="b")
+        a = recipe.empty(id="a")
+        b = recipe.empty(id="b")
+        self.assertEqual(recipe.steps[2].depends_on, ["follow"])
         self.assertEqual(recipe.steps[3].depends_on, ["a"])
 
         self.assertEqual(recipe.current_linear_dependency(), None)
@@ -278,10 +278,147 @@ class PyrecipeSurfaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             host = Host("ssh://gpu", name="gpu")
             storage = Storage("r2:bucket", name="artifacts")
-            session = recipe.session("main", host=host, id="open_main")
+            session = host.tmux("main", id="open_main")
             self.assertEqual(session.open_step_id, "open_main")
             after_session = session.after(a)
             self.assertIn("a", after_session.default_depends_on)
+
+    def test_tmux_after_does_not_retrofit_open_step_into_a_cycle(self):
+        recipe = Recipe("session-after")
+        session = local.tmux("main", id="open_main")
+        train = session.run("echo train", id="train")
+        gated = session.after(train)
+        gated.file("/tmp/done", id="wait_done")
+
+        steps = {step.id: step for step in recipe.steps}
+        self.assertEqual(steps["open_main"].depends_on, [])
+        self.assertEqual(steps["train"].depends_on, ["open_main"])
+        self.assertEqual(set(steps["wait_done"].depends_on), {"open_main", "train"})
+
+    def test_local_and_remote_flow_helpers_reduce_session_boilerplate(self):
+        recipe = Recipe("flow-demo")
+        start = recipe.empty(id="start")
+
+        with local.tmux("main") as main:
+            main.run("echo local", id="local_run")
+
+        with Host("gpu", name="gpu").tmux("work", depends_on=[start]) as work:
+            work.run("echo remote", id="remote_run")
+
+        steps = {step.id: step for step in recipe.steps}
+        self.assertEqual(steps["step_001"].raw, "tmux.open @local as main")
+        self.assertEqual(steps["local_run"].depends_on, ["step_001"])
+        self.assertEqual(steps["step_002"].depends_on, ["step_001", "local_run"])
+        self.assertEqual(steps["step_003"].depends_on, ["start"])
+        self.assertEqual(steps["remote_run"].depends_on, ["step_003"])
+        self.assertEqual(steps["step_004"].depends_on, ["step_003", "remote_run"])
+
+    def test_tmux_blocks_chain_by_default_without_explicit_depends_on(self):
+        recipe = Recipe("tmux-chain")
+        with local.tmux("main") as tmux:
+            tmux.run("echo one", id="first_run")
+        with Host("gpu", name="gpu").tmux("work") as tmux:
+            tmux.run("echo two", id="second_run")
+
+        steps = {step.id: step for step in recipe.steps}
+        self.assertEqual(steps["first_run"].depends_on, ["step_001"])
+        self.assertEqual(steps["step_002"].depends_on, ["step_001", "first_run"])
+        self.assertEqual(steps["step_003"].depends_on, ["step_002"])
+        self.assertEqual(steps["second_run"].depends_on, ["step_003"])
+
+    def test_flow_helpers_support_default_cwd_env_and_multiline_script(self):
+        recipe = Recipe("flow-context")
+
+        with Host("gpu", name="gpu").tmux("work", cwd="/workspace/app", env={"MODE": "prod"}) as work:
+            work.run("python train.py", id="run_train")
+            work.script(
+                """
+                echo one
+                echo two
+                """,
+                id="script_train",
+            )
+
+        steps = {step.id: step for step in recipe.steps}
+        self.assertIn("cd /workspace/app", steps["run_train"].commands)
+        self.assertIn("export MODE=prod", steps["run_train"].commands)
+        self.assertIn("python train.py", steps["run_train"].commands)
+        self.assertIn("bash -lc", steps["script_train"].commands)
+        self.assertIn("set -euo pipefail", steps["script_train"].commands)
+        self.assertIn("echo one", steps["script_train"].commands)
+
+    def test_tmux_object_preserves_tmux_first_authoring(self):
+        recipe = Recipe("session-demo")
+        session = local.tmux("main", cwd="/tmp/app", env={"MODE": "dev"}, id="open_main")
+        run_step = session.run("python train.py", id="run_train")
+        remote = Host("gpu", name="gpu").tmux("work", depends_on=[run_step])
+        remote.sh("echo remote", id="remote_script")
+
+        steps = {step.id: step for step in recipe.steps}
+        self.assertEqual(session.open_step_id, "open_main")
+        self.assertEqual(steps["run_train"].depends_on, ["open_main"])
+        self.assertIn("cd /tmp/app", steps["run_train"].commands)
+        self.assertIn("export MODE=dev", steps["run_train"].commands)
+        self.assertEqual(steps["step_001"].depends_on, ["run_train"])
+        self.assertIn("bash -lc", steps["remote_script"].commands)
+
+    def test_local_tmux_surface_applies_context_defaults(self):
+        recipe = Recipe("tmux-demo")
+        tmux = local.tmux("main", cwd="/tmp/app")
+        tmux.run("echo hi")
+
+        steps = list(recipe.steps)
+        self.assertEqual(steps[0].raw, "tmux.open @local as main")
+        self.assertIn("cd /tmp/app", steps[1].commands)
+
+    def test_host_and_local_tmux_helpers_bind_to_active_recipe(self):
+        recipe = Recipe("host-tmux")
+        gpu = Host("gpu-box", name="gpu")
+
+        with gpu.tmux("train") as tmux:
+            tmux.run("echo hi")
+        with local.tmux("local") as tmux:
+            tmux.run("echo local")
+
+        steps = list(recipe.steps)
+        self.assertEqual(steps[0].raw, "tmux.open @gpu as train")
+        self.assertEqual(steps[3].raw, "tmux.open @local as local")
+
+    def test_tmux_transfer_helpers_attach_to_tmux_host(self):
+        recipe = Recipe("session-transfer")
+        gpu = Host("ssh://gpu.example.com", name="gpu")
+        session = gpu.tmux("work", id="open_work")
+
+        put = session.upload("/tmp/local.txt", "/remote/in.txt", id="put_file")
+        pull = session.download("/remote/out.txt", "/tmp/out.txt", id="get_file", depends_on=[put])
+        sync = session.sync_from("/remote/tree", "/tmp/tree", id="sync_tree", depends_on=[pull])
+
+        steps = {step.id: step for step in recipe.steps}
+        self.assertEqual(put, "put_file")
+        self.assertEqual(pull, "get_file")
+        self.assertEqual(sync, "sync_tree")
+        self.assertEqual(steps["put_file"].provider, "transfer")
+        self.assertIn("@gpu:/remote/in.txt", steps["put_file"].params["destination"])
+        self.assertEqual(steps["put_file"].depends_on, ["open_work"])
+        self.assertIn("@gpu:/remote/out.txt", steps["get_file"].params["source"])
+        self.assertEqual(set(steps["get_file"].depends_on), {"open_work", "put_file"})
+        self.assertIn("@gpu:/remote/tree", steps["sync_tree"].params["source"])
+
+    def test_tmux_can_be_reused_by_name_in_later_stage(self):
+        recipe = Recipe("tmux-reuse")
+        gpu = Host("ssh://gpu.example.com", name="gpu")
+
+        work = gpu.tmux("work")
+        work.run("echo train")
+
+        with gpu.tmux("work"):
+            gpu.tmux("work").download("/remote/out.txt", "/tmp/out.txt")
+
+        steps = list(recipe.steps)
+        self.assertEqual(steps[0].id, "step_001")
+        self.assertEqual(steps[1].depends_on, ["step_001"])
+        self.assertEqual(set(steps[2].depends_on), {"step_001", "step_002"})
+        self.assertIn("@gpu:/remote/out.txt", steps[2].params["source"])
 
 
 if __name__ == "__main__":

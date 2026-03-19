@@ -11,6 +11,7 @@ from typing import Callable, Dict, Optional
 from ..constants import SecretKeys
 from ..core.models import Host, Storage, StorageType, TransferEndpoint
 from ..core.secrets import get_secrets_manager
+from .secret_materialize import materialize_secret_file, resolve_resource_secret_name
 
 
 def _split_ssh_target(target: str) -> tuple[str, str]:
@@ -80,7 +81,20 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
     env: Dict[str, str] = {}
     config = storage.config
 
-    def get_credential(storage_key: str, global_key: str, config_key: str = "") -> str:
+    def get_credential(
+        storage_key: str,
+        global_key: str,
+        config_key: str = "",
+        *,
+        explicit_secret_names: tuple[str, ...] = (),
+    ) -> str:
+        for secret_name in explicit_secret_names:
+            secret_name = str(secret_name or "").strip()
+            if not secret_name:
+                continue
+            value = secrets.get(secret_name)
+            if value:
+                return value
         value = secrets.get(f"{storage_prefix}_{storage_key}")
         if value:
             return value
@@ -116,8 +130,18 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         env[f"RCLONE_CONFIG_{name}_PROVIDER"] = config.get("provider", "AWS")
         env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
 
-        access_key = get_credential("ACCESS_KEY_ID", SecretKeys.AWS_ACCESS_KEY_ID, "access_key_id")
-        secret_key = get_credential("SECRET_ACCESS_KEY", SecretKeys.AWS_SECRET_ACCESS_KEY, "secret_access_key")
+        access_key = get_credential(
+            "ACCESS_KEY_ID",
+            SecretKeys.AWS_ACCESS_KEY_ID,
+            "access_key_id",
+            explicit_secret_names=(str(config.get("access_key_secret", "")).strip(),),
+        )
+        secret_key = get_credential(
+            "SECRET_ACCESS_KEY",
+            SecretKeys.AWS_SECRET_ACCESS_KEY,
+            "secret_access_key",
+            explicit_secret_names=(str(config.get("secret_key_secret", "")).strip(),),
+        )
 
         if access_key:
             env[f"RCLONE_CONFIG_{name}_ACCESS_KEY_ID"] = access_key
@@ -148,7 +172,12 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         if config.get("root_folder_id"):
             env[f"RCLONE_CONFIG_{name}_ROOT_FOLDER_ID"] = config["root_folder_id"]
 
-        token = get_credential("TOKEN", SecretKeys.GOOGLE_DRIVE_CREDENTIALS, "token")
+        token = get_credential(
+            "TOKEN",
+            SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
+            "token",
+            explicit_secret_names=(str(config.get("token_secret", "")).strip(),),
+        )
         if token:
             env[f"RCLONE_CONFIG_{name}_TOKEN"] = token
 
@@ -159,8 +188,14 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         env[f"RCLONE_CONFIG_{name}_TYPE"] = "google cloud storage"
         if config.get("project_id"):
             env[f"RCLONE_CONFIG_{name}_PROJECT_NUMBER"] = config["project_id"]
-        if config.get("service_account_json"):
-            env[f"RCLONE_CONFIG_{name}_SERVICE_ACCOUNT_CREDENTIALS"] = config["service_account_json"]
+        service_account_json = get_credential(
+            "SERVICE_ACCOUNT_JSON",
+            "GCS_SERVICE_ACCOUNT_JSON",
+            "service_account_json",
+            explicit_secret_names=(resolve_resource_secret_name(storage.name, config.get("service_account_secret"), "SERVICE_ACCOUNT_JSON"),),
+        )
+        if service_account_json:
+            env[f"RCLONE_CONFIG_{name}_SERVICE_ACCOUNT_CREDENTIALS"] = service_account_json
         if config.get("bucket"):
             env[f"RCLONE_CONFIG_{name}_BUCKET_POLICY_ONLY"] = "true"
 
@@ -176,15 +211,33 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
             env[f"RCLONE_CONFIG_{name}_USER"] = user_name
         if config.get("port"):
             env[f"RCLONE_CONFIG_{name}_PORT"] = str(config["port"])
-        key_file = str(config.get("key_file") or config.get("key_path") or "").strip()
+        key_secret = resolve_resource_secret_name(storage.name, config.get("key_secret"), "SSH_PRIVATE_KEY")
+        key_file = materialize_secret_file(key_secret, suffix=".key") or ""
+        if not key_file:
+            key_file = str(config.get("key_file") or config.get("key_path") or "").strip()
         if key_file:
             env[f"RCLONE_CONFIG_{name}_KEY_FILE"] = os.path.expanduser(key_file)
+        password = get_credential(
+            "PASSWORD",
+            "SSH_PASSWORD",
+            "password",
+            explicit_secret_names=(str(config.get("password_secret", "")).strip(),),
+        )
+        if password:
+            env[f"RCLONE_CONFIG_{name}_PASS"] = password
 
     elif storage.type == StorageType.SMB:
         env[f"RCLONE_CONFIG_{name}_TYPE"] = "smb"
         host_name = str(config.get("host") or config.get("server") or "").strip()
         user_name = str(config.get("user") or config.get("username") or "").strip()
-        password = str(config.get("pass") or config.get("password") or "").strip()
+        password = get_credential(
+            "PASSWORD",
+            "SMB_PASSWORD",
+            "password",
+            explicit_secret_names=(str(config.get("password_secret", "")).strip(),),
+        )
+        if not password:
+            password = str(config.get("pass") or config.get("password") or "").strip()
         if host_name:
             env[f"RCLONE_CONFIG_{name}_HOST"] = host_name
         if user_name:

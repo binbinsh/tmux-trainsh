@@ -5,7 +5,8 @@ import yaml
 import sys
 from typing import Optional, List
 
-from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
+from .help_catalog import render_command_help, render_top_level_help
 from ..constants import CONFIG_DIR
 
 SUBCOMMAND_SPECS = (
@@ -15,25 +16,7 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("run", "Run one remote shell command over SSH."),
 )
 
-usage = render_command_help(
-    command="train colab",
-    summary="Quick helper for one-off Google Colab SSH tunnels.",
-    usage_lines=(
-        "train colab <subcommand> [args...]",
-        "train colab run <command>",
-    ),
-    subcommands=SUBCOMMAND_SPECS,
-    notes=(
-        "For reusable named connections inside recipes, prefer train host add and choose a Colab host type.",
-        "You need a running Colab notebook with SSH enabled plus a cloudflared or ngrok tunnel.",
-    ),
-    examples=(
-        "train colab connect",
-        "train colab list",
-        "train colab ssh my-colab",
-        "train colab run nvidia-smi",
-    ),
-)
+usage = render_command_help("colab")
 
 COLAB_FILE = CONFIG_DIR / "colab.yaml"
 
@@ -230,8 +213,11 @@ def cmd_run(args: List[str]) -> None:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for colab command."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(usage)
+        return None
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]

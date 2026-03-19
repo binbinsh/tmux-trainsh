@@ -2,27 +2,20 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 import os
 import sys
 
-from ..constants import CONFIG_DIR
+from ..constants import RUNTIME_STATE_DIR
 from ..core import DagRunState, DagScheduler
 from ..core.dag_processor import DagProcessor
+from .help_catalog import render_command_help, render_top_level_help
+from ..core.runtime_store import RuntimeStore
 
 
-usage = """Usage:
-  train recipe schedule [run] [--forever|--once] [--recipe NAME] [--recipes-dir PATH]
-                         [--force] [--wait] [--include-invalid]
-                         [--loop-interval N] [--max-active-runs N]
-                         [--max-active-runs-per-recipe N] [--iterations N]
-                         [--runtime-db PATH]
-  train recipe schedule list [--include-invalid] [--recipes-dir PATH] [--runtime-db PATH] [PATTERN...]
-  train recipe schedule status [--rows N] [--runtime-db PATH]
-"""
+usage = render_command_help("schedule")
 
 
 def _to_int(raw: str, *, field: str, default: Optional[int] = None) -> int:
@@ -61,7 +54,7 @@ def _parse_args(args: Sequence[str], *, default_mode: str = "run") -> Dict[str, 
         "max_active_runs": 16,
         "max_active_runs_per_dag": 1,
         "dags_dir": None,
-        "sqlite_db": str(CONFIG_DIR / "runtime.db"),
+        "runtime_state": str(RUNTIME_STATE_DIR),
         "rows": 50,
     }
     filters: List[str] = []
@@ -119,15 +112,15 @@ def _parse_args(args: Sequence[str], *, default_mode: str = "run") -> Dict[str, 
             i += 2
             continue
 
-        if arg.startswith("--runtime-db="):
-            options["sqlite_db"] = arg.split("=", 1)[1]
+        if arg.startswith("--runtime-state="):
+            options["runtime_state"] = arg.split("=", 1)[1]
             i += 1
             continue
-        if arg == "--runtime-db":
+        if arg == "--runtime-state":
             if i + 1 >= len(args):
-                print("Missing value for --runtime-db")
+                print("Missing value for --runtime-state")
                 raise SystemExit(1)
-            options["sqlite_db"] = args[i + 1]
+            options["runtime_state"] = args[i + 1]
             i += 2
             continue
 
@@ -213,15 +206,7 @@ def _parse_args(args: Sequence[str], *, default_mode: str = "run") -> Dict[str, 
 
 
 def _print_usage() -> None:
-    print(
-        usage
-        + """
-Notes:
-  train recipe status shows live/manual jobs; train recipe schedule status shows scheduler history.
-  --recipe: target a specific scheduled recipe id
-  --force: run matched scheduled recipes even if they are not due yet
-  --wait: when running, wait for started recipes to finish"""
-    )
+    print(usage)
 
 
 def _matches(target: str, candidates: List[str]) -> bool:
@@ -230,29 +215,25 @@ def _matches(target: str, candidates: List[str]) -> bool:
     return any(candidate in target for candidate in candidates)
 
 
-def _latest_state_for_dag(conn: sqlite3.Connection, dag_id: str) -> Optional[sqlite3.Row]:
-    has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dag_run'"
-    ).fetchone()
-    if not has_table:
-        return None
-    return conn.execute(
-        "SELECT run_id, state, start_date, end_date FROM dag_run WHERE dag_id=? ORDER BY start_date DESC LIMIT 1",
-        (dag_id,),
-    ).fetchone()
+def _latest_state_for_dag(store: RuntimeStore, dag_id: str) -> Optional[dict]:
+    matches = [record for record in store.list_runs() if str(record.get("dag_id", "")) == str(dag_id)]
+    return matches[0] if matches else None
 
 
-def _query_history(conn: sqlite3.Connection, rows: int) -> List[sqlite3.Row]:
-    has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dag_run'"
-    ).fetchone()
-    if not has_table:
-        return []
-    return conn.execute(
-        "SELECT dag_id, run_id, state, run_type, execution_date, start_date, end_date "
-        "FROM dag_run ORDER BY start_date DESC LIMIT ?",
-        (rows,),
-    ).fetchall()
+def _query_history(store: RuntimeStore, rows: int) -> List[dict]:
+    history = store.list_runs(limit=rows)
+    return [
+        {
+            "dag_id": record.get("dag_id", ""),
+            "run_id": record.get("run_id", ""),
+            "state": record.get("state", record.get("status", "")),
+            "run_type": record.get("run_type", "manual"),
+            "execution_date": record.get("execution_date", ""),
+            "start_date": record.get("started_at", ""),
+            "end_date": record.get("ended_at", ""),
+        }
+        for record in history
+    ]
 
 
 def _is_running_state(state: str) -> bool:
@@ -272,7 +253,7 @@ def _recipe_label(dag_id: object) -> str:
 def cmd_schedule_list(args: Sequence[str]) -> None:
     parsed = _parse_args(args, default_mode="list")
     if parsed.get("mode") == "help":
-        _print_usage()
+        print(render_top_level_help())
         return
     dags_dir = parsed.get("dags_dir")
     processor = DagProcessor([str(dags_dir)] if dags_dir else None)
@@ -289,77 +270,69 @@ def cmd_schedule_list(args: Sequence[str]) -> None:
         print("No scheduled recipes found.")
         return
 
-    sqlite_db = str(parsed.get("sqlite_db") or "").strip() or str(CONFIG_DIR / "runtime.db")
-    conn = sqlite3.connect(sqlite_db)
-    conn.row_factory = sqlite3.Row
-    try:
-        print("RECIPE\tSCHEDULE\tSTATE\tLAST_RUN\tRUN_ID\tPATH")
-        for dag in sorted(dags, key=lambda d: d.recipe_name):
-            row = _latest_state_for_dag(conn, dag.dag_id)
-            if row is None:
-                state = "-"
-                run_id = "-"
-                last = "-"
-            else:
-                state = str(row["state"] or "-")
-                run_id = str(row["run_id"] or "-")
-                if row["start_date"]:
-                    last = str(row["start_date"])
-                else:
-                    last = "-"
-            print(
-                f"{dag.recipe_name}\t"
-                f"{dag.schedule or '-'}\t"
-                f"{state}\t"
-                f"{last}\t"
-                f"{run_id}\t"
-                f"{dag.path}"
-            )
-    finally:
-        conn.close()
+    runtime_state = str(parsed.get("runtime_state") or "").strip() or str(RUNTIME_STATE_DIR)
+    store = RuntimeStore(runtime_state)
+    print("RECIPE\tSCHEDULE\tSTATE\tLAST_RUN\tRUN_ID\tPATH")
+    for dag in sorted(dags, key=lambda d: d.recipe_name):
+        row = _latest_state_for_dag(store, dag.dag_id)
+        if row is None:
+            state = "-"
+            run_id = "-"
+            last = "-"
+        else:
+            state = str(row.get("state", "-") or "-")
+            run_id = str(row.get("run_id", "-") or "-")
+            last = str(row.get("started_at", "-") or "-")
+        print(
+            f"{dag.recipe_name}\t"
+            f"{dag.schedule or '-'}\t"
+            f"{state}\t"
+            f"{last}\t"
+            f"{run_id}\t"
+            f"{dag.path}"
+        )
 
 
 def cmd_schedule_status(args: Sequence[str]) -> None:
     parsed = _parse_args(args, default_mode="status")
     if parsed.get("mode") == "help":
-        _print_usage()
+        print(render_top_level_help())
         return
     rows = int(parsed.get("rows", 50))
-    sqlite_db = str(parsed.get("sqlite_db") or "").strip() or str(CONFIG_DIR / "runtime.db")
+    runtime_state = str(parsed.get("runtime_state") or "").strip() or str(RUNTIME_STATE_DIR)
 
-    if not os.path.exists(sqlite_db):
-        print(f"No runtime db found: {sqlite_db}")
+    runtime_path = Path(runtime_state).expanduser()
+    if runtime_path.suffix:
+        runtime_path = runtime_path.with_suffix("")
+    if not runtime_path.exists():
+        print(f"No runtime state found: {runtime_state}")
         return
 
-    conn = sqlite3.connect(sqlite_db)
-    conn.row_factory = sqlite3.Row
-    try:
-        history = _query_history(conn, rows=rows)
-        if not history:
-            print("No runs recorded.")
-            return
+    store = RuntimeStore(runtime_path)
+    history = _query_history(store, rows=rows)
+    if not history:
+        print("No runs recorded.")
+        return
 
-        print("RECIPE\tRUN_ID\tSTATE\tRUN_TYPE\tSTARTED")
-        for row in history:
-            started = row["start_date"] or "-"
-            print(
-                f"{_recipe_label(row['dag_id'])}\t"
-                f"{row['run_id']}\t"
-                f"{row['state']}\t"
-                f"{row['run_type']}\t"
-                f"{started}"
-            )
-        running_count = sum(1 for row in history if _is_running_state(str(row["state"])))
-        if running_count:
-            print(f"\nRunning: {running_count}")
-    finally:
-        conn.close()
+    print("RECIPE\tRUN_ID\tSTATE\tRUN_TYPE\tSTARTED")
+    for row in history:
+        started = row["start_date"] or "-"
+        print(
+            f"{_recipe_label(row['dag_id'])}\t"
+            f"{row['run_id']}\t"
+            f"{row['state']}\t"
+            f"{row['run_type']}\t"
+            f"{started}"
+        )
+    running_count = sum(1 for row in history if _is_running_state(str(row["state"])))
+    if running_count:
+        print(f"\nRunning: {running_count}")
 
 
 def cmd_schedule_run(args: Sequence[str]) -> None:
     parsed = _parse_args(args, default_mode="run")
     if parsed.get("mode") == "help":
-        _print_usage()
+        print(render_top_level_help())
         return
 
     dags_dir = parsed.get("dags_dir")
@@ -372,7 +345,7 @@ def cmd_schedule_run(args: Sequence[str]) -> None:
     filters = list(parsed.get("dag_ids") or [])
     positional = list(parsed.get("filters") or [])
     filters.extend(positional)
-    sqlitedb = str(parsed.get("sqlite_db") or "").strip() or str(CONFIG_DIR / "runtime.db")
+    runtime_state = str(parsed.get("runtime_state") or "").strip() or str(RUNTIME_STATE_DIR)
     iterations = parsed.get("iterations")
     if iterations is not None:
         iterations = int(iterations)
@@ -381,7 +354,7 @@ def cmd_schedule_run(args: Sequence[str]) -> None:
         dags_dir=dags_dir,
         max_active_runs=max_active_runs,
         max_active_runs_per_dag=max_active_runs_per_dag,
-        sqlite_db=sqlitedb,
+        runtime_state=runtime_state,
         loop_interval=loop_interval,
     )
 
@@ -421,7 +394,7 @@ def cmd_schedule(args: List[str]) -> None:
     parsed = _parse_args(args, default_mode="run")
     mode = str(parsed.get("mode", "run"))
     if mode == "help":
-        _print_usage()
+        print(render_top_level_help())
         return
 
     if mode == "list":
@@ -441,7 +414,7 @@ def cmd_schedule(args: List[str]) -> None:
 def main(args: Sequence[str]) -> None:
     """Entry point for the top-level schedule command."""
     if args and args[0] in {"-h", "--help", "help"}:
-        _print_usage()
+        print(render_top_level_help())
         return
     cmd_schedule(list(args))
 

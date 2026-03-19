@@ -22,6 +22,41 @@ SSH_OPTION_ARGS = {
 }
 
 
+def _configured_host_for_spec(spec: str) -> Optional[Host]:
+    """Resolve one configured host alias into a Host model when possible."""
+    text = str(spec or "").strip()
+    if not text or text == "local":
+        return None
+
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        return None
+    if len(tokens) != 1:
+        return None
+
+    try:
+        from ..commands.host import load_hosts
+
+        host = load_hosts(include_auto_vast=False).get(text)
+    except Exception:
+        return None
+    if host is None:
+        return None
+    return Host.from_dict(host.to_dict())
+
+
+def _insert_tty_flag(args: List[str]) -> List[str]:
+    """Insert `-t` immediately after the ssh binary when missing."""
+    try:
+        ssh_index = args.index("ssh")
+    except ValueError:
+        return args
+    if "-t" in args[ssh_index + 1 :]:
+        return args
+    return [*args[: ssh_index + 1], "-t", *args[ssh_index + 1 :]]
+
+
 def _split_ssh_spec(spec: str) -> Tuple[str, List[str]]:
     """Split SSH spec into host and option args."""
     tokens = shlex.split(spec) if spec else []
@@ -49,6 +84,22 @@ def _split_ssh_spec(spec: str) -> Tuple[str, List[str]]:
 
 def _build_ssh_args(spec: str, command: Optional[str] = None, tty: bool = False, set_term: bool = False) -> List[str]:
     """Build SSH command args from a host spec and optional command."""
+    configured_host = _configured_host_for_spec(spec)
+    if configured_host is not None:
+        from ..services.ssh import SSHClient
+
+        env_prefix = "TERM=xterm-256color LC_ALL=en_US.UTF-8"
+        resolved_command = command
+        if set_term:
+            if command:
+                resolved_command = f"{env_prefix} {command}"
+            else:
+                resolved_command = f"{env_prefix} exec bash -l"
+
+        client = SSHClient.from_host(configured_host)
+        args = client._build_ssh_args(resolved_command, interactive=tty)
+        return _insert_tty_flag(args) if tty else args
+
     host, options = _split_ssh_spec(spec)
     args = ["ssh"]
     if tty:
@@ -71,6 +122,10 @@ def _build_ssh_args(spec: str, command: Optional[str] = None, tty: bool = False,
 
 def _host_from_ssh_spec(spec: str) -> Host:
     """Parse SSH spec into a Host object for rsync/ssh."""
+    configured_host = _configured_host_for_spec(spec)
+    if configured_host is not None:
+        return configured_host
+
     host_token, options = _split_ssh_spec(spec)
     username = ""
     hostname = host_token
@@ -191,21 +246,17 @@ def _test_ssh_connection(host: str, port: int, timeout: int = 5) -> bool:
 def _resolve_vast_host(instance_id: str) -> str:
     """Resolve vast.ai instance ID to SSH host spec."""
     from ..services.vast_api import get_vast_client
+    from ..services.vast_connection import ssh_target_to_spec, vast_ssh_targets
 
     try:
         client = get_vast_client()
         instance = client.get_instance(int(instance_id))
-
-        if instance.public_ipaddr and instance.direct_port_start:
-            if _test_ssh_connection(instance.public_ipaddr, instance.direct_port_start):
-                return f"root@{instance.public_ipaddr} -p {instance.direct_port_start}"
-
-        if instance.ssh_host and instance.ssh_port:
-            if _test_ssh_connection(instance.ssh_host, instance.ssh_port):
-                return f"root@{instance.ssh_host} -p {instance.ssh_port}"
-
-        if instance.ssh_host and instance.ssh_port:
-            return f"root@{instance.ssh_host} -p {instance.ssh_port}"
+        targets = vast_ssh_targets(instance)
+        for target in targets:
+            if _test_ssh_connection(target["hostname"], int(target["port"])):
+                return ssh_target_to_spec(target)
+        if targets:
+            return ssh_target_to_spec(targets[0])
 
         return f"vast-{instance_id}"
     except Exception:

@@ -179,11 +179,12 @@ class BridgeExecutionHelper:
 
         return False, f"Timeout after {self.format_duration(timeout)}"
 
-    def _wait_bridge_marker(self, pane_id: str, marker: str, timeout: int) -> tuple[bool, Optional[int]]:
+    def _wait_bridge_marker(self, pane_id: str, marker: str, timeout: Optional[int]) -> tuple[bool, Optional[int]]:
         """Wait until marker+exitcode appears in bridge pane output."""
         start = time.time()
+        deadline = None if timeout is None or timeout <= 0 else start + timeout
         pattern = re.compile(re.escape(marker) + r"(-?\d+)")
-        while time.time() - start < timeout:
+        while True:
             result = self.tmux_bridge.tmux.capture_pane(pane_id, start="-300")
             if result.returncode == 0:
                 matches = pattern.findall(result.stdout or "")
@@ -192,6 +193,8 @@ class BridgeExecutionHelper:
                         return True, int(matches[-1])
                     except ValueError:
                         return True, None
+            if deadline is not None and time.time() >= deadline:
+                break
             time.sleep(1)
         return False, None
 
@@ -199,7 +202,7 @@ class BridgeExecutionHelper:
         self,
         window: Any,
         commands: str,
-        timeout: int,
+        timeout: Optional[int],
         background: bool,
         start_time: float,
     ) -> Optional[tuple[bool, str]]:
@@ -233,12 +236,16 @@ class BridgeExecutionHelper:
             })
 
             if not found:
+                if timeout is None or timeout <= 0:
+                    return False, "Command timed out"
                 return False, f"Command timed out after {timeout}s"
             if exit_code == 0:
                 return True, f"Command completed ({elapsed}s)"
             return False, f"Command failed with exit code {exit_code}"
 
         except subprocess.TimeoutExpired:
+            if timeout is None or timeout <= 0:
+                return False, "Command timed out"
             return False, f"Command timed out after {timeout}s"
         except Exception as e:
             self.log_detail("bridge_exec_error", f"Bridge execute failed: {e}", {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import sys
 from typing import List, Optional
 
@@ -10,6 +11,24 @@ def _host_module():
     from . import host as host_cmd
 
     return host_cmd
+
+
+def _secret_key_name(host_name: str) -> str:
+    from ..services.secret_materialize import suggest_secret_name
+
+    return suggest_secret_name(host_name, "SSH_PRIVATE_KEY")
+
+
+def _store_private_key_secret(secret_name: str, source_path: str) -> None:
+    from ..services.secret_materialize import store_secret_file
+
+    store_secret_file(secret_name, source_path)
+
+
+def _password_secret_name(host_name: str) -> str:
+    from ..services.secret_materialize import suggest_secret_name
+
+    return suggest_secret_name(host_name, "SSH_PASSWORD")
 
 
 def _prompt_int(prompt: str, default: int) -> Optional[int]:
@@ -262,12 +281,62 @@ def cmd_add(args: List[str]) -> None:
             "3": AuthMethod.PASSWORD,
         }.get(auth_choice, AuthMethod.KEY)
 
+        env_vars = {}
         ssh_key_path = None
         if auth_method == AuthMethod.KEY:
             default_key = "~/.ssh/id_rsa"
-            ssh_key_path = host_cmd.prompt_input(f"SSH key path [{default_key}]: ", default=default_key)
+            ssh_key_path = host_cmd.prompt_input(
+                f"SSH key path [{default_key}] (or type 'secret' to import into secrets): ",
+                default=default_key,
+            )
             if ssh_key_path is None:
                 return
+            ssh_key_path = ssh_key_path.strip() or default_key
+            if ssh_key_path.lower() == "secret":
+                import_path = host_cmd.prompt_input(
+                    f"Private key file to import [{default_key}]: ",
+                    default=default_key,
+                )
+                if import_path is None:
+                    return
+                import_path = import_path.strip() or default_key
+                secret_name = _secret_key_name(name)
+                try:
+                    _store_private_key_secret(secret_name, import_path)
+                except Exception as exc:
+                    print(f"Failed to import SSH key into secrets: {exc}")
+                    return
+                env_vars.pop("ssh_key_secret", None)
+                ssh_key_path = None
+                print("Stored SSH private key in train secrets.")
+            else:
+                env_vars.pop("ssh_key_secret", None)
+                env_vars.pop("ssh_password_secret", None)
+        elif auth_method == AuthMethod.PASSWORD:
+            store_password = host_cmd.prompt_input(
+                "Store SSH password in train secrets now? (Y/n): ",
+                default="Y",
+            )
+            if store_password is None:
+                return
+            if store_password.strip().lower() not in {"", "y", "yes"}:
+                print("Cancelled - password auth requires a stored secret.")
+                return
+            try:
+                password = getpass.getpass("SSH password: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nCancelled.")
+                return
+            if not password:
+                print("Cancelled - no password provided.")
+                return
+            from ..core.secrets import get_secrets_manager
+
+            secret_name = _password_secret_name(name)
+            get_secrets_manager().set(secret_name, password)
+            env_vars.pop("ssh_password_secret", None)
+            env_vars.pop("ssh_key_secret", None)
+            print("Stored SSH password in train secrets.")
 
         jump_host = host_cmd.prompt_input(
             "Jump host (optional, e.g. root@bastion.example.com): ",
@@ -276,8 +345,6 @@ def cmd_add(args: List[str]) -> None:
         if jump_host is None:
             return
         jump_host = jump_host.strip() or None
-
-        env_vars = {}
 
         use_cloudflared = host_cmd.prompt_input(
             "Use cloudflared Access tunnel? (y/N): ",
@@ -421,15 +488,67 @@ def cmd_edit(args: List[str]) -> None:
             "3": AuthMethod.PASSWORD,
         }.get(auth_choice.strip(), host.auth_method)
 
+        env_vars = dict(host.env_vars or {})
         if auth_method == AuthMethod.KEY:
-            key_default = host.ssh_key_path or "~/.ssh/id_rsa"
-            ssh_key_path = host_cmd.prompt_input(f"SSH key path [{key_default}]: ", default=key_default)
+            key_default = host.ssh_key_path or ("secret" if host.env_vars.get("ssh_key_secret") else "~/.ssh/id_rsa")
+            ssh_key_path = host_cmd.prompt_input(
+                f"SSH key path [{key_default}] (or type 'secret' to import into secrets): ",
+                default=key_default,
+            )
             if ssh_key_path is None:
                 return
             ssh_key_path = ssh_key_path.strip() or key_default
+            if ssh_key_path.lower() == "secret":
+                secret_name = str(host.env_vars.get("ssh_key_secret") or _secret_key_name(new_name)).strip() or _secret_key_name(new_name)
+                import_path = host_cmd.prompt_input(
+                    "Private key file to import [leave blank to keep current secret]: ",
+                    default="",
+                )
+                if import_path is None:
+                    return
+                import_path = import_path.strip()
+                if import_path:
+                    try:
+                        _store_private_key_secret(secret_name, import_path)
+                    except Exception as exc:
+                        print(f"Failed to import SSH key into secrets: {exc}")
+                        return
+                env_vars.pop("ssh_key_secret", None)
+                ssh_key_path = None
+            else:
+                env_vars.pop("ssh_key_secret", None)
+                env_vars.pop("ssh_password_secret", None)
+        elif auth_method == AuthMethod.PASSWORD:
+            store_password = host_cmd.prompt_input(
+                "Store SSH password in train secrets now? (Y/n): ",
+                default="Y",
+            )
+            if store_password is None:
+                return
+            if store_password.strip().lower() not in {"", "y", "yes"}:
+                if not env_vars.get("ssh_password_secret"):
+                    print("Cancelled - password auth requires a stored secret.")
+                    return
+            else:
+                try:
+                    password = getpass.getpass("SSH password: ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    print("\nCancelled.")
+                    return
+                if not password:
+                    print("Cancelled - no password provided.")
+                    return
+                from ..core.secrets import get_secrets_manager
+
+                secret_name = str(env_vars.get("ssh_password_secret") or _password_secret_name(new_name)).strip() or _password_secret_name(new_name)
+                get_secrets_manager().set(secret_name, password)
+                env_vars.pop("ssh_password_secret", None)
+                print("Stored SSH password in train secrets.")
+            env_vars.pop("ssh_key_secret", None)
         else:
             ssh_key_path = None
-
+            env_vars.pop("ssh_key_secret", None)
+            env_vars.pop("ssh_password_secret", None)
         jump_host = host_cmd.prompt_input(
             f"Jump host [{host.jump_host or ''}]: ",
             default=host.jump_host or "",
@@ -437,8 +556,6 @@ def cmd_edit(args: List[str]) -> None:
         if jump_host is None:
             return
         jump_host = jump_host.strip() or None
-
-        env_vars = dict(host.env_vars or {})
         current_tunnel = str(env_vars.get("tunnel_type", "")).strip().lower()
         tunnel_default = "Y" if current_tunnel == "cloudflared" else "N"
         use_cloudflared = host_cmd.prompt_input(

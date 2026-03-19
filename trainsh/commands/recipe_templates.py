@@ -6,16 +6,14 @@ from textwrap import dedent
 
 
 _MINIMAL_TEMPLATE = """\
-from trainsh import Recipe
+from trainsh import Recipe, local
 
-recipe = Recipe("__NAME__", schedule="@every 30m", callbacks=["console", "sqlite"])
+recipe = Recipe("__NAME__", schedule="@every 30m", callbacks=["console", "jsonl"])
 message = "Hello from trainsh"
 
-with recipe.linear():
-    main = recipe.session("main", host="local")
-    main.run(["printf", "%s\\n", message])
+with local.tmux("main") as tmux:
+    tmux.run(["printf", "%s\\n", message])
     recipe.notify(message)
-    main.close()
 """
 
 

@@ -1,4 +1,3 @@
-import sqlite3
 import tempfile
 import textwrap
 import unittest
@@ -13,7 +12,8 @@ from trainsh.commands.schedule_cmd import _parse_args, cmd_schedule_list, cmd_sc
 from trainsh.core import DagRunState
 from trainsh.core.execution_log import ExecutionLogReader
 from trainsh.core.job_state import JobStateManager, JobState
-from trainsh.core.runtime_db import connect_runtime_db, json_dumps, replace_run_hosts, replace_run_storages, replace_run_windows
+from trainsh.core.job_state import JobState
+from trainsh.core.runtime_store import RuntimeStore
 
 
 def _capture(fn, *args, **kwargs) -> str:
@@ -25,89 +25,61 @@ def _capture(fn, *args, **kwargs) -> str:
 
 def _seed_runtime_db(db_path: Path, recipe_path: Path) -> None:
     recipe_path = recipe_path.resolve()
-    conn = connect_runtime_db(db_path)
-    try:
-        conn.execute(
-            """
-            INSERT INTO recipe_runs (
-                run_id, recipe_name, recipe_path, status, started_at, ended_at,
-                duration_ms, success, metadata_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "job12345",
-                "demo",
-                str(recipe_path),
-                "succeeded",
-                "2026-03-12T09:00:00",
-                "2026-03-12T09:00:30",
-                30000,
-                1,
-                "{}",
-                "2026-03-12T09:00:30",
-            ),
+    store = RuntimeStore(db_path)
+    store.append_run(
+        {
+            "run_id": "job12345",
+            "dag_id": str(recipe_path),
+            "recipe_name": "demo",
+            "recipe_path": str(recipe_path),
+            "status": "succeeded",
+            "state": "success",
+            "run_type": "scheduled",
+            "execution_date": "2026-03-12T09:00:00",
+            "started_at": "2026-03-12T09:00:00",
+            "ended_at": "2026-03-12T09:00:30",
+            "duration_ms": 30000,
+            "success": True,
+            "updated_at": "2026-03-12T09:00:30",
+            "hosts": {"gpu": "local"},
+            "storages": {"artifacts": {"path": "/tmp/out"}},
+        }
+    )
+    JobStateManager(str(db_path)).save(
+        JobState(
+            job_id="job12345",
+            recipe_path=str(recipe_path),
+            recipe_name="demo",
+            current_step=1,
+            total_steps=2,
+            status="completed",
+            variables={"MODEL": "tiny"},
+            hosts={"gpu": "local"},
+            storages={"artifacts": {"path": "/tmp/out"}},
+            window_sessions={"gpu": "train_demo_0"},
+            next_window_index=1,
+            tmux_session="train_demo_0",
+            updated_at="2026-03-12T09:00:30",
+            created_at="2026-03-12T09:00:00",
         )
-        conn.execute(
-            """
-            INSERT INTO dag_run (
-                dag_id, run_id, state, run_type, execution_date, start_date, end_date, external_trigger, conf
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(recipe_path),
-                "job12345",
-                "success",
-                "scheduled",
-                "2026-03-12T09:00:00",
-                "2026-03-12T09:00:00",
-                "2026-03-12T09:00:30",
-                1,
-                "{}",
-            ),
+    )
+    for event_name, step_num, payload, ts in [
+        ("execution_start", None, {"variables": {"MODEL": "tiny"}}, "2026-03-12T09:00:00"),
+        ("step_start", 1, {"state": "running"}, "2026-03-12T09:00:01"),
+        ("detail", None, {"category": "execute", "message": "ran training"}, "2026-03-12T09:00:05"),
+        ("step_end", 1, {"success": True, "state": "success", "duration_ms": 1000, "output": "ok", "error": ""}, "2026-03-12T09:00:06"),
+        ("execution_end", None, {"success": True, "final_variables": {"MODEL": "tiny"}}, "2026-03-12T09:00:30"),
+    ]:
+        store.append_event(
+            {
+                "run_id": "job12345",
+                "event": event_name,
+                "event_name": event_name,
+                "step_num": step_num,
+                "payload": payload,
+                "ts": ts,
+            }
         )
-        conn.execute(
-            """
-            INSERT INTO job_checkpoint (
-                run_id, recipe_path, recipe_name, current_step, total_steps, status,
-                variables_json, next_window_index, tmux_session, bridge_session,
-                vast_instance_id, vast_start_time, error, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "job12345",
-                str(recipe_path),
-                "demo",
-                1,
-                2,
-                "completed",
-                json_dumps({"MODEL": "tiny"}),
-                1,
-                "train_demo_0",
-                "",
-                None,
-                None,
-                "",
-                "2026-03-12T09:00:00",
-                "2026-03-12T09:00:30",
-            ),
-        )
-        replace_run_hosts(conn, "job12345", {"gpu": "local"})
-        replace_run_storages(conn, "job12345", {"artifacts": {"path": "/tmp/out"}})
-        replace_run_windows(conn, "job12345", {"gpu": {"host": "local", "remote_session": "train_demo_0"}})
-        for event_name, step_num, payload, ts in [
-            ("execution_start", None, {"variables": {"MODEL": "tiny"}}, "2026-03-12T09:00:00"),
-            ("step_start", 1, {"state": "running"}, "2026-03-12T09:00:01"),
-            ("detail", None, {"category": "execute", "message": "ran training"}, "2026-03-12T09:00:05"),
-            ("step_end", 1, {"success": True, "state": "success", "duration_ms": 1000, "output": "ok", "error": ""}, "2026-03-12T09:00:06"),
-            ("execution_end", None, {"success": True, "final_variables": {"MODEL": "tiny"}}, "2026-03-12T09:00:30"),
-        ]:
-            conn.execute(
-                "INSERT INTO recipe_events (run_id, event_name, step_num, payload_json, ts) VALUES (?, ?, ?, ?, ?)",
-                ("job12345", event_name, step_num, json_dumps(payload), ts),
-            )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 class ScheduleCommandViewTests(unittest.TestCase):
@@ -118,8 +90,8 @@ class ScheduleCommandViewTests(unittest.TestCase):
                 "--forever",
                 "--recipe",
                 "demo",
-                "--runtime-db",
-                "/tmp/runtime.db",
+                "--runtime-state",
+                "/tmp/runtime",
                 "--rows",
                 "5",
                 "--max-active-runs",
@@ -132,7 +104,7 @@ class ScheduleCommandViewTests(unittest.TestCase):
         self.assertTrue(parsed["forever"])
         self.assertFalse(parsed["once"])
         self.assertEqual(parsed["dag_ids"], ["demo"])
-        self.assertEqual(parsed["sqlite_db"], "/tmp/runtime.db")
+        self.assertEqual(parsed["runtime_state"], "/tmp/runtime")
         self.assertEqual(parsed["rows"], 5)
         self.assertEqual(parsed["max_active_runs"], 2)
         self.assertEqual(parsed["max_active_runs_per_dag"], 3)
@@ -145,7 +117,7 @@ class ScheduleCommandViewTests(unittest.TestCase):
             root = Path(tmpdir)
             recipes_dir = root / "recipes"
             recipes_dir.mkdir()
-            recipe_path = recipes_dir / "demo.py"
+            recipe_path = recipes_dir / "demo.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """
@@ -157,24 +129,24 @@ class ScheduleCommandViewTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            db_path = root / "runtime.db"
+            db_path = root / "runtime"
             _seed_runtime_db(db_path, recipe_path)
 
             list_output = _capture(
                 cmd_schedule_list,
-                ["--recipes-dir", str(recipes_dir), "--runtime-db", str(db_path)],
+                ["--recipes-dir", str(recipes_dir), "--runtime-state", str(db_path)],
             )
             self.assertIn("demo", list_output)
             self.assertIn("job12345", list_output)
             self.assertIn("@every 5m", list_output)
 
-            status_output = _capture(cmd_schedule_status, ["--runtime-db", str(db_path), "--rows", "5"])
+            status_output = _capture(cmd_schedule_status, ["--runtime-state", str(db_path), "--rows", "5"])
             self.assertIn("RECIPE\tRUN_ID\tSTATE\tRUN_TYPE\tSTARTED", status_output)
             self.assertIn("demo\tjob12345\tsuccess\tscheduled", status_output)
 
     def test_schedule_run_dispatches_once_forever_and_failure_output(self):
         scheduler = SimpleNamespace(
-            run_once=lambda **kwargs: [SimpleNamespace(state=DagRunState.FAILED, dag_id="/tmp/demo.py", run_id="job1", message="boom")],
+            run_once=lambda **kwargs: [SimpleNamespace(state=DagRunState.FAILED, dag_id="/tmp/demo.pyrecipe", run_id="job1", message="boom")],
             run_forever=lambda **kwargs: None,
         )
         with patch("trainsh.commands.schedule_cmd.DagScheduler", return_value=scheduler):
@@ -182,7 +154,7 @@ class ScheduleCommandViewTests(unittest.TestCase):
                 _capture(cmd_schedule_run, ["--wait", "--recipe", "demo"])
 
         scheduler = SimpleNamespace(
-            run_once=lambda **kwargs: [SimpleNamespace(state="started", dag_id="/tmp/demo.py", run_id="job2", message="queued")],
+            run_once=lambda **kwargs: [SimpleNamespace(state="started", dag_id="/tmp/demo.pyrecipe", run_id="job2", message="queued")],
             run_forever=lambda **kwargs: None,
         )
         with patch("trainsh.commands.schedule_cmd.DagScheduler", return_value=scheduler):
@@ -206,16 +178,16 @@ class ScheduleCommandViewTests(unittest.TestCase):
         self.assertIn("train recipe schedule status", help_output)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            missing_output = _capture(cmd_schedule_status, ["--runtime-db", str(Path(tmpdir) / "missing.db")])
-            self.assertIn("No runtime db found", missing_output)
+            missing_output = _capture(cmd_schedule_status, ["--runtime-state", str(Path(tmpdir) / "missing")])
+            self.assertIn("No runtime state found", missing_output)
 
 
 class RecipeRuntimeViewTests(unittest.TestCase):
     def test_execution_details_logs_status_and_jobs_views(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            db_path = root / "runtime.db"
-            recipe_path = root / "demo.py"
+            db_path = root / "runtime"
+            recipe_path = root / "demo.pyrecipe"
             recipe_path.write_text("from trainsh import Recipe\nrecipe = Recipe('demo')\n", encoding="utf-8")
             _seed_runtime_db(db_path, recipe_path)
 

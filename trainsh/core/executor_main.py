@@ -25,7 +25,8 @@ from .executor_support import ExecutorSupportMixin
 from .provider_mixin import ExecutorProviderMixin
 
 from ..config import load_config
-from ..constants import CONFIG_DIR
+from ..constants import RECIPE_FILE_EXTENSION
+from ..constants import CONFIG_DIR, RUNTIME_STATE_DIR
 from .recipe_models import RecipeModel, RecipeStepModel, StepType
 from .bridge_exec import BridgeExecutionHelper
 from .executor_execute import ExecuteHelper
@@ -59,8 +60,8 @@ from ..runtime import CallbackManager, CallbackEvent
 from ..pyrecipe.models import ProviderStep
 from .task_state import TaskInstanceState, FINISHED_STATES
 from .ti_dependencies import TIDependencyEvaluator, DependencyContext
-from .pool_manager import SqlitePoolManager
-from .runtime_db import to_jsonable
+from .pool_manager import RuntimeStatePoolManager
+from .runtime_store import to_jsonable
 from .triggerer import Triggerer
 
 
@@ -120,7 +121,7 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
         self.allow_host_execute = allow_host_execute
 
         # Job state management
-        self.state_manager = JobStateManager(str(CONFIG_DIR / "runtime.db"))
+        self.state_manager = JobStateManager(str(RUNTIME_STATE_DIR))
         self.job_state: Optional[JobState] = None
         from ..runtime import _coerce_max_workers, normalize_executor_name
 
@@ -132,8 +133,8 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
         self._thread_lock = threading.RLock()
         self._ti_dependency_evaluator = TIDependencyEvaluator()
         self._triggerer = Triggerer()
-        self._pool_manager = SqlitePoolManager(
-            str(CONFIG_DIR / "runtime.db"),
+        self._pool_manager = RuntimeStatePoolManager(
+            str(RUNTIME_STATE_DIR),
             default_slots=self._pool_limits,
         )
         self._pool_manager.sync_slots(self._pool_limits)
@@ -275,6 +276,7 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
             status=status,
             variables=dict(self.ctx.variables),
             hosts=hosts,
+            storages=self._storage_snapshot(),
             window_sessions=window_sessions,
             next_window_index=self.ctx.next_window_index,
             bridge_session=self.tmux_bridge.get_state_session(),
@@ -381,7 +383,7 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
         self.logger = ExecutionLogger(
             job_id=self.ctx.job_id,
             recipe_name=self.recipe.name,
-            db_path=str(CONFIG_DIR / "runtime.db"),
+            db_path=str(RUNTIME_STATE_DIR),
         )
         self.logger.start(
             self.recipe.name,
@@ -541,25 +543,25 @@ def run_recipe(
     Load and execute a recipe file.
 
     Args:
-        path: Path to a Python recipe file
+        path: Path to a Python recipe source file
         log_callback: Optional log callback
         host_overrides: Override hosts for fresh runs (not supported with resume)
         var_overrides: Override variables (e.g., {"MODEL": "mistral"})
         resume: If True, try to resume from saved checkpoint
         executor_name: Optional execution strategy override (`sequential`, `thread_pool`)
         executor_kwargs: Executor-specific options (e.g., {"max_workers": 4})
-        callbacks: Callback sink names (`console`, `sqlite`)
+        callbacks: Callback sink names (`console`, `jsonl`)
         run_type: Execution type (`manual`/`scheduled`)
 
     Returns:
         True if successful
     """
     from ..runtime import build_sinks, get_executor
-    from ..runtime import SqliteCallbackSink
+    from ..runtime import JsonlCallbackSink
 
     path = os.path.abspath(os.path.expanduser(path))
-    if not path.endswith(".py"):
-        raise ValueError("run_recipe only supports Python recipe files (.py)")
+    if not path.endswith(RECIPE_FILE_EXTENSION):
+        raise ValueError(f"run_recipe only supports Python recipe source files ({RECIPE_FILE_EXTENSION})")
     if resume and host_overrides:
         raise ValueError("Host overrides are not supported when resuming a Python recipe")
 
@@ -582,7 +584,7 @@ def run_recipe(
     requested_job_id = job_id
     job_id = None
     saved_state: Optional[JobState] = None
-    state_manager = JobStateManager(str(CONFIG_DIR / "runtime.db"))
+    state_manager = JobStateManager(str(RUNTIME_STATE_DIR))
 
     if resume:
         saved_state = state_manager.find_resumable(path)
@@ -613,18 +615,24 @@ def run_recipe(
             else:
                 recipe.hosts[name] = value
 
-    sinks: List = [SqliteCallbackSink()]
+    sinks: List = [JsonlCallbackSink(str(RUNTIME_STATE_DIR))]
     sinks.extend(list(callback_sinks or []))
     public_callbacks = []
     for raw_name in callbacks or []:
         if not raw_name:
             continue
         parts = [part.strip() for part in str(raw_name).split(",") if part.strip()]
-        filtered = [part for part in parts if part.lower() != "sqlite"]
+        filtered = [part for part in parts if part.lower() == "jsonl"]
         if filtered:
             public_callbacks.append(",".join(filtered))
     if public_callbacks:
-        sinks.extend(build_sinks(public_callbacks, log_callback=log_callback or print))
+        sinks.extend(
+            build_sinks(
+                public_callbacks,
+                log_callback=log_callback or print,
+                runtime_state=str(RUNTIME_STATE_DIR),
+            )
+        )
 
     bridge_session = saved_state.bridge_session if saved_state else None
     executor = DSLExecutor(

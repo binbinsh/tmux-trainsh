@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from trainsh.core.models import Storage as RuntimeStorage, StorageType
 from trainsh.core.recipe_models import RecipeModel
+from trainsh.pyrecipe.models import ProviderStep
 
 from tests.runtime_test_utils import isolated_executor
 
@@ -186,14 +187,24 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 self.assertTrue(ok)
                 self.assertIn("USD1.50", msg)
 
-                ok, msg = executor._exec_provider_latest_only({"sqlite_db": str(Path(tmpdir) / "missing.db"), "fail_if_unknown": False})
+                ok, msg = executor._exec_provider_latest_only({"runtime_state": str(Path(tmpdir) / "missing"), "fail_if_unknown": False})
                 self.assertTrue(ok)
 
-                with closing(sqlite3.connect(db_path)) as conn:
-                    conn.execute("CREATE TABLE recipe_runs (recipe_name TEXT, run_id TEXT, started_at TEXT)")
-                    conn.execute("INSERT INTO recipe_runs VALUES (?, ?, ?)", ("providers", "job-2", "9999-01-01T00:00:00"))
-                    conn.commit()
-                ok, msg = executor._exec_provider_latest_only({"sqlite_db": str(db_path), "message": "skip latest"})
+                from trainsh.core.runtime_store import RuntimeStore
+
+                RuntimeStore(db_path).append_run(
+                    {
+                        "run_id": "job-2",
+                        "dag_id": "providers",
+                        "recipe_name": "providers",
+                        "recipe_path": "/tmp/providers.pyrecipe",
+                        "state": "success",
+                        "status": "succeeded",
+                        "started_at": "9999-01-01T00:00:00",
+                        "updated_at": "9999-01-01T00:00:00",
+                    }
+                )
+                ok, msg = executor._exec_provider_latest_only({"runtime_state": str(db_path), "message": "skip latest"})
                 self.assertFalse(ok)
                 self.assertEqual(msg, "skip latest")
 
@@ -323,9 +334,6 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 mocked_rates = stack.enter_context(patch.object(executor, "_exec_provider_fetch_exchange_rates", return_value=(True, "rates")))
                 mocked_cost = stack.enter_context(patch.object(executor, "_exec_provider_calculate_cost", return_value=(True, "cost")))
                 mocked_wait_condition = stack.enter_context(patch.object(executor, "_exec_provider_wait_condition", return_value=(True, "cond")))
-                mocked_query = stack.enter_context(patch.object(executor, "_exec_provider_sqlite_query", return_value=(True, "query")))
-                mocked_exec = stack.enter_context(patch.object(executor, "_exec_provider_sqlite_exec", return_value=(True, "exec")))
-                mocked_script = stack.enter_context(patch.object(executor, "_exec_provider_sqlite_script", return_value=(True, "script")))
                 mocked_ssh = stack.enter_context(patch.object(executor, "_exec_provider_ssh_command", return_value=(True, "ssh")))
                 mocked_uv = stack.enter_context(patch.object(executor, "_exec_provider_uv_run", return_value=(True, "uv")))
                 mocked_fail = stack.enter_context(patch.object(executor, "_exec_provider_fail", return_value=(False, "fail")))
@@ -366,9 +374,9 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 self.assertEqual(executor._exec_provider(step("util", "fetch_exchange_rates")), (True, "rates"))
                 self.assertEqual(executor._exec_provider(step("util", "calculate_cost")), (True, "cost"))
                 self.assertEqual(executor._exec_provider(step("util", "wait_condition")), (True, "cond"))
-                self.assertEqual(executor._exec_provider(step("sqlite", "select")), (True, "query"))
-                self.assertEqual(executor._exec_provider(step("sqlite", "execute")), (True, "exec"))
-                self.assertEqual(executor._exec_provider(step("sqlite", "script")), (True, "script"))
+                self.assertFalse(executor._exec_provider(step("sqlite", "select"))[0])
+                self.assertFalse(executor._exec_provider(step("sqlite", "execute"))[0])
+                self.assertFalse(executor._exec_provider(step("sqlite", "script"))[0])
                 self.assertEqual(executor._exec_provider(step("util", "ssh_command")), (True, "ssh"))
                 self.assertEqual(executor._exec_provider(step("util", "uv_run")), (True, "uv"))
                 self.assertEqual(executor._exec_provider(step("storage", "upload")), (True, "upload"))
@@ -402,42 +410,18 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 mocked_shell.assert_called()
                 mocked_http.assert_called()
                 mocked_upload.assert_called()
-                mocked_query.assert_called()
 
-    def test_more_provider_error_and_sqlite_modes(self):
+    def test_more_provider_error_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "provider.db"
-            with closing(sqlite3.connect(db_path)) as conn:
-                conn.execute("CREATE TABLE demo (id INTEGER, name TEXT)")
-                conn.execute("INSERT INTO demo VALUES (1, 'alpha')")
-                conn.execute("INSERT INTO demo VALUES (2, 'beta')")
-                conn.commit()
-
             recipe = RecipeModel(
                 name="providers",
                 storages={"artifacts": RuntimeStorage(name="artifacts", type=StorageType.LOCAL, config={"path": str(Path(tmpdir) / 'storage')})},
             )
             Path(tmpdir, "storage").mkdir()
             with isolated_executor(recipe) as (executor, _config_dir):
-                ok, msg = executor._exec_provider_sqlite_query({"database": str(db_path), "sql": "SELECT * FROM demo ORDER BY id", "mode": "first"})
-                self.assertTrue(ok)
-                self.assertIn('"id": 1', msg)
-                ok, msg = executor._exec_provider_sqlite_query({"database": str(db_path), "sql": "SELECT name FROM demo ORDER BY id", "mode": "scalar"})
-                self.assertTrue(ok)
-                self.assertEqual(msg, "alpha")
-                ok, msg = executor._exec_provider_sqlite_exec({"database": str(db_path), "sql": "UPDATE demo SET name='gamma' WHERE id=2", "output_var": "ROWS"})
-                self.assertTrue(ok)
-                self.assertEqual(executor.ctx.variables["ROWS"], "1")
-                ok, msg = executor._exec_provider_sqlite_script({"database": str(db_path), "script": "CREATE TABLE extra (id INTEGER);", "output_var": "SCRIPT"})
-                self.assertTrue(ok)
-                self.assertEqual(executor.ctx.variables["SCRIPT"], "ok")
-
-                ok, msg = executor._exec_provider_sqlite_query({"database": str(db_path), "sql": "", "mode": "all"})
-                self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_exec({"database": str(db_path), "sql": ""})
-                self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_script({"database": str(db_path), "script": ""})
-                self.assertFalse(ok)
+                self.assertFalse(executor._exec_provider(ProviderStep("sqlite", "select", {"sql": "select 1"}, id="q"))[0])
+                self.assertFalse(executor._exec_provider(ProviderStep("sqlite", "execute", {"sql": "select 1"}, id="e"))[0])
+                self.assertFalse(executor._exec_provider(ProviderStep("sqlite", "script", {"script": "select 1;"}, id="s"))[0])
 
                 ok, msg = executor._exec_provider_storage_wait({"storage": "artifacts", "path": "/missing", "timeout": "1s", "poll_interval": "1s"})
                 self.assertFalse(ok)

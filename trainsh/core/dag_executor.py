@@ -43,7 +43,7 @@ class DagExecutor:
         self.executor_kwargs = dict(executor_kwargs or {})
         self.callbacks = list(callbacks or [])
         self.callback_sinks = list(callback_sinks or [])
-        self.default_callbacks = list(default_callbacks or ["console", "sqlite"])
+        self.default_callbacks = list(default_callbacks or ["console", "jsonl"])
         self.prefer_runtime_options = bool(prefer_runtime_options)
         self.log_callback = log_callback
 

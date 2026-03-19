@@ -10,7 +10,7 @@ recipe = Recipe(
     tags=["bundle", "vast", "nanochat"],
     executor="thread_pool",
     workers=4,
-    callbacks=["console", "sqlite"],
+    callbacks=["console", "jsonl"],
 )
 
 gpu = Host("placeholder", name="gpu")
@@ -112,7 +112,6 @@ h200 = recipe.vast.pick(
     create_if_missing=True,
     image=preferred_image,
     disk_gb=disk_gb,
-    id="pick_h200",
     step_options={"continue_on_failure": True},
 )
 h100 = recipe.vast.pick(
@@ -125,126 +124,106 @@ h100 = recipe.vast.pick(
     create_if_missing=True,
     image=preferred_image,
     disk_gb=disk_gb,
-    id="pick_h100",
-    depends_on=[h200],
+    depends_on=h200,
     step_options={"trigger_rule": "all_failed"},
 )
-picked_gpu = recipe.on_one_success(id="picked_gpu", depends_on=[h200, h100])
-start_instance = recipe.vast.start(id="start_instance", depends_on=[picked_gpu])
-wait_ready = recipe.vast.wait_ready(timeout="30m", id="wait_ready", depends_on=[start_instance])
+recipe.on_one_success(depends_on=[h200, h100])
+recipe.vast.start()
+recipe.vast.wait_ready(timeout="30m")
 
 
 # Remote workspace bootstrap: clone repo, install uv, create the venv, and write a runner.
-with recipe.linear():
-    work = recipe.session("work", host=gpu, id="open_work", depends_on=[wait_ready])
-    work.run(
+with gpu.tmux("work", close=False, cwd=repo_dir) as tmux:
+    tmux.run(
         f"git clone {repo_url} {repo_dir} 2>/dev/null || (cd {repo_dir} && git pull --ff-only)",
-        id="clone_repo",
     )
-    work.install_uv(id="install_uv")
-    work.run(
-        "bash -lc '"
-        "set -euo pipefail; "
-        f"export PATH=\"$HOME/.local/bin:$PATH\"; "
-        "if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential; fi; "
-        f"mkdir -p {remote_data_dir}; "
-        f"cd {repo_dir}; "
-        "if [ ! -e /usr/lib/x86_64-linux-gnu/libcuda.so ] && [ -e /usr/lib/x86_64-linux-gnu/libcuda.so.1 ]; then ln -s /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so; fi; "
-        "if [ ! -e /lib/x86_64-linux-gnu/libcuda.so ] && [ -e /lib/x86_64-linux-gnu/libcuda.so.1 ]; then ln -s /lib/x86_64-linux-gnu/libcuda.so.1 /lib/x86_64-linux-gnu/libcuda.so; fi; "
-        "if [ ! -d .venv ]; then uv venv; fi; "
-        ". .venv/bin/activate; "
-        "uv sync --extra gpu; "
-        "uv pip install wandb"
-        "'",
-        id="prepare_runtime",
+    tmux.install_uv()
+
+    tmux.script(
+        f"""
+        export PATH="$HOME/.local/bin:$PATH"
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential
+        fi
+        mkdir -p {remote_data_dir}
+        if [ ! -e /usr/lib/x86_64-linux-gnu/libcuda.so ] && [ -e /usr/lib/x86_64-linux-gnu/libcuda.so.1 ]; then
+          ln -s /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so
+        fi
+        if [ ! -e /lib/x86_64-linux-gnu/libcuda.so ] && [ -e /lib/x86_64-linux-gnu/libcuda.so.1 ]; then
+          ln -s /lib/x86_64-linux-gnu/libcuda.so.1 /lib/x86_64-linux-gnu/libcuda.so
+        fi
+        if [ ! -d .venv ]; then
+          uv venv
+        fi
+        . .venv/bin/activate
+        uv sync --extra gpu
+        uv pip install wandb
+        """,
     )
-    work.run(
+    tmux.script(
         f"""cat > {remote_script} <<'SCRIPT'
 {runner_body.rstrip()}
 SCRIPT
 chmod +x {remote_script}""",
-        id="write_runner",
     )
-    work.run(
+    tmux.run(
         f"bash {remote_script} 2>&1 | tee {remote_data_dir}/nanochat.log",
         background=True,
-        id="run_nanochat",
     )
-    work.file(
+    tmux.file(
         f"{remote_data_dir}/trainsh_success.txt",
         timeout="10h",
-        id="wait_success_flag",
     )
 
 
 # Artifact copy-back: checkpoints, report, logs, and success marker.
-copy_base = recipe.copy(
-    gpu.path(f"{remote_data_dir}/base_checkpoints"),
-    local_output / "base_checkpoints",
-    id="copy_base_checkpoints",
-    depends_on=["wait_success_flag"],
-)
-copy_sft = recipe.copy(
-    gpu.path(f"{remote_data_dir}/chatsft_checkpoints"),
-    local_output / "chatsft_checkpoints",
-    id="copy_sft_checkpoints",
-    depends_on=[copy_base],
-)
-copy_report = recipe.copy(
-    gpu.path(f"{remote_data_dir}/report"),
-    local_output / "report",
-    id="copy_report",
-    depends_on=[copy_sft],
-)
-copy_log = recipe.copy(
-    gpu.path(f"{remote_data_dir}/nanochat.log"),
-    local_output / "nanochat.log",
-    id="copy_nanochat_log",
-    depends_on=[copy_report],
-)
-copy_success_flag = recipe.copy(
-    gpu.path(f"{remote_data_dir}/trainsh_success.txt"),
-    local_output / "trainsh_success.txt",
-    id="copy_success_flag",
-    depends_on=[copy_log],
-)
+with gpu.tmux("work") as tmux:
+    tmux.download(
+        f"{remote_data_dir}/base_checkpoints",
+        local_output / "base_checkpoints",
+    )
+    tmux.download(
+        f"{remote_data_dir}/chatsft_checkpoints",
+        local_output / "chatsft_checkpoints",
+    )
+    tmux.download(
+        f"{remote_data_dir}/report",
+        local_output / "report",
+    )
+    tmux.download(
+        f"{remote_data_dir}/nanochat.log",
+        local_output / "nanochat.log",
+    )
+    tmux.download(
+        f"{remote_data_dir}/trainsh_success.txt",
+        local_output / "trainsh_success.txt",
+    )
 
 
 # Cleanup and local verification: always close tmux and stop the Vast host.
-cleanup_gate = recipe.join(id="cleanup_gate", depends_on=[copy_success_flag])
-work.close(id="close_work", depends_on=[cleanup_gate])
-recipe.vast.stop(id="stop_instance", depends_on=[cleanup_gate])
+recipe.vast.stop()
 
-verify_report = recipe.assert_(
+recipe.assert_(
     f"file_exists:{local_output / 'report' / 'report.md'}",
     host="local",
     message="nanochat report was not copied locally",
-    id="verify_report",
-    depends_on=[cleanup_gate],
 )
-verify_base_ckpt = recipe.assert_(
+recipe.assert_(
     f"file_exists:{local_output / 'base_checkpoints'}",
     host="local",
     message="nanochat base checkpoints were not copied locally",
-    id="verify_base_ckpt",
-    depends_on=[verify_report],
 )
-verify_sft_ckpt = recipe.assert_(
+recipe.assert_(
     f"file_exists:{local_output / 'chatsft_checkpoints'}",
     host="local",
     message="nanochat chatsft checkpoints were not copied locally",
-    id="verify_sft_ckpt",
-    depends_on=[verify_base_ckpt],
 )
-verify_success_flag = recipe.assert_(
+recipe.assert_(
     f"file_contains:{local_output / 'trainsh_success.txt'}:ok",
     host="local",
     message="nanochat training/eval success flag was not copied locally",
-    id="verify_success_flag",
-    depends_on=[verify_sft_ckpt],
 )
 recipe.notify(
     "nanochat training, eval, copy-back, and shutdown completed",
-    id="notify_complete",
-    depends_on=[verify_success_flag],
 )

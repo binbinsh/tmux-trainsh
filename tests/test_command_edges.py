@@ -31,7 +31,7 @@ def patched_recipe_dirs():
         examples_dir = root / "examples"
         recipes_dir.mkdir()
         examples_dir.mkdir()
-        stack.enter_context(patch("trainsh.constants.RECIPES_DIR", recipes_dir))
+        stack.enter_context(patch("trainsh.commands.recipe._project_root", return_value=root))
         stack.enter_context(patch("trainsh.commands.recipe.get_examples_dir", return_value=str(examples_dir)))
         yield recipes_dir, examples_dir
 
@@ -51,7 +51,7 @@ class ScheduleCommandEdgeTests(unittest.TestCase):
         for args in [
             ["run", "--recipe"],
             ["run", "--recipes-dir"],
-            ["run", "--runtime-db"],
+            ["run", "--runtime-state"],
             ["run", "--loop-interval"],
             ["run", "--max-active-runs"],
             ["run", "--max-active-runs-per-recipe"],
@@ -75,16 +75,23 @@ class ScheduleCommandEdgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             db_path = root / "runtime.db"
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "CREATE TABLE dag_run (dag_id TEXT, run_id TEXT, state TEXT, run_type TEXT, execution_date TEXT, start_date TEXT, end_date TEXT)"
+            from trainsh.core.runtime_store import RuntimeStore
+
+            RuntimeStore(db_path).append_run(
+                {
+                    "run_id": "run-1",
+                    "dag_id": "/tmp/demo.py",
+                    "recipe_name": "demo",
+                    "recipe_path": "/tmp/demo.py",
+                    "state": "running",
+                    "status": "running",
+                    "run_type": "scheduled",
+                    "execution_date": "now",
+                    "started_at": "now",
+                    "ended_at": "",
+                    "updated_at": "now",
+                }
             )
-            conn.execute(
-                "INSERT INTO dag_run VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("/tmp/demo.py", "run-1", "running", "scheduled", "now", "now", None),
-            )
-            conn.commit()
-            conn.close()
 
             invalid = SimpleNamespace(
                 dag_id="/tmp/invalid.py",
@@ -105,7 +112,7 @@ class ScheduleCommandEdgeTests(unittest.TestCase):
 
             with patch("trainsh.commands.schedule_cmd.DagProcessor") as mocked_processor:
                 mocked_processor.return_value.discover_dags.return_value = [invalid, valid]
-                out, code = capture(schedule_cmd.cmd_schedule_list, ["demo", "--runtime-db", str(db_path)])
+                out, code = capture(schedule_cmd.cmd_schedule_list, ["demo", "--runtime-state", str(db_path)])
             self.assertIsNone(code)
             self.assertIn("demo", out)
             self.assertNotIn("invalid", out)
@@ -114,27 +121,27 @@ class ScheduleCommandEdgeTests(unittest.TestCase):
                 mocked_processor.return_value.discover_dags.return_value = [invalid]
                 out, code = capture(
                     schedule_cmd.cmd_schedule_list,
-                    ["--include-invalid", "invalid", "--runtime-db", str(db_path)],
+                    ["--include-invalid", "invalid", "--runtime-state", str(db_path)],
                 )
             self.assertIsNone(code)
             self.assertIn("invalid", out)
 
             with patch("trainsh.commands.schedule_cmd.DagProcessor") as mocked_processor:
                 mocked_processor.return_value.discover_dags.return_value = []
-                out, code = capture(schedule_cmd.cmd_schedule_list, ["--runtime-db", str(db_path)])
+                out, code = capture(schedule_cmd.cmd_schedule_list, ["--runtime-state", str(db_path)])
             self.assertIsNone(code)
             self.assertIn("No scheduled recipes found.", out)
 
-            missing_db_out, _ = capture(schedule_cmd.cmd_schedule_status, ["--runtime-db", str(root / "missing.db")])
-            self.assertIn("No runtime db found", missing_db_out)
+            missing_db_out, _ = capture(schedule_cmd.cmd_schedule_status, ["--runtime-state", str(root / "missing")])
+            self.assertIn("No runtime state found", missing_db_out)
 
             empty_db = root / "empty.db"
-            sqlite3.connect(empty_db).close()
-            out, code = capture(schedule_cmd.cmd_schedule_status, ["--runtime-db", str(empty_db)])
+            RuntimeStore(empty_db)
+            out, code = capture(schedule_cmd.cmd_schedule_status, ["--runtime-state", str(empty_db)])
             self.assertIsNone(code)
             self.assertIn("No runs recorded.", out)
 
-            out, code = capture(schedule_cmd.cmd_schedule_status, ["--runtime-db", str(db_path), "--rows", "5"])
+            out, code = capture(schedule_cmd.cmd_schedule_status, ["--runtime-state", str(db_path), "--rows", "5"])
             self.assertIsNone(code)
             self.assertIn("Running: 1", out)
 
@@ -143,7 +150,7 @@ class ScheduleCommandEdgeTests(unittest.TestCase):
                 run_forever=lambda **kwargs: None,
             )
             with patch("trainsh.commands.schedule_cmd.DagScheduler", return_value=scheduler):
-                out, code = capture(schedule_cmd.cmd_schedule_run, ["--runtime-db", str(db_path)])
+                out, code = capture(schedule_cmd.cmd_schedule_run, ["--runtime-state", str(db_path)])
             self.assertIsNone(code)
             self.assertIn("No scheduled recipe was started.", out)
 
@@ -160,14 +167,11 @@ class ScheduleCommandEdgeTests(unittest.TestCase):
 
     def test_schedule_status_helpers_without_tables(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "db.sqlite"
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            try:
-                self.assertIsNone(schedule_cmd._latest_state_for_dag(conn, "demo"))
-                self.assertEqual(schedule_cmd._query_history(conn, 10), [])
-            finally:
-                conn.close()
+            from trainsh.core.runtime_store import RuntimeStore
+
+            store = RuntimeStore(Path(tmpdir) / "runtime")
+            self.assertIsNone(schedule_cmd._latest_state_for_dag(store, "demo"))
+            self.assertEqual(schedule_cmd._query_history(store, 10), [])
 
 
 class ColabCommandEdgeTests(unittest.TestCase):
@@ -383,16 +387,16 @@ class ConfigCommandEdgeTests(unittest.TestCase):
 class RecipeCommandEdgeTests(unittest.TestCase):
     def test_recipe_helpers_and_listing(self):
         with patched_recipe_dirs() as (recipes_dir, examples_dir):
-            (recipes_dir / "mine.py").write_text("print('user')\n", encoding="utf-8")
-            (examples_dir / "hello.py").write_text("print('example')\n", encoding="utf-8")
+            (recipes_dir / "mine.pyrecipe").write_text("print('user')\n", encoding="utf-8")
+            (examples_dir / "hello.pyrecipe").write_text("print('example')\n", encoding="utf-8")
 
-            self.assertEqual(recipe.list_recipes(), ["mine.py"])
-            self.assertEqual(recipe.list_examples(), ["hello.py"])
-            self.assertEqual(Path(recipe.find_recipe("mine")).name, "mine.py")
-            self.assertEqual(Path(recipe.find_recipe("examples/hello")).name, "hello.py")
-            self.assertEqual(Path(recipe.find_user_recipe("mine")).name, "mine.py")
-            self.assertIsNone(recipe.find_user_recipe(str(examples_dir / "hello.py")))
-            self.assertTrue(recipe._is_bundled_example(str(examples_dir / "hello.py")))
+            self.assertEqual(recipe.list_recipes(), ["mine.pyrecipe"])
+            self.assertEqual(recipe.list_examples(), ["hello.pyrecipe"])
+            self.assertEqual(Path(recipe.find_recipe("mine")).name, "mine.pyrecipe")
+            self.assertEqual(Path(recipe.find_recipe("examples/hello")).name, "hello.pyrecipe")
+            self.assertEqual(Path(recipe.find_user_recipe("mine")).name, "mine.pyrecipe")
+            self.assertIsNone(recipe.find_user_recipe(str(examples_dir / "hello.pyrecipe")))
+            self.assertTrue(recipe._is_bundled_example(str(examples_dir / "hello.pyrecipe")))
             self.assertFalse(recipe._path_within("/tmp/a", None))
 
             out, code = capture(recipe.cmd_list, [])
@@ -407,9 +411,9 @@ class RecipeCommandEdgeTests(unittest.TestCase):
 
     def test_recipe_show_new_edit_remove_and_main(self):
         with patched_recipe_dirs() as (recipes_dir, examples_dir):
-            user_path = recipes_dir / "demo.py"
+            user_path = recipes_dir / "demo.pyrecipe"
             user_path.write_text("print('demo')\n", encoding="utf-8")
-            example_path = examples_dir / "hello.py"
+            example_path = examples_dir / "hello.pyrecipe"
             example_path.write_text("print('hello')\n", encoding="utf-8")
 
             out, code = capture(recipe.cmd_show, [])
@@ -458,7 +462,7 @@ class RecipeCommandEdgeTests(unittest.TestCase):
             ) as mocked_open:
                 out, code = capture(recipe.cmd_new, ["fresh", "--template", "minimal"])
             self.assertIsNone(code)
-            self.assertTrue((recipes_dir / "fresh.py").exists())
+            self.assertTrue((recipes_dir / "fresh.pyrecipe").exists())
             mocked_open.assert_called_once()
 
             out, code = capture(recipe.cmd_edit, [])

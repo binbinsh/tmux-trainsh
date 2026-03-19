@@ -34,7 +34,7 @@ class DagProcessorEdgeTests(unittest.TestCase):
         self.assertFalse(unsupported.is_supported)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "demo.py"
+            recipe_path = Path(tmpdir) / "demo.pyrecipe"
             recipe_path.write_text("print('ok')\n", encoding="utf-8")
             dag = ParsedDag(
                 dag_id=str(recipe_path),
@@ -63,20 +63,20 @@ class DagProcessorEdgeTests(unittest.TestCase):
             recipes.mkdir()
             nested = recipes / "nested"
             nested.mkdir()
-            (recipes / "demo.py").write_text("# owner: ops\n", encoding="utf-8")
+            (recipes / "demo.pyrecipe").write_text("# owner: ops\n", encoding="utf-8")
             (recipes / "note.txt").write_text("x\n", encoding="utf-8")
-            (nested / "deep.py").write_text("# tags: a, b\n", encoding="utf-8")
+            (nested / "deep.pyrecipe").write_text("# tags: a, b\n", encoding="utf-8")
 
-            processor = DagProcessor([str(recipes)], recursive=False, include_patterns=["*.py"])
+            processor = DagProcessor([str(recipes)], recursive=False, include_patterns=["*.pyrecipe"])
             files = processor.discover_files()
-            self.assertEqual({p.name for p in files}, {"demo.py"})
+            self.assertEqual({p.name for p in files}, {"demo.pyrecipe"})
 
             processor = DagProcessor([str(recipes)], recursive=True)
             files = processor.discover_files()
-            self.assertEqual({p.name for p in files}, {"demo.py", "deep.py"})
+            self.assertEqual({p.name for p in files}, {"demo.pyrecipe", "deep.pyrecipe"})
 
-            file_processor = DagProcessor([str(recipes / "demo.py")])
-            self.assertEqual([p.name for p in file_processor.discover_files()], ["demo.py"])
+            file_processor = DagProcessor([str(recipes / "demo.pyrecipe")])
+            self.assertEqual([p.name for p in file_processor.discover_files()], ["demo.pyrecipe"])
             missing_processor = DagProcessor([str(root / "missing")])
             self.assertEqual(missing_processor.discover_files(), [])
 
@@ -94,7 +94,7 @@ class DagProcessorEdgeTests(unittest.TestCase):
                     pass
                 """
             )
-            recipe_path = recipes / "dag.py"
+            recipe_path = recipes / "dag.pyrecipe"
             recipe_path.write_text(py, encoding="utf-8")
             dag = processor.process_dag_file(recipe_path)
             self.assertEqual(dag.recipe_name, "demo")
@@ -108,7 +108,7 @@ class DagProcessorEdgeTests(unittest.TestCase):
             self.assertEqual(dag.executor, "thread_pool")
             self.assertEqual(dag.executor_kwargs, {"max_workers": 2})
 
-            bad_path = recipes / "bad.py"
+            bad_path = recipes / "bad.pyrecipe"
             bad_path.write_text("def broken(:\n", encoding="utf-8")
             bad = processor.process_dag_file(bad_path)
             self.assertFalse(bad.is_valid)

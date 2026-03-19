@@ -437,6 +437,7 @@ class VastControlHelper:
         """Handle: vast.wait <instance_id> timeout=10m ..."""
         from ..config import load_config
         from ..services.vast_api import VastAPIError, get_vast_client
+        from ..services.vast_connection import ssh_target_to_command, ssh_target_to_spec, vast_ssh_targets
 
         instance_id = None
         timeout = 600
@@ -497,7 +498,8 @@ class VastControlHelper:
                 poll_count += 1
                 instance = client.get_instance(inst_id)
                 last_status = instance.actual_status or "unknown"
-                ssh_ready = bool(instance.ssh_host and instance.ssh_port)
+                targets = vast_ssh_targets(instance)
+                ssh_ready = bool(targets)
                 elapsed = int(time.time() - start_time)
                 remaining = timeout - elapsed
 
@@ -512,54 +514,40 @@ class VastControlHelper:
 
                 if instance.is_running and ssh_ready:
                     self.executor.log(f"  Connection details for instance {inst_id}:")
-                    proxy_cmd = instance.ssh_proxy_command
-                    direct_cmd = instance.ssh_direct_command
-                    if proxy_cmd:
-                        self.executor.log(f"    Proxy SSH: {proxy_cmd}")
-                    if direct_cmd:
-                        self.executor.log(f"    Direct SSH: {direct_cmd}")
+                    for target in targets:
+                        source = str(target.get("source") or "ssh").replace("_", " ")
+                        self.executor.log(f"    {source}: {ssh_target_to_command(target)}")
 
                     if self.executor.logger:
                         self.executor.logger.log_detail("vast_connection", "SSH connection details", {
-                            "proxy_command": proxy_cmd,
-                            "direct_command": direct_cmd,
+                            "ssh_targets": targets,
                             "ssh_host": instance.ssh_host,
                             "ssh_port": instance.ssh_port,
                             "public_ipaddr": instance.public_ipaddr,
                             "direct_port_start": instance.direct_port_start,
                             "direct_port_end": instance.direct_port_end,
+                            "ports": getattr(instance, "ports", None),
+                            "image_runtype": getattr(instance, "image_runtype", None),
                         })
 
-                    ssh_connected = False
+                    working_target = None
                     working_ssh_spec = None
 
-                    if direct_cmd and instance.public_ipaddr and instance.direct_port_start:
-                        direct_spec = f"root@{instance.public_ipaddr} -p {instance.direct_port_start}"
-                        self.executor.log(f"  Trying direct SSH: {direct_cmd}")
-                        if self.verify_ssh_connection(direct_spec):
-                            ssh_connected = True
-                            working_ssh_spec = direct_spec
-                            self.executor.log("  Direct SSH connected successfully")
-                        else:
-                            self.executor.log("  Direct SSH failed, trying proxy...")
+                    for target in targets:
+                        ssh_spec = ssh_target_to_spec(target)
+                        ssh_cmd = ssh_target_to_command(target)
+                        source = str(target.get("source") or "ssh").replace("_", " ")
+                        self.executor.log(f"  Trying SSH ({source}): {ssh_cmd}")
+                        if self.verify_ssh_connection(ssh_spec):
+                            working_target = target
+                            working_ssh_spec = ssh_spec
+                            self.executor.log(f"  SSH connected successfully via {source}")
+                            break
+                        self.executor.log(f"  SSH candidate failed via {source}")
 
-                    if not ssh_connected and proxy_cmd:
-                        proxy_spec = f"root@{instance.ssh_host} -p {instance.ssh_port}"
-                        self.executor.log(f"  Trying proxy SSH: {proxy_cmd}")
-                        if self.verify_ssh_connection(proxy_spec):
-                            ssh_connected = True
-                            working_ssh_spec = proxy_spec
-                            self.executor.log("  Proxy SSH connected successfully")
-                        else:
-                            self.executor.log("  Proxy SSH failed")
-
-                    if ssh_connected and working_ssh_spec:
-                        if instance.public_ipaddr and instance.direct_port_start and instance.public_ipaddr in working_ssh_spec:
-                            self.executor.ctx.variables["_vast_ssh_host"] = instance.public_ipaddr
-                            self.executor.ctx.variables["_vast_ssh_port"] = str(instance.direct_port_start)
-                        else:
-                            self.executor.ctx.variables["_vast_ssh_host"] = instance.ssh_host or ""
-                            self.executor.ctx.variables["_vast_ssh_port"] = str(instance.ssh_port or "")
+                    if working_target and working_ssh_spec:
+                        self.executor.ctx.variables["_vast_ssh_host"] = str(working_target["hostname"])
+                        self.executor.ctx.variables["_vast_ssh_port"] = str(working_target["port"])
 
                         for host_name, host_value in list(self.executor.recipe.hosts.items()):
                             if host_value == f"vast:{inst_id}":
@@ -589,11 +577,7 @@ class VastControlHelper:
                                 "status": last_status,
                                 "ssh_host": self.executor.ctx.variables["_vast_ssh_host"],
                                 "ssh_port": self.executor.ctx.variables["_vast_ssh_port"],
-                                "connection_method": (
-                                    "direct"
-                                    if (instance.public_ipaddr and instance.public_ipaddr in working_ssh_spec)
-                                    else "proxy"
-                                ),
+                                "connection_method": str(working_target.get("source") or "ssh"),
                                 "elapsed_sec": elapsed,
                                 "poll_count": poll_count,
                             }, True)
@@ -605,8 +589,7 @@ class VastControlHelper:
                         self.executor.log(f"Instance {inst_id} running but SSH not accessible yet...")
                         if self.executor.logger:
                             self.executor.logger.log_detail("vast_wait", "SSH not accessible yet", {
-                                "proxy_command": proxy_cmd,
-                                "direct_command": direct_cmd,
+                                "ssh_targets": targets,
                                 "ssh_host": instance.ssh_host,
                                 "ssh_port": instance.ssh_port,
                                 "public_ipaddr": instance.public_ipaddr,

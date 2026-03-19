@@ -8,9 +8,8 @@ This file serves as the main entry point for:
 
 Usage:
     train help
-    train config show
-    train host list
-    train vast list
+    train --help
+    train exec <recipe>
     train recipe run <recipe>
 """
 

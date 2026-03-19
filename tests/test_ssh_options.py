@@ -65,6 +65,61 @@ class SSHConnectionOptionsTests(unittest.TestCase):
         )
         self.assertNotIn("-J", args)
 
+    def test_ssh_client_materializes_secret_managed_key(self):
+        host = Host(
+            name="target",
+            type=HostType.SSH,
+            hostname="172.16.0.88",
+            port=22,
+            username="root",
+            auth_method=AuthMethod.KEY,
+            env_vars={"ssh_key_secret": "TARGET_SSH_PRIVATE_KEY"},
+        )
+
+        with patch("trainsh.services.secret_materialize.materialize_secret_file", return_value="/tmp/target.key"):
+            client = SSHClient.from_host(host)
+
+        self.assertEqual(client.key_path, "/tmp/target.key")
+
+    def test_ssh_client_uses_password_secret_with_sshpass(self):
+        host = Host(
+            name="target",
+            type=HostType.SSH,
+            hostname="172.16.0.88",
+            port=22,
+            username="root",
+            auth_method=AuthMethod.PASSWORD,
+            env_vars={"ssh_password_secret": "TARGET_SSH_PASSWORD"},
+        )
+
+        with patch("trainsh.services.secret_materialize.materialize_secret_file", return_value="/tmp/target.pass"), patch(
+            "trainsh.services.ssh.shutil.which", return_value="/usr/bin/sshpass"
+        ):
+            client = SSHClient.from_host(host)
+            args = client._build_ssh_args("echo connected")
+
+        self.assertEqual(args[:3], ["sshpass", "-f", "/tmp/target.pass"])
+        self.assertIn("ssh", args)
+
+    def test_ssh_client_reports_missing_sshpass_for_password_secret(self):
+        host = Host(
+            name="target",
+            type=HostType.SSH,
+            hostname="172.16.0.88",
+            port=22,
+            username="root",
+            auth_method=AuthMethod.PASSWORD,
+            env_vars={"ssh_password_secret": "TARGET_SSH_PASSWORD"},
+        )
+
+        with patch("trainsh.services.secret_materialize.materialize_secret_file", return_value="/tmp/target.pass"), patch(
+            "trainsh.services.ssh.shutil.which", return_value=None
+        ):
+            client = SSHClient.from_host(host)
+            result = client.run("echo connected")
+
+        self.assertIn("sshpass is required", result.stderr)
+
     def test_ssh_client_manual_proxy_command_overrides_cloudflared_env(self):
         host = Host(
             name="case",

@@ -4,62 +4,24 @@
 import sys
 from typing import Optional, List
 
-from ..cli_utils import render_command_help
+from .help_catalog import render_command_help, render_top_level_help
 from ..core.models import Storage, StorageType
+from ..core.storage_specs import unsupported_inline_storage_error
 from ..services.transfer_support import resolve_storage_remote_path
 
 CLOUD_PREFIXES = {
     "r2:": StorageType.R2,
-    "s3:": StorageType.S3,
     "b2:": StorageType.B2,
     "gcs:": StorageType.GCS,
 }
 
-CLOUD_STORAGE_TYPES = frozenset(CLOUD_PREFIXES.values())
+CLOUD_STORAGE_TYPES = frozenset({StorageType.R2, StorageType.S3, StorageType.B2, StorageType.GCS})
 
-usage = render_command_help(
-    command="train transfer",
-    summary="Copy files between local paths, named hosts, storage backends, and cloud endpoints.",
-    usage_lines=("train transfer <source> <destination> [options]",),
-    options=(
-        "--delete, -d            Delete files at destination that do not exist in the source.",
-        "--exclude, -e PAT       Exclude a glob pattern. Repeat to add more patterns.",
-        "--dry-run               Show what would change without transferring files.",
-        "--transfers N           Parallel rclone transfers (default: 32 for cloud).",
-        "--checkers N            Parallel rclone checkers (default: 64 for cloud).",
-        "--upload-concurrency N  S3 multipart upload threads per file (default: 16 for cloud).",
-        "--chunk-size SIZE       Multipart chunk size (default: 64M for cloud).",
-        "--include PAT           rclone include pattern (repeatable).",
-    ),
-    notes=(
-        "Endpoint forms:",
-        "  /local/path                   Local filesystem path",
-        "  @host:/remote/path            Configured host alias",
-        "  host:<name>:/remote/path      Explicit host endpoint",
-        "  storage:<name>:/bucket/path   Named storage endpoint",
-        "  r2:<bucket>/[prefix]          Cloudflare R2 (no pre-configuration needed)",
-        "  s3:<bucket>/[prefix]          Amazon S3",
-        "  b2:<bucket>/[prefix]          Backblaze B2",
-        "  gcs:<bucket>/[prefix]         Google Cloud Storage",
-        "",
-        "Cloud endpoints (r2:/s3:/b2:/gcs:) resolve credentials from secrets automatically.",
-        "Use train host list and train storage list to discover named endpoint names.",
-        "Host <-> cloud storage transfers relay through a local temp directory.",
-        "Dry runs work for direct rsync/rclone paths; relayed transfer paths fail fast instead of executing.",
-    ),
-    examples=(
-        "train transfer ./artifacts @gpu:/workspace/out",
-        "train transfer @gpu:/workspace/checkpoints ./checkpoints",
-        "train transfer ./data storage:artifacts:/datasets/run-01",
-        "train transfer ./data r2:my-bucket/prefix",
-        "train transfer ./shards s3:my-bucket/datasets --transfers 64 --chunk-size 128M",
-        "train transfer ./data r2:my-bucket/raw --include '*.mds' --include '*.zstd'",
-    ),
-)
+usage = render_command_help("transfer")
 
 
 def _try_cloud_endpoint(spec: str, position: str) -> Optional[tuple[Storage, str]]:
-    """Try to parse a cloud endpoint prefix (r2:, s3:, b2:, gcs:).
+    """Try to parse a cloud endpoint prefix (r2:, b2:, gcs:).
 
     Supported forms::
 
@@ -86,7 +48,7 @@ def _try_cloud_endpoint(spec: str, position: str) -> Optional[tuple[Storage, str
             print(f"Error: Cloud endpoint '{spec}' requires a bucket name.")
             sys.exit(1)
 
-        provider = prefix.rstrip(":")  # "r2", "s3", etc.
+        provider = prefix.rstrip(":")  # "r2", "b2", etc.
 
         # Two formats:  r2:bucket:/path  (colon)  or  r2:bucket/path  (slash)
         if ":" in remainder:
@@ -154,8 +116,11 @@ def parse_endpoint(spec: str) -> tuple[str, str, Optional[str]]:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for transfer command."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(usage)
+        return None
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return None
 
     # Parse arguments
@@ -237,6 +202,12 @@ def main(args: List[str]) -> Optional[str]:
 
     source_spec = positional[0]
     dest_spec = positional[1]
+
+    for spec in (source_spec, dest_spec):
+        error = unsupported_inline_storage_error(spec)
+        if error:
+            print(f"Error: {error}")
+            sys.exit(1)
 
     # --- Try cloud endpoint shortcuts before standard parsing ---
     src_cloud = _try_cloud_endpoint(source_spec, "src")

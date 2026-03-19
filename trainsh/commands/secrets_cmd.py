@@ -5,7 +5,8 @@ import sys
 from typing import Optional, List
 import getpass
 
-from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
+from .help_catalog import render_command_help, render_top_level_help
 
 SUBCOMMAND_SPECS = (
     SubcommandSpec("list", "List common secrets and whether they are configured."),
@@ -15,22 +16,7 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("backend", "Show or change the secrets backend."),
 )
 
-usage = render_command_help(
-    command="train secrets",
-    summary="Manage API keys and credentials.",
-    usage_lines=("train secrets <subcommand> [args...]",),
-    subcommands=SUBCOMMAND_SPECS,
-    notes=(
-        "Common keys: VAST_API_KEY, HF_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, GITHUB_TOKEN.",
-        "Secret values are prompted securely for train secrets set.",
-    ),
-    examples=(
-        "train secrets list",
-        "train secrets set VAST_API_KEY",
-        "train secrets get OPENAI_API_KEY",
-        "train secrets backend",
-    ),
-)
+usage = render_command_help("secrets")
 
 
 LISTED_SECRET_KEYS = (
@@ -305,8 +291,11 @@ def cmd_backend(args: List[str]) -> None:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for secrets command."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(usage)
+        return None
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]

@@ -6,7 +6,9 @@ import os
 from typing import Optional, List
 import re
 
-from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
+from .help_catalog import render_command_help, render_top_level_help
+from .remote_run import parse_remote_run_args, run_remote_command
 from .host_interactive import (
     _normalize_connection_candidates,
     _prompt_connection_candidates,
@@ -23,34 +25,13 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("edit", "Modify an existing named host."),
     SubcommandSpec("show", "Inspect one host definition."),
     SubcommandSpec("ssh", "Open an SSH session using the stored connection settings."),
+    SubcommandSpec("run", "Run one remote shell command using the stored connection settings."),
     SubcommandSpec("files", "Browse remote files over SFTP."),
     SubcommandSpec("check", "Check whether a host is reachable."),
     SubcommandSpec("remove", "Delete a stored host definition or destroy a Vast.ai instance."),
 )
 
-usage = render_command_help(
-    command="train host",
-    summary="Manage named SSH or Colab host definitions used by recipes and transfers.",
-    usage_lines=(
-        "train host <subcommand> [args...]",
-        "train host ssh <name>",
-        "train host files <name> [path]",
-    ),
-    subcommands=SUBCOMMAND_SPECS,
-    notes=(
-        "Hosts are stored in ~/.config/tmux-trainsh/hosts.yaml.",
-        "When VAST_API_KEY is configured, Vast.ai instances are auto-discovered here, including stopped/exited ones.",
-        "Use train vast for provider-side instance lifecycle operations.",
-        "Use train colab for quick one-off Colab tunnel helpers; prefer train host add for reusable configs.",
-    ),
-    examples=(
-        "train host list",
-        "train host add",
-        "train host show gpu-box",
-        "train host ssh gpu-box",
-        "train host check gpu-box",
-    ),
-)
+usage = render_command_help("host")
 
 
 AUTO_DISCOVERED_VAST_ENV = "_auto_discovered_vast"
@@ -212,6 +193,8 @@ def cmd_list(args: List[str]) -> None:
 def cmd_show(args: List[str]) -> None:
     """Show host details."""
     from ..core.models import HostType
+    from ..core.secrets import get_secrets_manager
+    from ..services.secret_materialize import resolve_resource_secret_name
 
     if not args:
         print("Usage: train host show <name>")
@@ -235,6 +218,13 @@ def cmd_show(args: List[str]) -> None:
         print("  Auto-discovered: yes")
     if host.ssh_key_path:
         print(f"  SSH Key: {host.ssh_key_path}")
+    secrets = get_secrets_manager()
+    ssh_key_secret = resolve_resource_secret_name(host.name or name, host.env_vars.get("ssh_key_secret"), "SSH_PRIVATE_KEY")
+    ssh_password_secret = resolve_resource_secret_name(host.name or name, host.env_vars.get("ssh_password_secret"), "SSH_PASSWORD")
+    if secrets.exists(ssh_key_secret):
+        print("  SSH Key: managed by train secrets")
+    if secrets.exists(ssh_password_secret):
+        print("  SSH Password: managed by train secrets")
     if host.jump_host:
         print(f"  Jump Host: {host.jump_host}")
     tunnel_type = host.env_vars.get("tunnel_type", "")
@@ -336,6 +326,18 @@ def cmd_test(args: List[str]) -> None:
         sys.exit(1)
 
 
+def cmd_run(args: List[str]) -> None:
+    """Run one command on a stored host."""
+    name, command = parse_remote_run_args(args, usage="train host run <name> -- <command>")
+    hosts = load_hosts()
+
+    if name not in hosts:
+        print(f"Host not found: {name}")
+        sys.exit(1)
+
+    run_remote_command(hosts[name], command, label=name)
+
+
 def cmd_rm(args: List[str]) -> None:
     """Remove a host."""
     if not args:
@@ -376,8 +378,11 @@ def cmd_rm(args: List[str]) -> None:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for host command."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(usage)
+        return None
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]
@@ -389,6 +394,7 @@ def main(args: List[str]) -> Optional[str]:
         "edit": cmd_edit,
         "show": cmd_show,
         "ssh": cmd_ssh,
+        "run": cmd_run,
         "files": cmd_browse,
         "check": cmd_test,
         "remove": cmd_rm,

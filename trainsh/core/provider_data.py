@@ -1,4 +1,4 @@
-"""Data, pricing, sqlite, and xcom provider helpers."""
+"""Data, pricing, and xcom provider helpers."""
 
 from __future__ import annotations
 
@@ -6,13 +6,12 @@ import json
 import os
 import shlex
 import subprocess
-from contextlib import closing
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from ..constants import CONFIG_DIR
+from ..constants import RUNTIME_STATE_DIR
 from .models import Storage, StorageType
-from .runtime_db import DEFAULT_XCOM_RETENTION_DAYS, ensure_xcom_schema, prune_old_xcom
+from .runtime_store import RuntimeStore
 
 
 class ExecutorProviderDataMixin:
@@ -42,10 +41,12 @@ class ExecutorProviderDataMixin:
 
     def _resolve_storage(self, storage_name: Any) -> Optional[Storage]:
         """Resolve storage name to Storage object."""
-        name = str(storage_name).strip() if storage_name is not None else ""
-        if not name:
-            return None
-        return self._build_transfer_storages().get(name)
+        from .storage_specs import resolve_storage_reference
+
+        return resolve_storage_reference(
+            storage_name,
+            named_storages=self._build_transfer_storages(),
+        )
 
     def _storage_local_path(self, storage: Storage, path: str) -> str:
         """Resolve a path within local storage."""
@@ -238,33 +239,6 @@ class ExecutorProviderDataMixin:
         self.ctx.variables[f"host_cost_per_hour_{currency.lower()}"] = str(converted)
         return True, f"{format_currency(converted, currency)}/hr"
 
-    def _sqlite_db_path(self, database: Any) -> str:
-        """Resolve SQLite database path used by sqlite provider."""
-        raw_db = str(database).strip() if database is not None else ""
-        if raw_db:
-            return os.path.expanduser(raw_db)
-        return str(CONFIG_DIR / "runtime.db")
-
-    def _normalize_sqlite_bindings(self, bindings: Any) -> Any:
-        """Normalize SQL bind parameters."""
-        if bindings is None:
-            return ()
-
-        if isinstance(bindings, (list, tuple, dict)):
-            return bindings
-
-        if isinstance(bindings, str):
-            text = bindings.strip()
-            if not text:
-                return ()
-            try:
-                parsed = json.loads(text)
-            except Exception:
-                return (text,)
-            return self._normalize_sqlite_bindings(parsed)
-
-        return (bindings,)
-
     def _runtime_dag_id(self) -> str:
         """Resolve dag_id used by runtime metadata tables."""
         path = str(self.recipe_path or "").strip()
@@ -275,21 +249,8 @@ class ExecutorProviderDataMixin:
             return name
         return "unknown_dag"
 
-    def _maybe_prune_old_xcom(self, conn: Any, db_path: str) -> int:
-        """Prune stale XCom rows once per executor/database path."""
-        seen = getattr(self, "_xcom_pruned_dbs", None)
-        if not isinstance(seen, set):
-            seen = set()
-            setattr(self, "_xcom_pruned_dbs", seen)
-        normalized = os.path.abspath(os.path.expanduser(db_path))
-        if normalized in seen:
-            return 0
-        removed = prune_old_xcom(conn, retention_days=DEFAULT_XCOM_RETENTION_DAYS)
-        seen.add(normalized)
-        return removed
-
     def _exec_provider_xcom_push(self, params: Dict[str, Any]) -> tuple[bool, str]:
-        """Push one value into runtime sqlite xcom table."""
+        """Push one value into runtime JSONL xcom state."""
         if not isinstance(params, dict):
             return False, "Provider util.xcom_push params must be an object"
 
@@ -319,38 +280,23 @@ class ExecutorProviderDataMixin:
             or "anonymous"
         )
         map_index = self._coerce_int(params.get("map_index", 0), default=0)
-        db = self._sqlite_db_path(params.get("database", params.get("sqlite_db")))
         created_at = datetime.now().isoformat()
         execution_date = str(params.get("execution_date", created_at)).strip() or created_at
-
-        import sqlite3
-
+        store_root = str(params.get("runtime_state", "")).strip() or str(RUNTIME_STATE_DIR)
         try:
-            with closing(sqlite3.connect(os.path.expanduser(db))) as conn:
-                ensure_xcom_schema(conn)
-                self._maybe_prune_old_xcom(conn, db)
-                conn.execute(
-                    """
-                    INSERT INTO xcom (
-                        dag_id, task_id, run_id, map_index, key, value, created_at, execution_date
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(dag_id, task_id, run_id, map_index, key) DO UPDATE SET
-                        value=excluded.value,
-                        created_at=excluded.created_at,
-                        execution_date=excluded.execution_date
-                    """,
-                    (
-                        dag_id,
-                        task_id,
-                        run_id,
-                        map_index,
-                        key,
-                        value_text,
-                        created_at,
-                        execution_date,
-                    ),
-                )
-                conn.commit()
+            RuntimeStore(store_root).append_xcom(
+                {
+                    "dag_id": dag_id,
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "map_index": map_index,
+                    "key": key,
+                    "value": value_text,
+                    "created_at": created_at,
+                    "execution_date": execution_date,
+                    "updated_at": created_at,
+                }
+            )
         except Exception as exc:
             return False, f"xcom push failed: {exc}"
 
@@ -374,7 +320,7 @@ class ExecutorProviderDataMixin:
         return True, f"xcom pushed: key={key}, task_id={task_id}, run_id={run_id}"
 
     def _exec_provider_xcom_pull(self, params: Dict[str, Any]) -> tuple[bool, str]:
-        """Pull one value from runtime sqlite xcom table."""
+        """Pull one value from runtime JSONL xcom state."""
         if not isinstance(params, dict):
             return False, "Provider util.xcom_pull params must be an object"
 
@@ -388,7 +334,7 @@ class ExecutorProviderDataMixin:
             params.get("include_prior_dates", False),
             default=False,
         )
-        db = self._sqlite_db_path(params.get("database", params.get("sqlite_db")))
+        store_root = str(params.get("runtime_state", "")).strip() or str(RUNTIME_STATE_DIR)
 
         task_ids_raw = params.get("task_ids", params.get("task_id"))
         task_ids: List[str] = []
@@ -404,27 +350,15 @@ class ExecutorProviderDataMixin:
         use_map_index = map_index_raw is not None and str(map_index_raw).strip() != ""
         map_index = self._coerce_int(map_index_raw, default=0)
 
-        import sqlite3
-
-        row: Optional[Any] = None
         try:
-            with closing(sqlite3.connect(os.path.expanduser(db))) as conn:
-                ensure_xcom_schema(conn)
-                conn.row_factory = sqlite3.Row
-                query = "SELECT value, task_id, run_id FROM xcom WHERE dag_id = ? AND key = ?"
-                query_params: List[Any] = [dag_id, key]
-                if task_ids:
-                    placeholders = ",".join(["?"] * len(task_ids))
-                    query += f" AND task_id IN ({placeholders})"
-                    query_params.extend(task_ids)
-                if not include_prior_dates:
-                    query += " AND run_id = ?"
-                    query_params.append(run_id)
-                if use_map_index:
-                    query += " AND map_index = ?"
-                    query_params.append(map_index)
-                query += " ORDER BY created_at DESC LIMIT 1"
-                row = conn.execute(query, query_params).fetchone()
+            row = RuntimeStore(store_root).query_xcom(
+                dag_id=dag_id,
+                key=key,
+                run_id=run_id,
+                task_ids=task_ids,
+                include_prior_dates=include_prior_dates,
+                map_index=map_index if use_map_index else None,
+            )
         except Exception as exc:
             return False, f"xcom pull failed: {exc}"
 
@@ -443,7 +377,7 @@ class ExecutorProviderDataMixin:
                 self.ctx.variables[str(output_var)] = value_text
             return True, value_text
 
-        value_text = str(row["value"] or "")
+        value_text = str(row.get("value", "") or "")
         decode_json = self._coerce_bool(
             params.get("decode_json", params.get("as_json", False)),
             default=False,
@@ -464,105 +398,3 @@ class ExecutorProviderDataMixin:
         if output_var:
             self.ctx.variables[str(output_var)] = result_text
         return True, result_text
-
-    def _exec_provider_sqlite_query(self, params: Dict[str, Any]) -> tuple[bool, str]:
-        """Run a SQLite query and serialize results."""
-        if not isinstance(params, dict):
-            return False, "Provider sqlite.query params must be an object"
-
-        query = str(params.get("sql", params.get("query", ""))).strip()
-        if not query:
-            return False, "Provider sqlite.query requires 'sql' or 'query'"
-
-        db = self._sqlite_db_path(params.get("database"))
-        mode = str(params.get("mode", "all")).strip().lower()
-        bindings = self._normalize_sqlite_bindings(params.get("params"))
-        output_var = params.get("output_var")
-
-        import sqlite3
-
-        try:
-            with closing(sqlite3.connect(os.path.expanduser(db))) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute(query, bindings) if bindings else conn.execute(query)
-                rows = cursor.fetchall()
-        except Exception as exc:
-            return False, f"sqlite query failed: {exc}"
-
-        if mode in {"first", "one", "fetchone"}:
-            if not rows:
-                payload = None
-            else:
-                payload = dict(rows[0])
-        elif mode in {"scalar", "value"}:
-            if not rows or len(rows[0].keys()) == 0:
-                payload = None
-            else:
-                payload = rows[0][0]
-        else:
-            payload = [dict(row) for row in rows]
-
-        if output_var:
-            if isinstance(payload, (dict, list)):
-                self.ctx.variables[str(output_var)] = json.dumps(payload, ensure_ascii=False)
-            else:
-                self.ctx.variables[str(output_var)] = "" if payload is None else str(payload)
-
-        if payload is None:
-            return True, "sqlite query returned no rows"
-        if isinstance(payload, (dict, list)):
-            return True, json.dumps(payload, ensure_ascii=False)
-        return True, str(payload)
-
-    def _exec_provider_sqlite_exec(self, params: Dict[str, Any]) -> tuple[bool, str]:
-        """Run write-like SQLite SQL."""
-        if not isinstance(params, dict):
-            return False, "Provider sqlite.exec params must be an object"
-
-        sql = str(params.get("sql", params.get("query", ""))).strip()
-        if not sql:
-            return False, "Provider sqlite.exec requires 'sql' (or 'query')"
-
-        db = self._sqlite_db_path(params.get("database"))
-        bindings = self._normalize_sqlite_bindings(params.get("params"))
-        output_var = params.get("output_var")
-
-        import sqlite3
-
-        try:
-            with closing(sqlite3.connect(os.path.expanduser(db))) as conn:
-                cursor = conn.execute(sql, bindings) if bindings else conn.execute(sql)
-                conn.commit()
-        except Exception as exc:
-            return False, f"sqlite execute failed: {exc}"
-
-        if output_var is not None:
-            self.ctx.variables[str(output_var)] = str(getattr(cursor, "rowcount", 0))
-
-        return True, f"sqlite execute ok: rowcount={getattr(cursor, 'rowcount', 0)}"
-
-    def _exec_provider_sqlite_script(self, params: Dict[str, Any]) -> tuple[bool, str]:
-        """Execute a multi-statement SQLite script."""
-        if not isinstance(params, dict):
-            return False, "Provider sqlite.script params must be an object"
-
-        script = str(params.get("script", "")).strip()
-        if not script:
-            return False, "Provider sqlite.script requires 'script'"
-
-        db = self._sqlite_db_path(params.get("database"))
-        output_var = params.get("output_var")
-
-        import sqlite3
-
-        try:
-            with closing(sqlite3.connect(os.path.expanduser(db))) as conn:
-                conn.executescript(script)
-                conn.commit()
-        except Exception as exc:
-            return False, f"sqlite script failed: {exc}"
-
-        if output_var is not None:
-            self.ctx.variables[str(output_var)] = "ok"
-
-        return True, "sqlite script executed"

@@ -207,8 +207,8 @@ class RecipeFileCommandTests(CaptureMixin, unittest.TestCase):
             examples_dir = Path(tmpdir) / "examples"
             recipes_dir.mkdir()
             examples_dir.mkdir()
-            (recipes_dir / "mine.py").write_text("from trainsh import Recipe\nrecipe = Recipe('mine')\nrecipe.empty(id='start')\n", encoding="utf-8")
-            (examples_dir / "hello.py").write_text("from trainsh import Recipe\nrecipe = Recipe('hello-world')\nrecipe.empty(id='start')\n", encoding="utf-8")
+            (recipes_dir / "mine.pyrecipe").write_text("from trainsh import Recipe\nrecipe = Recipe('mine')\nrecipe.empty(id='start')\n", encoding="utf-8")
+            (examples_dir / "hello.pyrecipe").write_text("from trainsh import Recipe\nrecipe = Recipe('hello-world')\nrecipe.empty(id='start')\n", encoding="utf-8")
 
             with patch("trainsh.commands.recipe.get_recipes_dir", return_value=str(recipes_dir)), patch(
                 "trainsh.commands.recipe.get_examples_dir", return_value=str(examples_dir)
@@ -230,7 +230,7 @@ class RecipeFileCommandTests(CaptureMixin, unittest.TestCase):
                     out, code, _ = self.capture(recipe.cmd_new, ["demo", "--template", "minimal"])
                 self.assertIsNone(code)
                 mocked_editor.assert_called_once()
-                self.assertTrue((recipes_dir / "demo.py").exists())
+                self.assertTrue((recipes_dir / "demo.pyrecipe").exists())
                 self.assertIn("Created recipe:", out)
 
                 out, code, _ = self.capture(recipe.cmd_new, ["demo"])
@@ -274,9 +274,9 @@ class RecipeFileCommandTests(CaptureMixin, unittest.TestCase):
             examples_dir = Path(tmpdir) / "examples"
             recipes_dir.mkdir()
             examples_dir.mkdir()
-            user_recipe = recipes_dir / "demo.py"
+            user_recipe = recipes_dir / "demo.pyrecipe"
             user_recipe.write_text("from trainsh import Recipe\nrecipe = Recipe('demo')\n", encoding="utf-8")
-            example_recipe = examples_dir / "hello.py"
+            example_recipe = examples_dir / "hello.pyrecipe"
             example_recipe.write_text("from trainsh import Recipe\nrecipe = Recipe('hello')\n", encoding="utf-8")
 
             with patch("trainsh.commands.recipe.get_recipes_dir", return_value=str(recipes_dir)), patch(

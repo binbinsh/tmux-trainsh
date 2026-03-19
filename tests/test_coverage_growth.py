@@ -228,11 +228,12 @@ class CoverageGrowthTests(unittest.TestCase):
             self.assertEqual(executor._exec_provider_latest_only("bad")[0], False)
 
             missing_db = Path(tmpdir) / "runtime.db"
-            with patch("trainsh.constants.CONFIG_DIR", Path(tmpdir)):
+            with patch("trainsh.constants.RUNTIME_STATE_DIR", Path(tmpdir) / "runtime"):
                 ok, msg = executor._exec_provider_latest_only({"fail_if_unknown": True})
             self.assertFalse(ok)
-            self.assertIn("runtime sqlite DB not found", msg)
+            self.assertIn("runtime state not found", msg)
             missing_db.touch()
+            (missing_db.with_suffix("")).mkdir(parents=True, exist_ok=True)
             executor.ctx.start_time = None
             ok, msg = executor._exec_provider_latest_only({"sqlite_db": str(missing_db), "fail_if_unknown": True})
             self.assertFalse(ok)
@@ -242,7 +243,7 @@ class CoverageGrowthTests(unittest.TestCase):
             self.assertIn("unavailable", msg)
 
             executor.ctx.start_time = __import__("datetime").datetime.now()
-            with patch("sqlite3.connect", side_effect=RuntimeError("db boom")):
+            with patch("trainsh.core.runtime_store.RuntimeStore", side_effect=RuntimeError("db boom")):
                 ok, msg = executor._exec_provider_latest_only({"sqlite_db": str(missing_db), "fail_if_unknown": False})
                 self.assertTrue(ok)
                 ok, msg = executor._exec_provider_latest_only({"sqlite_db": str(missing_db), "fail_if_unknown": True})
@@ -621,14 +622,14 @@ class CoverageGrowthTests(unittest.TestCase):
             "trainsh.core.executor_main.DSLExecutor", FakeExecutor
         ), patch("trainsh.runtime.get_executor", return_value=FakeRunner()), patch(
             "trainsh.runtime.build_sinks", return_value=[]
-        ), patch("trainsh.runtime.SqliteCallbackSink", return_value="sqlite-sink"), patch(
+        ), patch("trainsh.runtime.JsonlCallbackSink", return_value="jsonl-sink"), patch(
             "trainsh.core.executor_main.JobStateManager", FakeManager
         ):
             ok = run_recipe(
-                "/tmp/demo.py",
+                "/tmp/demo.pyrecipe",
                 log_callback=logs.append,
                 resume=True,
-                callbacks=["", "console, sqlite"],
+                callbacks=["", "console, jsonl"],
             )
         self.assertTrue(ok)
         self.assertEqual(FakeExecutor.last_init["executor_name"], "sequential")
@@ -656,10 +657,10 @@ class CoverageGrowthTests(unittest.TestCase):
             "trainsh.core.executor_main.DSLExecutor", FakeExecutor
         ), patch("trainsh.runtime.get_executor", return_value=FakeRunner()), patch(
             "trainsh.runtime.build_sinks", return_value=[]
-        ), patch("trainsh.runtime.SqliteCallbackSink", return_value="sqlite-sink"), patch(
+        ), patch("trainsh.runtime.JsonlCallbackSink", return_value="jsonl-sink"), patch(
             "trainsh.core.executor_main.JobStateManager", EmptyManager
         ):
-            ok = run_recipe("/tmp/override.py", host_overrides={"plain": "local"})
+            ok = run_recipe("/tmp/override.pyrecipe", host_overrides={"plain": "local"})
         self.assertTrue(ok)
         self.assertEqual(FakeExecutor.last_init["recipe"].hosts["plain"], "local")
 
@@ -677,10 +678,10 @@ class CoverageGrowthTests(unittest.TestCase):
             "trainsh.core.executor_main.DSLExecutor", FakeExecutor
         ), patch("trainsh.runtime.get_executor", return_value=FakeRunner()), patch(
             "trainsh.runtime.build_sinks", return_value=[]
-        ), patch("trainsh.runtime.SqliteCallbackSink", return_value="sqlite-sink"), patch(
+        ), patch("trainsh.runtime.JsonlCallbackSink", return_value="jsonl-sink"), patch(
             "trainsh.core.executor_main.JobStateManager", EmptyManager
         ):
-            ok = run_recipe("/tmp/fresh.py", log_callback=fresh_logs.append, resume=True)
+            ok = run_recipe("/tmp/fresh.pyrecipe", log_callback=fresh_logs.append, resume=True)
         self.assertTrue(ok)
         self.assertIn("starting fresh", fresh_logs[0])
 

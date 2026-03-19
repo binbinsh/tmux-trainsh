@@ -4,34 +4,21 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from ..cli_utils import render_command_help
+from .help_catalog import render_command_help, render_top_level_help
 
 
 HELP_FLAGS = {"-h", "--help", "help"}
 
-usage = render_command_help(
-    command="train recipe",
-    summary="Single entry point for recipe files, runs, logs, status, jobs, and schedules.",
-    usage_lines=(
-        "train recipe <list|show|new|edit|remove> ...",
-        "train recipe <run|resume|status|logs|jobs|schedule> ...",
-    ),
-    notes=(
-        "Recipe file management and runtime inspection intentionally live under one namespace.",
-        "Use `train help recipe` for the full lifecycle guide.",
-    ),
-    examples=(
-        "train recipe show nanochat",
-        "train recipe run nanochat",
-        "train recipe status --last",
-    ),
-)
+usage = render_command_help("recipe")
 
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for the canonical recipe namespace."""
-    if not args or args[0] in HELP_FLAGS:
+    if not args:
         print(usage)
+        return None
+    if args[0] in HELP_FLAGS:
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]
@@ -42,9 +29,12 @@ def main(args: List[str]) -> Optional[str]:
 
         return recipes_main([subcommand, *subargs])
 
-    if subcommand == "run":
-        from .recipe_runtime import cmd_run
+    if subcommand in {"run", "exec"}:
+        from .recipe_runtime import cmd_exec, cmd_run
 
+        if subcommand == "exec":
+            cmd_exec(subargs)
+            return None
         cmd_run(subargs)
         return None
 

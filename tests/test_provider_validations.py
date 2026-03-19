@@ -257,10 +257,6 @@ class ProviderValidationEdgeTests(unittest.TestCase):
                     ok, msg = executor._exec_provider_calculate_cost({"vast": True})
                 self.assertFalse(ok)
 
-                self.assertTrue(executor._sqlite_db_path(None).endswith("runtime.db"))
-                self.assertEqual(executor._normalize_sqlite_bindings(None), ())
-                self.assertEqual(executor._normalize_sqlite_bindings('{"a":1}'), {"a": 1})
-                self.assertEqual(executor._normalize_sqlite_bindings("abc"), ("abc",))
                 executor.recipe_path = ""
                 executor.recipe.name = ""
                 self.assertEqual(executor._runtime_dag_id(), "unknown_dag")
@@ -273,19 +269,6 @@ class ProviderValidationEdgeTests(unittest.TestCase):
                 self.assertFalse(ok)
                 ok, msg = executor._exec_provider_xcom_pull({})
                 self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_query("bad")
-                self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_query({})
-                self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_exec("bad")
-                self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_exec({})
-                self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_script("bad")
-                self.assertFalse(ok)
-                ok, msg = executor._exec_provider_sqlite_script({})
-                self.assertFalse(ok)
-
                 self.assertEqual(executor._coerce_float(None, default=7.5), 7.5)
                 self.assertEqual(executor._storage_local_path(Storage(id="local", name="local", type=StorageType.LOCAL, config={}), ""), os.path.expanduser("."))
                 with patch("trainsh.services.transfer_engine.get_rclone_remote_name", return_value="remote"):
@@ -329,8 +312,6 @@ class ProviderValidationEdgeTests(unittest.TestCase):
                 self.assertTrue(ok)
                 self.assertEqual(executor.ctx.variables["host_cost_per_hour_usd"], "1.5")
 
-                self.assertEqual(executor._normalize_sqlite_bindings(""), ())
-                self.assertEqual(executor._normalize_sqlite_bindings(5), (5,))
                 executor.recipe_path = "/tmp/demo.py"
                 self.assertEqual(executor._runtime_dag_id(), "/tmp/demo.py")
                 executor.recipe_path = ""
@@ -339,35 +320,14 @@ class ProviderValidationEdgeTests(unittest.TestCase):
 
                 bad_db = root / "bad.db"
                 bad_db.write_text("not-sqlite", encoding="utf-8")
-                ok, msg = executor._exec_provider_xcom_push({"database": str(bad_db), "key": "x", "value": 1})
-                self.assertFalse(ok)
-                self.assertIn("xcom push failed", msg)
-                ok, msg = executor._exec_provider_xcom_pull({"database": str(bad_db), "key": "x"})
-                self.assertFalse(ok)
-                self.assertIn("xcom pull failed", msg)
-
-                ok, msg = executor._exec_provider_xcom_push({"database": str(root / "ok.db"), "key": "k", "default": None})
+                ok, msg = executor._exec_provider_xcom_push({"runtime_state": str(bad_db), "key": "x", "value": 1})
                 self.assertTrue(ok)
-
-                with closing(sqlite3.connect(root / "query.db")) as conn:
-                    conn.execute("CREATE TABLE t (v INTEGER)")
-                    conn.commit()
-                ok, msg = executor._exec_provider_sqlite_query({"database": str(root / "query.db"), "sql": "SELECT * FROM t", "mode": "first", "output_var": "FIRST"})
+                ok, msg = executor._exec_provider_xcom_pull({"runtime_state": str(bad_db), "key": "x"})
                 self.assertTrue(ok)
-                self.assertEqual(msg, "sqlite query returned no rows")
-                self.assertEqual(executor.ctx.variables["FIRST"], "")
+                self.assertEqual(msg, "1")
 
-                ok, msg = executor._exec_provider_sqlite_query({"database": str(root / "query.db"), "sql": "SELECT * FROM missing"})
-                self.assertFalse(ok)
-                self.assertIn("sqlite query failed", msg)
-
-                ok, msg = executor._exec_provider_sqlite_exec({"database": str(root / "query.db"), "sql": "INSERT INTO missing VALUES (1)"})
-                self.assertFalse(ok)
-                self.assertIn("sqlite execute failed", msg)
-
-                ok, msg = executor._exec_provider_sqlite_script({"database": str(root / "query.db"), "script": "BROKEN SQL;"})
-                self.assertFalse(ok)
-                self.assertIn("sqlite script failed", msg)
+                ok, msg = executor._exec_provider_xcom_push({"runtime_state": str(root / "ok"), "key": "k", "default": None})
+                self.assertTrue(ok)
 
     def test_storage_shell_condition_and_triggerer_edges(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -4,7 +4,8 @@
 import sys
 from typing import Optional, List
 
-from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
+from .help_catalog import render_command_help, render_top_level_help
 
 SUBCOMMAND_SPECS = (
     SubcommandSpec("show", "Show the merged configuration."),
@@ -20,37 +21,9 @@ TMUX_SUBCOMMAND_SPECS = (
     SubcommandSpec("apply", "Write ~/.tmux.conf from config."),
 )
 
-usage = render_command_help(
-    command="train config",
-    summary="Inspect and update tmux-trainsh configuration.",
-    usage_lines=(
-        "train config <subcommand> [args...]",
-        "train config tmux <show|edit|apply>",
-    ),
-    subcommands=SUBCOMMAND_SPECS,
-    notes=("Main config file: ~/.config/tmux-trainsh/config.yaml.",),
-    examples=(
-        "train config show",
-        "train config get ui.currency",
-        "train config set ui.currency CNY",
-        "train config tmux show",
-        "train config tmux edit",
-        "train config tmux apply",
-    ),
-)
+usage = render_command_help("config")
 
-tmux_usage = render_command_help(
-    command="train config tmux",
-    summary="Inspect and apply tmux-specific settings stored in config.yaml.",
-    usage_lines=("train config tmux <show|edit|apply>",),
-    subcommands=TMUX_SUBCOMMAND_SPECS,
-    notes=("Apply writes ~/.tmux.conf; edit only changes config.yaml.",),
-    examples=(
-        "train config tmux show",
-        "train config tmux edit",
-        "train config tmux apply",
-    ),
-)
+tmux_usage = render_command_help("config-tmux")
 
 
 def cmd_show(args: List[str]) -> None:
@@ -285,8 +258,11 @@ def cmd_tmux_edit(args: List[str]) -> None:
 
 def _handle_tmux_namespace(args: List[str]) -> None:
     """Dispatch nested tmux config commands."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(tmux_usage)
+        return
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return
 
     subcommand = args[0]
@@ -309,8 +285,11 @@ def _handle_tmux_namespace(args: List[str]) -> None:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for config command."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(usage)
+        return None
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]

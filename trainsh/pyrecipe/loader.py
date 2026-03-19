@@ -1,7 +1,8 @@
-"""Loader for .py recipe files."""
+"""Loader for Python recipe source files."""
 
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import hashlib
 import sys
@@ -18,12 +19,14 @@ def _module_name_for_path(path: Path) -> str:
 
 
 def load_python_recipe(path: str) -> RecipeSpec:
-    """Load one recipe object from Python file."""
+    """Load one recipe object from a Python recipe source file."""
     source = Path(path).expanduser().resolve()
     if not source.exists():
         raise FileNotFoundError(f"recipe file not found: {path}")
 
-    spec = importlib.util.spec_from_file_location(_module_name_for_path(source), str(source))
+    module_name = _module_name_for_path(source)
+    loader = importlib.machinery.SourceFileLoader(module_name, str(source))
+    spec = importlib.util.spec_from_loader(module_name, loader, origin=str(source))
     if spec is None or spec.loader is None:
         raise RuntimeError(f"failed to load recipe module from: {source}")
 
@@ -50,4 +53,4 @@ def load_python_recipe(path: str) -> RecipeSpec:
             "multiple RecipeSpec objects found in recipe module; "
             "please expose only one as `recipe = ...`"
         )
-    raise RuntimeError("no recipe defined in .py file")
+    raise RuntimeError("no recipe defined in recipe source file")

@@ -3,11 +3,12 @@
 
 import subprocess
 import os
+import shutil
 from typing import Optional, List, Tuple, Any
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from ..core.models import Host, HostType
+from ..core.models import AuthMethod, Host, HostType
 
 
 @dataclass
@@ -45,6 +46,7 @@ class SSHClient:
         port: int = 22,
         username: Optional[str] = None,
         key_path: Optional[str] = None,
+        password_file: Optional[str] = None,
         jump_host: Optional[str] = None,
         proxy_command: Optional[str] = None,
         connection_targets: Optional[List[SSHConnectionTarget]] = None,
@@ -67,6 +69,7 @@ class SSHClient:
         self.port = port
         self.username = username
         self.key_path = key_path
+        self.password_file = password_file
         self.jump_host = jump_host
         self.proxy_command = proxy_command
         self.connect_timeout = connect_timeout
@@ -89,6 +92,16 @@ class SSHClient:
             host = prepare_vast_host(host)
 
         env_vars = host.env_vars or {}
+        key_path = host.ssh_key_path
+        password_file = None
+        from .secret_materialize import materialize_secret_file, resolve_resource_secret_name
+
+        key_secret = resolve_resource_secret_name(host.name or host.hostname, env_vars.get("ssh_key_secret"), "SSH_PRIVATE_KEY")
+        if key_secret:
+            key_path = materialize_secret_file(key_secret, suffix=".key") or key_path
+        password_secret = resolve_resource_secret_name(host.name or host.hostname, env_vars.get("ssh_password_secret"), "SSH_PASSWORD")
+        if host.auth_method == AuthMethod.PASSWORD and password_secret:
+            password_file = materialize_secret_file(password_secret, suffix=".pass")
         primary = SSHConnectionTarget(
             hostname=host.hostname,
             port=host.port,
@@ -102,11 +115,29 @@ class SSHClient:
             hostname=host.hostname,
             port=host.port,
             username=host.username,
-            key_path=host.ssh_key_path,
+            key_path=key_path,
+            password_file=password_file,
             jump_host=host.jump_host,
             proxy_command=primary.proxy_command,
             connection_targets=targets,
         )
+
+    def _requires_sshpass(self) -> bool:
+        return bool(self.password_file)
+
+    def _can_use_sshpass(self) -> bool:
+        return bool(self.password_file and shutil.which("sshpass"))
+
+    def _sshpass_error(self) -> str:
+        return (
+            "sshpass is required for secret-managed password SSH authentication. "
+            "Install sshpass or switch this host to SSH key / agent auth."
+        )
+
+    def _auth_prefix(self) -> List[str]:
+        if self._can_use_sshpass():
+            return ["sshpass", "-f", str(self.password_file)]
+        return []
 
     @staticmethod
     def _build_cloudflared_proxy_command(
@@ -312,15 +343,18 @@ class SSHClient:
         self,
         command: Optional[str] = None,
         target: Optional[SSHConnectionTarget] = None,
+        *,
+        interactive: bool = False,
     ) -> List[str]:
         """Build SSH command arguments."""
-        args = ["ssh"]
+        args = [*self._auth_prefix(), "ssh"]
         chosen = target or self.connection_targets[0]
         target_host, target_port = self._get_connection_target(chosen)
 
         # Connection options
         args.extend(["-o", "StrictHostKeyChecking=accept-new"])
-        args.extend(["-o", "BatchMode=yes"])
+        if not interactive or self._can_use_sshpass() or not self._requires_sshpass():
+            args.extend(["-o", "BatchMode=yes"])
         args.extend(["-o", f"ConnectTimeout={self.connect_timeout}"])
 
         # Port
@@ -365,6 +399,8 @@ class SSHClient:
         Returns:
             SSHResult with exit code and output
         """
+        if self._requires_sshpass() and not self._can_use_sshpass():
+            return SSHResult(exit_code=-1, stdout="", stderr=self._sshpass_error())
         last_result: Optional[SSHResult] = None
         for index, target in enumerate(self.connection_targets):
             args = self._build_ssh_args(command, target=target)
@@ -420,7 +456,9 @@ class SSHClient:
         Returns:
             SSH command string
         """
-        args = self._build_ssh_args(target=self.connection_targets[0])
+        args = self._build_ssh_args(target=self.connection_targets[0], interactive=True)
+        if self._can_use_sshpass():
+            return " ".join(["sshpass", "-f", "<secret>", *args[3:]])
         return " ".join(args)
 
     def connect_interactive(self) -> int:
@@ -432,7 +470,7 @@ class SSHClient:
         """
         last_code = 255
         for index, target in enumerate(self.connection_targets):
-            args = self._build_ssh_args(target=target)
+            args = self._build_ssh_args(target=target, interactive=True)
             result = subprocess.run(args)
             last_code = result.returncode
             if result.returncode == 255 and index < len(self.connection_targets) - 1:
@@ -448,7 +486,7 @@ class SSHClient:
         target: SSHConnectionTarget,
     ) -> List[str]:
         target_host, target_port = self._get_connection_target(target)
-        args = ["scp"]
+        args = [*self._auth_prefix(), "scp"]
 
         if recursive:
             args.append("-r")
@@ -488,6 +526,8 @@ class SSHClient:
         Returns:
             SSHResult with exit code and output
         """
+        if self._requires_sshpass() and not self._can_use_sshpass():
+            return SSHResult(exit_code=-1, stdout="", stderr=self._sshpass_error())
         last_result: Optional[SSHResult] = None
         for index, target in enumerate(self.connection_targets):
             args = self._build_scp_upload_args(local_path, remote_path, recursive, target)
@@ -520,7 +560,7 @@ class SSHClient:
         target: SSHConnectionTarget,
     ) -> List[str]:
         target_host, target_port = self._get_connection_target(target)
-        args = ["scp"]
+        args = [*self._auth_prefix(), "scp"]
 
         if recursive:
             args.append("-r")
@@ -560,6 +600,8 @@ class SSHClient:
         Returns:
             SSHResult with exit code and output
         """
+        if self._requires_sshpass() and not self._can_use_sshpass():
+            return SSHResult(exit_code=-1, stdout="", stderr=self._sshpass_error())
         last_result: Optional[SSHResult] = None
         for index, target in enumerate(self.connection_targets):
             args = self._build_scp_download_args(remote_path, local_path, recursive, target)

@@ -5,12 +5,16 @@ import sys
 import os
 from typing import Optional, List
 
-from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
+from .help_catalog import render_command_help, render_top_level_help
+from ..core.models import AuthMethod, Host, HostType
+from .remote_run import parse_remote_run_args, run_remote_command
 
 SUBCOMMAND_SPECS = (
     SubcommandSpec("list", "List your current Vast.ai instances."),
     SubcommandSpec("show", "Inspect one instance in detail."),
     SubcommandSpec("ssh", "Open SSH to a running instance."),
+    SubcommandSpec("run", "Run one remote shell command on an instance."),
     SubcommandSpec("start", "Start an instance."),
     SubcommandSpec("stop", "Stop an instance."),
     SubcommandSpec("reboot", "Reboot an instance."),
@@ -20,23 +24,7 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("attach-key", "Upload a local SSH public key."),
 )
 
-usage = render_command_help(
-    command="train vast",
-    summary="Manage Vast.ai instances and offers.",
-    usage_lines=(
-        "train vast <subcommand> [args...]",
-        "train vast ssh <instance-id>",
-        "train vast search",
-    ),
-    subcommands=SUBCOMMAND_SPECS,
-    notes=("Requires VAST_API_KEY. Configure it with train secrets set VAST_API_KEY.",),
-    examples=(
-        "train vast list",
-        "train vast search",
-        "train vast ssh 12345",
-        "train vast remove 12345",
-    ),
-)
+usage = render_command_help("vast")
 
 
 def cmd_list(args: List[str]) -> None:
@@ -77,6 +65,7 @@ def cmd_ssh(args: List[str]) -> None:
         sys.exit(1)
 
     from ..services.vast_api import get_vast_client
+    from ..services.vast_connection import preferred_vast_ssh_target, ssh_target_to_command
 
     inst_id = int(args[0])
     client = get_vast_client()
@@ -91,16 +80,36 @@ def cmd_ssh(args: List[str]) -> None:
         print("Use 'train vast start <id>' to start the instance.")
         sys.exit(1)
 
-    ssh_host = inst.ssh_host or inst.public_ipaddr
-    ssh_port = inst.ssh_port or 22
-
-    if not ssh_host:
+    target = preferred_vast_ssh_target(inst)
+    if target is None:
         print("SSH host not available for this instance.")
         sys.exit(1)
 
+    ssh_host = target["hostname"]
+    ssh_port = int(target["port"])
     print(f"Connecting to {ssh_host}:{ssh_port}...")
-    ssh_cmd = f"ssh -p {ssh_port} root@{ssh_host}"
+    ssh_cmd = ssh_target_to_command(target)
     os.system(ssh_cmd)
+
+
+def cmd_run(args: List[str]) -> None:
+    """Run one command on a Vast.ai instance."""
+    instance_id_text, command = parse_remote_run_args(args, usage="train vast run <instance-id> -- <command>")
+
+    try:
+        instance_id = int(instance_id_text)
+    except ValueError:
+        print(f"Invalid instance ID: {instance_id_text}")
+        sys.exit(1)
+
+    host = Host(
+        name=f"vast-{instance_id}",
+        type=HostType.VASTAI,
+        username="root",
+        auth_method=AuthMethod.KEY,
+        vast_instance_id=str(instance_id),
+    )
+    run_remote_command(host, command, label=f"Vast.ai #{instance_id}")
 
 
 def cmd_start(args: List[str]) -> None:
@@ -258,8 +267,11 @@ def cmd_attach_key(args: List[str]) -> None:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for vast command."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(usage)
+        return None
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]
@@ -269,6 +281,7 @@ def main(args: List[str]) -> Optional[str]:
         "list": cmd_list,
         "show": cmd_show,
         "ssh": cmd_ssh,
+        "run": cmd_run,
         "start": cmd_start,
         "stop": cmd_stop,
         "reboot": cmd_reboot,

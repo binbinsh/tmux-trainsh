@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 
 class WaitHelper:
@@ -108,25 +108,30 @@ class WaitHelper:
 
         return current_cmd, ""
 
-    def wait_for_idle(self, window: Any, timeout: int) -> tuple[bool, str]:
+    def wait_for_idle(self, window: Any, timeout: Optional[int]) -> tuple[bool, str]:
         """Wait for remote/local tmux pane to become idle."""
         host = window.host
         session = window.remote_session
         start = time.time()
         poll_interval = 30
         confirm_count = 3
-        confirm_interval = min(10, max(1, timeout // (confirm_count + 2)))
+        timeout_secs = None if timeout is None else max(0, int(timeout))
+        confirm_interval = 10 if timeout_secs is None else min(10, max(1, timeout_secs // (confirm_count + 2)))
 
-        if timeout > 3600:
-            self.executor.log(f"  Long wait ({self.format_duration(timeout)})")
+        if timeout_secs is not None and timeout_secs > 3600:
+            self.executor.log(f"  Long wait ({self.format_duration(timeout_secs)})")
             self.executor.log("  If you disconnect, run 'train recipe resume <name>' to continue later")
 
         # Give commands a brief head start before polling for idle.
-        time.sleep(min(5, max(1, timeout // 6)))
+        head_start = 5 if timeout_secs is None else min(5, max(1, timeout_secs // 6))
+        time.sleep(head_start)
         consecutive_idle = 0
 
-        while time.time() - start < timeout:
-            remaining = int(timeout - (time.time() - start))
+        while True:
+            elapsed = time.time() - start
+            if timeout_secs is not None and elapsed >= timeout_secs:
+                break
+            remaining = None if timeout_secs is None else max(0, int(timeout_secs - elapsed))
             try:
                 if self.is_pane_idle(host, session):
                     consecutive_idle += 1
@@ -143,7 +148,10 @@ class WaitHelper:
                 consecutive_idle = 0
 
             current_cmd, process_tree = self.get_pane_process_info(host, session)
-            self.executor.log(f"  Waiting for @{window.name}... ({self.format_duration(remaining)} remaining)")
+            if remaining is None:
+                self.executor.log(f"  Waiting for @{window.name}... (timeout disabled)")
+            else:
+                self.executor.log(f"  Waiting for @{window.name}... ({self.format_duration(remaining)} remaining)")
             self.executor.log(f"    Current command: {current_cmd}")
             if process_tree:
                 self.executor.log("    Running processes:")
@@ -159,7 +167,7 @@ class WaitHelper:
                 pass
             time.sleep(poll_interval)
 
-        return False, f"Timeout after {self.format_duration(timeout)}"
+        return False, f"Timeout after {self.format_duration(timeout_secs)}"
 
     def exec_wait(self, step: Any) -> tuple[bool, str]:
         """Execute wait condition with SSH retry logic."""

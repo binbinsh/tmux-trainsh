@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+from pathlib import Path
 from typing import List, Optional
 
-from ..cli_utils import SubcommandSpec, prompt_input, render_command_help
+from ..cli_utils import SubcommandSpec, prompt_input
+from ..constants import RECIPE_FILE_EXTENSION, RECIPE_FILE_EXTENSIONS
+from .help_catalog import render_command_help, render_top_level_help
 from .recipe_templates import get_recipe_template, list_template_names
 
 SUBCOMMAND_SPECS = (
@@ -18,30 +22,11 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("remove", "Delete a recipe file after confirmation."),
 )
 
-usage = render_command_help(
-    command="train recipe",
-    summary="Manage recipe files inside the canonical recipe namespace.",
-    usage_lines=(
-        "train recipe <list|show|new|edit|remove> [args...]",
-        "train recipe new <name> [--template minimal]",
-    ),
-    subcommands=SUBCOMMAND_SPECS,
-    notes=(
-        "Recipe files live in ~/.config/tmux-trainsh/recipes/*.py.",
-        "Execution and monitoring live under train recipe run/resume/status/logs/jobs/schedule.",
-        f"Bundled templates: {' | '.join(list_template_names())}.",
-        "Current bundled examples: nanochat | aptup | brewup | hello.",
-    ),
-    examples=(
-        "train recipe list",
-        "train recipe show nanochat",
-        "train recipe run nanochat",
-        "train recipe status --last",
-    ),
-)
+usage = render_command_help("recipe")
 
 RUNTIME_REDIRECTS = {
     "run": "train recipe run",
+    "exec": "train recipe exec",
     "resume": "train recipe resume",
     "status": "train recipe status",
     "logs": "train recipe logs",
@@ -50,12 +35,41 @@ RUNTIME_REDIRECTS = {
 }
 
 
-def get_recipes_dir() -> str:
-    """Get the recipes directory path."""
-    from ..constants import RECIPES_DIR
+def _is_recipe_filename(filename: str) -> bool:
+    return any(str(filename).endswith(ext) for ext in RECIPE_FILE_EXTENSIONS)
 
-    RECIPES_DIR.mkdir(parents=True, exist_ok=True)
-    return str(RECIPES_DIR)
+
+def _candidate_recipe_paths(root: str, name: str) -> list[str]:
+    if _is_recipe_filename(name):
+        return [os.path.join(root, name)]
+    return [os.path.join(root, f"{name}{RECIPE_FILE_EXTENSION}")]
+
+
+def get_recipes_dir() -> str:
+    """Get the project-local recipes directory path."""
+    root = _project_root()
+    recipes_dir = root / "recipes"
+    recipes_dir.mkdir(parents=True, exist_ok=True)
+    return str(recipes_dir)
+
+
+def _project_root() -> Path:
+    cwd = Path.cwd().resolve()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            timeout=1,
+            check=False,
+        )
+    except Exception:
+        return cwd
+    if result.returncode != 0:
+        return cwd
+    root = Path(result.stdout.strip() or str(cwd)).expanduser().resolve()
+    return root if root.exists() else cwd
 
 
 def get_examples_dir() -> Optional[str]:
@@ -82,7 +96,7 @@ def list_recipes() -> List[str]:
     recipes_dir = get_recipes_dir()
     recipes = []
     for filename in os.listdir(recipes_dir):
-        if filename.endswith(".py"):
+        if _is_recipe_filename(filename):
             recipes.append(filename)
     return sorted(recipes)
 
@@ -96,7 +110,7 @@ def list_examples() -> List[str]:
     examples = []
     try:
         for filename in os.listdir(examples_dir):
-            if filename.endswith(".py"):
+            if _is_recipe_filename(filename):
                 examples.append(filename)
     except OSError:
         return []
@@ -111,29 +125,31 @@ def _open_editor(path: str) -> None:
 
 def find_recipe(name: str) -> Optional[str]:
     """Find a recipe file by name. Searches user recipes first, then examples."""
-    if os.path.exists(name) and name.endswith(".py"):
+    if os.path.exists(name) and _is_recipe_filename(name):
         return name
 
     recipes_dir = get_recipes_dir()
-    for ext in [".py", ""]:
-        test_path = os.path.join(recipes_dir, name + ext)
-        if os.path.exists(test_path) and test_path.endswith(".py"):
+    for test_path in _candidate_recipe_paths(recipes_dir, name):
+        if os.path.exists(test_path) and _is_recipe_filename(test_path):
+            return test_path
+
+    project_root = str(_project_root())
+    for test_path in _candidate_recipe_paths(project_root, name):
+        if os.path.exists(test_path) and _is_recipe_filename(test_path):
             return test_path
 
     if name.startswith("examples/"):
         example_name = name[9:]
         examples_dir = get_examples_dir()
         if examples_dir:
-            for ext in [".py", ""]:
-                test_path = os.path.join(examples_dir, example_name + ext)
-                if os.path.exists(test_path) and test_path.endswith(".py"):
+            for test_path in _candidate_recipe_paths(examples_dir, example_name):
+                if os.path.exists(test_path) and _is_recipe_filename(test_path):
                     return test_path
 
     examples_dir = get_examples_dir()
     if examples_dir:
-        for ext in [".py", ""]:
-            test_path = os.path.join(examples_dir, name + ext)
-            if os.path.exists(test_path) and test_path.endswith(".py"):
+        for test_path in _candidate_recipe_paths(examples_dir, name):
+            if os.path.exists(test_path) and _is_recipe_filename(test_path):
                 return test_path
 
     return None
@@ -151,13 +167,22 @@ def _path_within(path: str, root: Optional[str]) -> bool:
 def find_user_recipe(name: str) -> Optional[str]:
     """Find a removable/editable recipe under the user recipes directory only."""
     recipes_dir = get_recipes_dir()
-    if os.path.exists(name) and name.endswith(".py"):
+    if os.path.exists(name) and _is_recipe_filename(name):
         candidate = os.path.abspath(name)
-        return candidate if _path_within(candidate, recipes_dir) else None
+        if _is_bundled_example(candidate):
+            return None
+        if _path_within(candidate, recipes_dir):
+            return candidate
+        project_root = str(_project_root())
+        return candidate if _path_within(candidate, project_root) else None
 
-    for ext in [".py", ""]:
-        test_path = os.path.join(recipes_dir, name + ext)
-        if os.path.exists(test_path) and test_path.endswith(".py"):
+    for test_path in _candidate_recipe_paths(recipes_dir, name):
+        if os.path.exists(test_path) and _is_recipe_filename(test_path):
+            return test_path
+
+    project_root = str(_project_root())
+    for test_path in _candidate_recipe_paths(project_root, name):
+        if os.path.exists(test_path) and _is_recipe_filename(test_path):
             return test_path
     return None
 
@@ -267,15 +292,22 @@ def cmd_new(args: List[str]) -> None:
             raise SystemExit(1)
         i += 1
 
-    if not name.endswith(".py"):
-        name += ".py"
+    if name.endswith(".py"):
+        name = f"{os.path.splitext(name)[0]}{RECIPE_FILE_EXTENSION}"
+    if not _is_recipe_filename(name):
+        name += RECIPE_FILE_EXTENSION
+
+    existing_recipe = find_user_recipe(os.path.splitext(name)[0])
+    if existing_recipe is not None:
+        print(f"Recipe already exists: {os.path.basename(existing_recipe)}")
+        raise SystemExit(1)
 
     recipe_path = os.path.join(get_recipes_dir(), name)
     if os.path.exists(recipe_path):
         print(f"Recipe already exists: {name}")
         raise SystemExit(1)
 
-    recipe_name = name[:-3]
+    recipe_name = os.path.splitext(name)[0]
     try:
         template = get_recipe_template(template_name, recipe_name)
     except ValueError as exc:
@@ -339,8 +371,11 @@ def cmd_rm(args: List[str]) -> None:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for recipe file-management subcommands."""
-    if not args or args[0] in {"-h", "--help", "help"}:
+    if not args:
         print(usage)
+        return None
+    if args[0] in {"-h", "--help", "help"}:
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]

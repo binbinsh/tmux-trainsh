@@ -21,6 +21,13 @@ class StorageResolutionTests(unittest.TestCase):
     def test_legacy_s3_inline_spec_is_no_longer_supported(self):
         self.assertIsNone(build_storage_from_spec("s3:old-bucket"))
 
+    def test_executor_transfer_rejects_inline_s3_endpoint(self):
+        with isolated_executor(RecipeModel(name="reject-inline-s3")) as (executor, _config_dir):
+            ok, message = executor.transfer_helper.transfer("./local", "@s3:logs-bucket:/checkpoints")
+
+        self.assertFalse(ok)
+        self.assertIn("Inline Amazon S3 endpoints are not supported", message)
+
     def test_executor_transfer_parses_global_and_inline_storage_endpoints(self):
         global_storage = Storage(
             id="archive",

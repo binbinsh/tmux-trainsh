@@ -352,9 +352,12 @@ class VastAPIClient:
         Returns:
             SSH command string, or None if not available
         """
-        if not instance.ssh_host or not instance.ssh_port:
+        from .vast_connection import preferred_vast_ssh_target, ssh_target_to_command
+
+        target = preferred_vast_ssh_target(instance)
+        if target is None:
             return None
-        return f"ssh -p {instance.ssh_port} root@{instance.ssh_host}"
+        return ssh_target_to_command(target)
 
     def _parse_instance(self, data: Dict[str, Any]) -> VastInstance:
         """Parse API response into VastInstance."""
@@ -380,9 +383,11 @@ class VastAPIClient:
             ssh_idx=data.get("ssh_idx"),
             ssh_host=data.get("ssh_host"),
             ssh_port=data.get("ssh_port"),
+            ports=data.get("ports"),
             public_ipaddr=data.get("public_ipaddr"),
             direct_port_start=data.get("direct_port_start"),
             direct_port_end=data.get("direct_port_end"),
+            image_runtype=data.get("image_runtype"),
             label=data.get("label"),
             template_name=data.get("template_name"),
             image_uuid=data.get("image_uuid"),

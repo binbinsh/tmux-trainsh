@@ -24,6 +24,7 @@ def ok(stdout="", stderr=""):
 class FakeTmuxClient:
     def __init__(self):
         self.sent = []
+        self.wait_calls = []
         self.sessions = set()
         self.capture = ok("line1\nline2\nline3\n")
         self.display = ok("bash\n")
@@ -51,6 +52,7 @@ class FakeTmuxClient:
         return list(self.panes)
 
     def wait_for(self, signal, timeout=1):
+        self.wait_calls.append((signal, timeout))
         return self.wait
 
     def has_session(self, name):
@@ -145,7 +147,21 @@ class SchedulerTests(unittest.TestCase):
                 schedule="@every 5m",
                 schedule_meta=parse_schedule("@every 5m"),
             )
-            scheduler = DagScheduler(dag_processor=SimpleNamespace(discover_dags=lambda: []), sqlite_db=str(db_path))
+            from trainsh.core.runtime_store import RuntimeStore
+
+            RuntimeStore(db_path).append_run(
+                {
+                    "run_id": "run-1",
+                    "dag_id": "demo-dag",
+                    "recipe_name": "demo",
+                    "recipe_path": "/tmp/demo.pyrecipe",
+                    "state": "running",
+                    "status": "running",
+                    "started_at": "2026-03-12T08:00:00+00:00",
+                    "updated_at": "2026-03-12T08:00:00+00:00",
+                }
+            )
+            scheduler = DagScheduler(dag_processor=SimpleNamespace(discover_dags=lambda: []), runtime_state=str(db_path))
             self.assertEqual(scheduler._count_db_running("demo-dag"), 1)
             self.assertIsNotNone(scheduler._latest_run_start("demo-dag"))
             self.assertTrue(scheduler._parse_time("2026-03-12T08:00:00+00:00"))
@@ -205,6 +221,11 @@ class BridgeExecutionHelperTests(unittest.TestCase):
         self.assertTrue(found)
         self.assertEqual(code, 0)
 
+        tmux.capture = ok("marker0\n")
+        found, code = helper._wait_bridge_marker("%1", "marker", None)
+        self.assertTrue(found)
+        self.assertEqual(code, 0)
+
         window = SimpleNamespace(name="main", host="gpu", remote_session="sess")
         result = helper.exec_via_bridge(window, "echo hi", timeout=10, background=True, start_time=0)
         self.assertEqual(result, (True, "Command sent (background via bridge)"))
@@ -218,6 +239,13 @@ class BridgeExecutionHelperTests(unittest.TestCase):
         with patch.object(helper, "_wait_bridge_marker", return_value=(False, None)):
             result = helper.exec_via_bridge(window, "echo hi", timeout=10, background=False, start_time=0)
         self.assertEqual(result, (False, "Command timed out after 10s"))
+
+        with patch.object(helper, "_wait_bridge_marker", return_value=(True, 0)) as mocked_wait, patch(
+            "time.time", side_effect=[0, 1]
+        ):
+            result = helper.exec_via_bridge(window, "echo hi", timeout=None, background=False, start_time=0)
+        self.assertEqual(result, (True, "Command completed (0s)"))
+        self.assertIsNone(mocked_wait.call_args.args[2])
 
 
 class ExecuteHelperTests(unittest.TestCase):
@@ -289,6 +317,39 @@ class ExecuteHelperTests(unittest.TestCase):
         tmux.wait = MagicMock(side_effect=__import__("subprocess").TimeoutExpired("wait", 1))
         self.assertFalse(helper.tmux_wait_for_signal("gpu", "sig"))
 
+    def test_execute_zero_timeout_disables_runtime_timeout(self):
+        helper, executor, tmux = self.make_helper()
+        step = SimpleNamespace(host="main", commands="echo $NAME", background=False, timeout=0)
+
+        bridge_calls = []
+        executor._resolve_window = lambda name: SimpleNamespace(host="gpu", remote_session="sess")
+        executor._exec_via_bridge = lambda **kwargs: bridge_calls.append(kwargs) or None
+        tmux.wait = ok("")
+        ok_run, msg = helper.exec_execute(step)
+        self.assertTrue(ok_run)
+        self.assertIn("Command completed", msg)
+        self.assertIsNone(bridge_calls[-1]["timeout"])
+        self.assertIsNone(tmux.wait_calls[-1][1])
+
+        resume_calls = []
+        executor.is_resuming = True
+        executor._wait_for_idle = lambda window, timeout: resume_calls.append(timeout) or (True, "idle")
+        ok_run, msg = helper.exec_execute(step)
+        self.assertTrue(ok_run)
+        self.assertEqual(msg, "idle")
+        self.assertIsNone(resume_calls[-1])
+
+        executor.is_resuming = False
+        executor._resolve_window = lambda name: SimpleNamespace(host="local", remote_session="")
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="ok", stderr="")) as mocked_run:
+            self.assertEqual(helper.exec_execute(step), (True, "ok"))
+        self.assertIsNone(mocked_run.call_args.kwargs["timeout"])
+
+        executor._resolve_window = lambda name: SimpleNamespace(host="gpu", remote_session="")
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="ok", stderr="")) as mocked_run:
+            self.assertEqual(helper.exec_execute(step), (True, "ok"))
+        self.assertIsNone(mocked_run.call_args.kwargs["timeout"])
+
 
 class WaitHelperTests(unittest.TestCase):
     def make_helper(self):
@@ -325,6 +386,11 @@ class WaitHelperTests(unittest.TestCase):
 
         with patch("time.sleep", return_value=None), patch.object(helper, "is_pane_idle", side_effect=[True, True, True]):
             ok_wait, msg = helper.wait_for_idle(SimpleNamespace(name="main", host="local", remote_session="sess"), 5)
+        self.assertTrue(ok_wait)
+        self.assertIn("confirmed", msg)
+
+        with patch("time.sleep", return_value=None), patch.object(helper, "is_pane_idle", side_effect=[True, True, True]):
+            ok_wait, msg = helper.wait_for_idle(SimpleNamespace(name="main", host="local", remote_session="sess"), None)
         self.assertTrue(ok_wait)
         self.assertIn("confirmed", msg)
 

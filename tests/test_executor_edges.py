@@ -361,7 +361,7 @@ class RunRecipeEdgeTests(unittest.TestCase):
     def test_run_recipe_validates_resume_merges_and_restores(self):
         fake_recipe = SimpleNamespace(
             executor_kwargs={"max_workers": 2, "pool_slots": {"default": 1}},
-            callbacks=["sqlite", "console"],
+            callbacks=["jsonl", "console"],
             executor="thread_pool",
             variables={"A": "1"},
             hosts={"gpu": "local"},
@@ -404,7 +404,7 @@ class RunRecipeEdgeTests(unittest.TestCase):
         ) as mocked_build_sinks, patch(
             "trainsh.runtime.get_executor", return_value=FakeRuntimeExec()
         ) as mocked_get_executor, patch(
-            "trainsh.runtime.SqliteCallbackSink", return_value="sqlite-sink"
+            "trainsh.runtime.JsonlCallbackSink", return_value="jsonl-sink"
         ), patch(
             "trainsh.core.executor_main.DSLExecutor", FakeExecutor
         ), patch(
@@ -413,12 +413,12 @@ class RunRecipeEdgeTests(unittest.TestCase):
             "trainsh.core.executor_main.get_window_session_name", return_value="generated-sess"
         ):
             ok = run_recipe(
-                "/tmp/demo.py",
+                "/tmp/demo.pyrecipe",
                 var_overrides={"NEW": "3"},
                 resume=True,
                 initial_session_index=2,
                 executor_kwargs={"max_workers": 8},
-                callbacks=["sqlite,console"],
+                callbacks=["jsonl,console"],
                 run_type="scheduled",
             )
         self.assertTrue(ok)
@@ -431,13 +431,13 @@ class RunRecipeEdgeTests(unittest.TestCase):
         self.assertIn("gpu", runtime_executor_calls["windows"])
         self.assertEqual(runtime_executor_calls["kwargs"]["bridge_session"], "bridge-1")
         self.assertEqual(runtime_executor_calls["kwargs"]["run_type"], "scheduled")
-        self.assertEqual(runtime_executor_calls["kwargs"]["callback_sinks"], ["sqlite-sink", "console-sink"])
+        self.assertEqual(runtime_executor_calls["kwargs"]["callback_sinks"], ["jsonl-sink", "console-sink"])
 
     def test_run_recipe_validation_and_host_override_paths(self):
         with self.assertRaises(ValueError):
             run_recipe("/tmp/demo.txt")
         with self.assertRaises(ValueError):
-            run_recipe("/tmp/demo.py", resume=True, host_overrides={"gpu": "local"})
+            run_recipe("/tmp/demo.pyrecipe", resume=True, host_overrides={"gpu": "local"})
 
         fake_recipe = SimpleNamespace(
             executor_kwargs={},
@@ -468,14 +468,14 @@ class RunRecipeEdgeTests(unittest.TestCase):
         ), patch(
             "trainsh.runtime.get_executor", return_value=FakeRuntimeExec()
         ) as mocked_get_executor, patch(
-            "trainsh.runtime.SqliteCallbackSink", return_value="sqlite-sink"
+            "trainsh.runtime.JsonlCallbackSink", return_value="jsonl-sink"
         ), patch(
             "trainsh.core.executor_main.DSLExecutor", FakeExecutor
         ), patch(
             "trainsh.core.executor_main.JobStateManager", return_value=manager
         ):
             ok = run_recipe(
-                "/tmp/demo.py",
+                "/tmp/demo.pyrecipe",
                 host_overrides={"gpu": "vast:123"},
                 callback_sinks=["extra"],
                 job_id="job-2",

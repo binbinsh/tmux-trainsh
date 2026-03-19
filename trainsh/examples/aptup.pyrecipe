@@ -1,0 +1,14 @@
+from trainsh import Recipe, local
+
+recipe = Recipe(
+    "aptup",
+    owner="ops",
+    tags=["bundle", "local", "maintenance"],
+    callbacks=["console", "jsonl"],
+)
+
+with local.tmux("update") as tmux:
+    tmux.run("sudo apt update")
+    tmux.run("sudo apt -y dist-upgrade")
+    tmux.run("sudo apt -y autoremove")
+    recipe.notify("apt upgrade complete!")

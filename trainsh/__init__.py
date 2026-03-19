@@ -7,7 +7,7 @@ import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from .pyrecipe import Host, HostPath, Recipe, Storage, StoragePath, VastHost, load_python_recipe, official_uv_install_command
+from .pyrecipe import Host, HostPath, Recipe, Storage, StoragePath, VastHost, load_python_recipe, local, official_uv_install_command
 
 
 def _read_local_version() -> str:
@@ -86,6 +86,7 @@ __all__ = [
     "__display_version__",
     "__version__",
     "load_python_recipe",
+    "local",
     "main",
     "official_uv_install_command",
 ]

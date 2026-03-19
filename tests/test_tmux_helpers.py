@@ -13,6 +13,7 @@ from trainsh.core.executor_utils import (
     _test_ssh_connection,
 )
 from trainsh.core.local_tmux import LocalTmuxClient, TmuxCmdResult
+from trainsh.core.models import AuthMethod, Host, HostType
 from trainsh.core.recipe_models import RecipeModel, RecipeStepModel, StepType
 from trainsh.core.remote_tmux import RemoteTmuxClient
 
@@ -132,6 +133,35 @@ class ExecutorUtilsTests(unittest.TestCase):
         self.assertEqual(parsed.port, 2200)
         self.assertEqual(parsed.jump_host, "jump")
         self.assertEqual(parsed.env_vars["proxy_command"], "proxy")
+
+        configured = Host(
+            name="gpu-box",
+            type=HostType.SSH,
+            hostname="gpu.example.com",
+            port=2200,
+            username="root",
+            auth_method=AuthMethod.KEY,
+        )
+        fake_client = SimpleNamespace(
+            _build_ssh_args=lambda command=None, interactive=False: [
+                "ssh",
+                "-p",
+                "2200",
+                "root@gpu.example.com",
+                command or "",
+            ]
+        )
+        with patch("trainsh.commands.host.load_hosts", return_value={"gpu-box": configured}), patch(
+            "trainsh.services.ssh.SSHClient.from_host",
+            return_value=fake_client,
+        ):
+            alias_args = _build_ssh_args("gpu-box", command="echo hi", tty=True, set_term=True)
+            alias_host = _host_from_ssh_spec("gpu-box")
+        self.assertEqual(alias_args[:2], ["ssh", "-t"])
+        self.assertIn("TERM=xterm-256color", alias_args[-1])
+        self.assertEqual(alias_host.hostname, "gpu.example.com")
+        self.assertEqual(alias_host.port, 2200)
+
         self.assertEqual(_format_duration(3661), "1h01m01s")
         self.assertEqual(_format_duration(61), "1m01s")
         self.assertEqual(_format_duration(5), "5s")
@@ -151,19 +181,31 @@ class ExecutorUtilsTests(unittest.TestCase):
         with patch("subprocess.run", side_effect=RuntimeError("boom")):
             self.assertFalse(_test_ssh_connection("host", 22))
 
-        instance = SimpleNamespace(public_ipaddr="1.2.3.4", direct_port_start=2200, ssh_host="proxy", ssh_port=2222)
+        instance = SimpleNamespace(
+            public_ipaddr="1.2.3.4",
+            ports={"22/tcp": [{"HostPort": "2201"}]},
+            direct_port_start=2200,
+            ssh_host="proxy",
+            ssh_port=2222,
+        )
         with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(get_instance=lambda instance_id: instance)), patch(
             "trainsh.core.executor_utils._test_ssh_connection", side_effect=[True]
         ):
-            self.assertIn("1.2.3.4", _resolve_vast_host("7"))
+            resolved = _resolve_vast_host("7")
+            self.assertIn("1.2.3.4", resolved)
+            self.assertIn("-p 2201", resolved)
         with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(get_instance=lambda instance_id: instance)), patch(
             "trainsh.core.executor_utils._test_ssh_connection", side_effect=[False, True]
         ):
-            self.assertIn("proxy", _resolve_vast_host("7"))
+            resolved = _resolve_vast_host("7")
+            self.assertIn("1.2.3.4", resolved)
+            self.assertIn("-p 2200", resolved)
         with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(get_instance=lambda instance_id: instance)), patch(
-            "trainsh.core.executor_utils._test_ssh_connection", side_effect=[False, False]
+            "trainsh.core.executor_utils._test_ssh_connection", side_effect=[False, False, False]
         ):
-            self.assertIn("proxy", _resolve_vast_host("7"))
+            resolved = _resolve_vast_host("7")
+            self.assertIn("1.2.3.4", resolved)
+            self.assertIn("-p 2201", resolved)
         with patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("boom")):
             self.assertEqual(_resolve_vast_host("7"), "vast-7")
 

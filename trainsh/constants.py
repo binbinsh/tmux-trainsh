@@ -6,13 +6,23 @@ from pathlib import Path
 # Application name
 APP_NAME = "tmux-trainsh"
 
+# XDG directories
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")))
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")))
+STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")))
+
 # Config directory
-CONFIG_DIR = Path(os.path.expanduser("~/.config/tmux-trainsh"))
+CONFIG_DIR = CONFIG_HOME / "tmux-trainsh"
+DATA_DIR = DATA_HOME / "tmux-trainsh"
+STATE_DIR = STATE_HOME / "tmux-trainsh"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 HOSTS_FILE = CONFIG_DIR / "hosts.yaml"
 STORAGES_FILE = CONFIG_DIR / "storages.yaml"
-RECIPES_DIR = CONFIG_DIR / "recipes"
-LOGS_DIR = CONFIG_DIR / "logs"
+RECIPES_DIR = DATA_DIR / "recipes"
+LOGS_DIR = DATA_DIR / "logs"
+RUNTIME_STATE_DIR = STATE_DIR / "runtime"
+RECIPE_FILE_EXTENSION = ".pyrecipe"
+RECIPE_FILE_EXTENSIONS = (RECIPE_FILE_EXTENSION,)
 
 # Keyring service name
 KEYRING_SERVICE = "tmux-trainsh"

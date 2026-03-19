@@ -37,7 +37,7 @@ from trainsh.runtime_executors import (
 class PythonRecipeLoaderTests(unittest.TestCase):
     def test_load_python_recipe_uses_public_api_contract(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "demo_recipe.py"
+            recipe_path = Path(tmpdir) / "demo_recipe.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """
@@ -69,7 +69,7 @@ class PythonRecipeLoaderTests(unittest.TestCase):
 
     def test_load_python_recipe_requires_declared_recipe(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "invalid_recipe.py"
+            recipe_path = Path(tmpdir) / "invalid_recipe.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """
@@ -84,7 +84,7 @@ class PythonRecipeLoaderTests(unittest.TestCase):
 
     def test_load_python_recipe_does_not_collect_uppercase_assignments_implicitly(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "vars_recipe.py"
+            recipe_path = Path(tmpdir) / "vars_recipe.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """
@@ -141,10 +141,9 @@ class PythonRecipeBuilderTests(unittest.TestCase):
             id="wait_storage",
             step_options={"trigger_rule": "none_failed"},
         )
-        query = dag.sqlite_query(
-            "select 1",
-            database="runtime.db",
-            output_var="rows",
+        query = dag.xcom_push(
+            "answer",
+            value={"rows": [1]},
             depends_on=[wait_storage],
             id="query",
         )
@@ -203,10 +202,9 @@ class PythonRecipeBuilderTests(unittest.TestCase):
         self.assertEqual(dag.storages["artifacts"], "r2:bucket")
 
         query_step = steps["query"]
-        self.assertEqual(query_step.provider, "sqlite")
-        self.assertEqual(query_step.operation, "query")
-        self.assertEqual(query_step.params["mode"], "all")
-        self.assertEqual(query_step.params["database"], "runtime.db")
+        self.assertEqual(query_step.provider, "util")
+        self.assertEqual(query_step.operation, "xcom_push")
+        self.assertEqual(query_step.params["key"], "answer")
 
         pull_step = steps["pull"]
         self.assertEqual(pull_step.provider, "util")
@@ -229,7 +227,7 @@ class PythonRecipeBuilderTests(unittest.TestCase):
 
     def test_builder_supports_namespace_api_assignment_and_chain_style_dependencies(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "capture_stage20.py"
+            recipe_path = Path(tmpdir) / "capture_stage20.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """
@@ -243,14 +241,12 @@ class PythonRecipeBuilderTests(unittest.TestCase):
                     local_capture = Path("./artifacts/remote/logs/stage20_train_pane.txt")
                     gpu = VastHost("32631353")
 
-                    with recipe.linear():
-                        recipe.vast.start(gpu)
-                        recipe.vast.wait_ready(gpu, timeout="5m")
-                        work = recipe.session("work", host=gpu)
-                        work.capture_pane(target=session_name, lines=400, output=capture_path)
+                    recipe.vast.start(gpu)
+                    recipe.vast.wait_ready(gpu, timeout="5m")
+                    with gpu.tmux("work") as tmux:
+                        tmux.capture_pane(target=session_name, lines=400, output=capture_path)
                         recipe.copy(gpu.path(capture_path), local_capture)
                         recipe.notify("Captured stage20 train pane")
-                        work.close()
                     """
                 ),
                 encoding="utf-8",
@@ -299,7 +295,7 @@ class RuntimeExecutorAliasTests(unittest.TestCase):
 class DagProcessorPythonRecipeTests(unittest.TestCase):
     def test_discovers_python_recipe_metadata_and_loads_recipe(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "scheduled_recipe.py"
+            recipe_path = Path(tmpdir) / "scheduled_recipe.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """
@@ -342,7 +338,7 @@ class DagProcessorPythonRecipeTests(unittest.TestCase):
 
     def test_discovers_metadata_from_context_manager_recipe_definition(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "context_recipe.py"
+            recipe_path = Path(tmpdir) / "context_recipe.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """
@@ -378,7 +374,7 @@ class DagBridgeRuntimeTests(unittest.TestCase):
     def test_dag_executor_forwards_manual_runtime_options(self):
         dag = ParsedDag(
             dag_id="demo-dag",
-            path=Path("/tmp/demo.py"),
+            path=Path("/tmp/demo.pyrecipe"),
             recipe_name="demo",
             is_python=True,
             schedule=None,
@@ -415,7 +411,7 @@ class DagBridgeRuntimeTests(unittest.TestCase):
     def test_dag_executor_prefers_manual_runtime_executor_over_recipe_default(self):
         dag = ParsedDag(
             dag_id="demo-dag",
-            path=Path("/tmp/demo.py"),
+            path=Path("/tmp/demo.pyrecipe"),
             recipe_name="demo",
             is_python=True,
             schedule=None,
@@ -439,7 +435,7 @@ class DagBridgeRuntimeTests(unittest.TestCase):
     def test_dag_executor_respects_explicit_recipe_callback_list(self):
         dag = ParsedDag(
             dag_id="demo-dag",
-            path=Path("/tmp/demo.py"),
+            path=Path("/tmp/demo.pyrecipe"),
             recipe_name="demo",
             is_python=True,
             schedule=None,
@@ -455,7 +451,7 @@ class DagBridgeRuntimeTests(unittest.TestCase):
 
     def test_runtime_dispatch_executes_recipe_via_parsed_dag(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "dispatch_demo.py"
+            recipe_path = Path(tmpdir) / "dispatch_demo.pyrecipe"
             recipe_path.write_text(
                 textwrap.dedent(
                     """\
@@ -487,7 +483,7 @@ class DagBridgeRuntimeTests(unittest.TestCase):
         self.assertEqual(kwargs["run_type"], "manual")
 
     def test_cmd_run_routes_manual_execution_through_dag_bridge(self):
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.commands.recipe_runtime.run_recipe_via_dag",
             return_value=SimpleNamespace(success=True),
         ) as mocked:
@@ -514,10 +510,10 @@ class MinimalTemplateTests(unittest.TestCase):
     def test_minimal_template_renders_and_loads(self):
         template = get_recipe_template("minimal", "demo")
         self.assertIn('Recipe("demo"', template)
-        self.assertIn("recipe.session(", template)
+        self.assertIn("local.tmux(", template)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "demo.py"
+            recipe_path = Path(tmpdir) / "demo.pyrecipe"
             recipe_path.write_text(template, encoding="utf-8")
             loaded = load_python_recipe(str(recipe_path))
 
@@ -528,7 +524,7 @@ class MinimalTemplateTests(unittest.TestCase):
 class PythonRecipeRuntimeIntegrationTests(unittest.TestCase):
     def test_run_recipe_honors_explicit_executor_override(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            recipe_path = Path(tmpdir) / "override_demo.py"
+            recipe_path = Path(tmpdir) / "override_demo.pyrecipe"
             config_dir = Path(tmpdir) / "config"
             recipe_path.write_text(
                 textwrap.dedent(
@@ -560,8 +556,11 @@ class PythonRecipeRuntimeIntegrationTests(unittest.TestCase):
                 "trainsh.core.executor_main.CONFIG_DIR",
                 config_dir,
             ), patch(
+                "trainsh.core.executor_main.RUNTIME_STATE_DIR",
+                config_dir / "runtime",
+            ), patch(
                 "trainsh.runtime.CONFIG_DIR",
-                config_dir,
+                config_dir / "runtime",
             ):
                 ok = run_recipe(
                     str(recipe_path),
@@ -577,7 +576,7 @@ class PythonRecipeRuntimeIntegrationTests(unittest.TestCase):
     def test_run_recipe_executes_local_provider_chain_and_persists_runtime_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            recipe_path = root / "runtime_demo.py"
+            recipe_path = root / "runtime_demo.pyrecipe"
             sqlite_db = root / "feature.db"
             config_dir = root / "config"
             storage_dir = root / "artifacts"
@@ -589,50 +588,32 @@ class PythonRecipeRuntimeIntegrationTests(unittest.TestCase):
                     f"""\
                     from trainsh import Recipe, Storage
 
-                    recipe = Recipe("runtime-demo", callbacks=["console", "sqlite"])
+                    recipe = Recipe("runtime-demo", callbacks=["console", "jsonl"])
                     artifacts = Storage({{"type": "local", "config": {{"path": r"{storage_dir}"}}}}, name="artifacts")
 
                     latest = recipe.latest_only(
-                        sqlite_db=r"{sqlite_db}",
+                        runtime_state=r"{config_dir / 'runtime'}",
                         fail_if_unknown=False,
                         id="latest",
                     )
-                    prepare = recipe.sqlite_script(
-                        \"\"\"
-                        CREATE TABLE IF NOT EXISTS workflow_events (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            event TEXT NOT NULL
-                        );
-                        \"\"\",
-                        database=r"{sqlite_db}",
+                    prepare = recipe.set_var(
+                        "ROWS",
+                        '[{{"event":"done"}}]',
                         id="prepare",
                         depends_on=[latest],
-                    )
-                    insert = recipe.sqlite_exec(
-                        "INSERT INTO workflow_events(event) VALUES ('done')",
-                        database=r"{sqlite_db}",
-                        id="insert",
-                        depends_on=[prepare],
-                    )
-                    query = recipe.sqlite_query(
-                        "SELECT event FROM workflow_events ORDER BY id",
-                        database=r"{sqlite_db}",
-                        output_var="ROWS",
-                        id="query",
-                        depends_on=[insert],
                     )
                     push = recipe.xcom_push(
                         "rows",
                         from_var="ROWS",
-                        database=r"{sqlite_db}",
+                        runtime_state=r"{config_dir / 'runtime'}",
                         id="push",
-                        depends_on=[query],
+                        depends_on=[prepare],
                     )
                     pull = recipe.xcom_pull(
                         "rows",
                         task_ids=["push"],
                         output_var="ROWS_COPY",
-                        database=r"{sqlite_db}",
+                        runtime_state=r"{config_dir / 'runtime'}",
                         id="pull",
                         depends_on=[push],
                     )
@@ -666,46 +647,32 @@ class PythonRecipeRuntimeIntegrationTests(unittest.TestCase):
                     "trainsh.core.executor_main.CONFIG_DIR",
                     config_dir,
                 ), patch(
+                    "trainsh.core.executor_main.RUNTIME_STATE_DIR",
+                    config_dir / "runtime",
+                ), patch(
                     "trainsh.runtime.CONFIG_DIR",
-                    config_dir,
+                    config_dir / "runtime",
                 ):
                 ok = run_recipe(str(recipe_path), job_id="job9999")
-            runtime_db = config_dir / "runtime.db"
+            runtime_db = config_dir / "runtime"
             self.assertTrue(ok)
-            self.assertTrue(sqlite_db.exists())
             self.assertTrue(runtime_db.exists())
+            from trainsh.core.runtime_store import RuntimeStore
 
-            with closing(sqlite3.connect(sqlite_db)) as conn:
-                rows = conn.execute("SELECT event FROM workflow_events ORDER BY id").fetchall()
-                xcom_rows = conn.execute("SELECT key, task_id, value FROM xcom ORDER BY created_at").fetchall()
-            self.assertEqual(rows, [("done",)])
-            self.assertEqual(xcom_rows[0][0], "rows")
-            self.assertEqual(xcom_rows[0][1], "push")
-            self.assertIn("done", xcom_rows[0][2])
+            store = RuntimeStore(runtime_db)
+            xcom_row = store.query_xcom(dag_id=str(recipe_path), key="rows", run_id="job9999")
+            self.assertEqual(xcom_row["key"], "rows")
+            self.assertEqual(xcom_row["task_id"], "push")
+            self.assertIn("done", xcom_row["value"])
 
-            with closing(sqlite3.connect(runtime_db)) as conn:
-                dag_runs = conn.execute("SELECT dag_id, run_id, state FROM dag_run").fetchall()
-                task_instances = conn.execute(
-                    "SELECT task_id, state FROM task_instance ORDER BY start_date, task_id"
-                ).fetchall()
-                run_hosts = conn.execute(
-                    "SELECT host_name, host_spec FROM run_host ORDER BY host_name"
-                ).fetchall()
-                run_storages = conn.execute(
-                    "SELECT storage_name, storage_spec_json FROM run_storage ORDER BY storage_name"
-                ).fetchall()
-                checkpoints = conn.execute(
-                    "SELECT run_id, status FROM job_checkpoint ORDER BY updated_at DESC"
-                ).fetchall()
-            self.assertEqual(dag_runs[0][1], "job9999")
-            self.assertEqual(dag_runs[0][2], "success")
-            self.assertTrue(any(task_id == "http" and state == "success" for task_id, state in task_instances))
-            self.assertTrue(any(task_id == "wait_storage" and state == "success" for task_id, state in task_instances))
-            self.assertEqual(run_hosts, [])
-            self.assertEqual(run_storages[0][0], "artifacts")
-            self.assertIn(str(storage_dir), run_storages[0][1])
-            self.assertEqual(checkpoints[0][0], "job9999")
-            self.assertEqual(checkpoints[0][1], "completed")
+            dag_run = store.get_run("job9999")
+            self.assertEqual(dag_run["run_id"], "job9999")
+            self.assertEqual(dag_run["state"], "success")
+            task_instances = store.list_tasks(run_id="job9999")
+            self.assertTrue(any(task["task_id"] == "http" and task["state"] == "success" for task in task_instances))
+            self.assertTrue(any(task["task_id"] == "wait_storage" and task["state"] == "success" for task in task_instances))
+            self.assertEqual(dag_run["hosts"], {})
+            self.assertEqual(dag_run["storages"]["artifacts"]["config"]["path"], str(storage_dir))
 
             state_manager = JobStateManager(str(runtime_db))
             saved_state = state_manager.load("job9999")

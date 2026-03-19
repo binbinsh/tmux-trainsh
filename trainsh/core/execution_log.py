@@ -1,48 +1,37 @@
 # tmux-trainsh execution log
-# Detailed execution logs are persisted in runtime.db
+# Detailed execution logs are persisted in JSONL runtime state files.
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from .runtime_db import (
-    connect_runtime_db,
-    json_dumps,
-    json_loads,
-    load_run_hosts,
-    load_run_storages,
-)
+from .runtime_store import RuntimeStore
 
 
 class ExecutionLogger:
-    """Detailed execution logger backed by sqlite events."""
+    """Detailed execution logger backed by JSONL events."""
 
     def __init__(self, job_id: str, recipe_name: str, db_path: Optional[str] = None):
         self.job_id = job_id
         self.recipe_name = recipe_name
-        self.conn = connect_runtime_db(db_path, check_same_thread=False)
+        self.store = RuntimeStore(db_path)
         self._step_count = 0
         self._closed = False
 
     def _write(self, event: str, *, step_num: Optional[int] = None, **payload: Any) -> None:
         if self._closed:
             return
-        ts = datetime.now().isoformat()
-        self.conn.execute(
-            """
-            INSERT INTO recipe_events (run_id, event_name, step_num, payload_json, ts)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                self.job_id,
-                event,
-                step_num,
-                json_dumps(payload),
-                ts,
-            ),
+        self.store.append_event(
+            {
+                "run_id": self.job_id,
+                "event": event,
+                "event_name": event,
+                "step_num": step_num,
+                "payload": payload,
+                "ts": datetime.now().isoformat(),
+            }
         )
-        self.conn.commit()
 
     def start(
         self,
@@ -51,11 +40,9 @@ class ExecutionLogger:
         hosts: Optional[Dict[str, str]] = None,
         recipe_path: str = "",
     ) -> None:
-        """Lifecycle start is already persisted by callback sinks."""
         del recipe_name, variables, hosts, recipe_path
 
     def step_start(self, step_num: int, raw: str, step_type: str, details: Dict[str, Any]) -> None:
-        """Lifecycle step start is already persisted by callback sinks."""
         self._step_count = step_num
         del raw, step_type, details
 
@@ -83,7 +70,6 @@ class ExecutionLogger:
         result: str = "",
         error: str = "",
     ) -> None:
-        """Lifecycle step end is already persisted by callback sinks."""
         self._step_count = step_num
         del success, duration_ms, result, error
 
@@ -163,12 +149,7 @@ class ExecutionLogger:
         )
 
     def log_variable(self, name: str, value: str, source: str) -> None:
-        self._write(
-            "variable_set",
-            name=name,
-            value=value,
-            source=source,
-        )
+        self._write("variable_set", name=name, value=value, source=source)
 
     def end(
         self,
@@ -176,74 +157,49 @@ class ExecutionLogger:
         duration_ms: int,
         final_variables: Optional[Dict[str, str]] = None,
     ) -> None:
-        """Lifecycle end is already persisted by callback sinks."""
         del success, duration_ms, final_variables
         self.close()
 
     def close(self) -> None:
-        if self._closed:
-            return
         self._closed = True
-        self.conn.close()
 
     def __del__(self):
-        if not self._closed and hasattr(self, "conn"):
-            try:
-                self.close()
-            except Exception:
-                pass
+        self.close()
 
 
 class ExecutionLogReader:
-    """Execution log reader backed by runtime.db."""
+    """Execution log reader backed by JSONL runtime state files."""
 
     def __init__(self, db_path: Optional[str] = None):
-        self.conn = connect_runtime_db(db_path, check_same_thread=False)
+        self.store = RuntimeStore(db_path)
 
     def list_executions(self, limit: int = 20) -> List[dict]:
-        rows = self.conn.execute(
-            """
-            SELECT run_id, recipe_name, recipe_path, started_at, success, duration_ms
-            FROM recipe_runs
-            ORDER BY started_at DESC
-            LIMIT ?
-            """,
-            (int(limit),),
-        ).fetchall()
+        rows = self.store.list_runs(limit=int(limit))
         return [
             {
-                "job_id": str(row["run_id"]),
-                "recipe": str(row["recipe_name"]),
-                "recipe_path": str(row["recipe_path"]),
-                "started": str(row["started_at"]),
-                "success": row["success"] if row["success"] is not None else None,
-                "duration_ms": int(row["duration_ms"] or 0),
+                "job_id": str(row.get("run_id", "")),
+                "recipe": str(row.get("recipe_name", "")),
+                "recipe_path": str(row.get("recipe_path", "")),
+                "started": str(row.get("started_at", "")),
+                "success": row.get("success"),
+                "duration_ms": int(row.get("duration_ms") or 0),
                 "file": "",
-                "host_count": len(load_run_hosts(self.conn, str(row["run_id"]))),
-                "storage_count": len(load_run_storages(self.conn, str(row["run_id"]))),
+                "host_count": len(row.get("hosts", {}) if isinstance(row.get("hosts"), dict) else {}),
+                "storage_count": len(row.get("storages", {}) if isinstance(row.get("storages"), dict) else {}),
             }
             for row in rows
         ]
 
     def read_execution(self, job_id: str) -> List[dict]:
-        rows = self.conn.execute(
-            """
-            SELECT event_name, step_num, payload_json, ts
-            FROM recipe_events
-            WHERE run_id=?
-            ORDER BY event_id ASC
-            """,
-            (job_id,),
-        ).fetchall()
         entries: List[dict] = []
-        for row in rows:
-            payload = json_loads(row["payload_json"], {})
+        for record in self.store.list_events(job_id):
             entry = {
-                "event": str(row["event_name"]),
+                "event": str(record.get("event_name") or record.get("event") or ""),
                 "job_id": job_id,
-                "step_num": row["step_num"],
-                "ts": str(row["ts"]),
+                "step_num": record.get("step_num"),
+                "ts": str(record.get("ts", "")),
             }
+            payload = record.get("payload", {})
             if isinstance(payload, dict):
                 entry.update(payload)
             else:
@@ -252,38 +208,30 @@ class ExecutionLogReader:
         return entries
 
     def get_step_output(self, job_id: str, step_num: int) -> str:
-        entries = self.read_execution(job_id)
         chunks = []
-        for entry in entries:
+        for entry in self.read_execution(job_id):
             if entry.get("event") == "step_output" and entry.get("step_num") == step_num:
                 chunks.append((entry.get("chunk", 0), entry.get("output", "")))
         chunks.sort(key=lambda item: item[0])
         return "".join(output for _, output in chunks)
 
     def get_execution_summary(self, job_id: str) -> Optional[dict]:
-        run_row = self.conn.execute(
-            """
-            SELECT run_id, recipe_name, recipe_path, started_at, ended_at, success, duration_ms
-            FROM recipe_runs
-            WHERE run_id=?
-            """,
-            (job_id,),
-        ).fetchone()
+        run_row = self.store.get_run(job_id)
         if not run_row:
             return None
 
         summary = {
-            "job_id": str(run_row["run_id"]),
-            "recipe": str(run_row["recipe_name"]),
-            "recipe_path": str(run_row["recipe_path"]),
-            "started": str(run_row["started_at"]),
-            "ended": str(run_row["ended_at"] or ""),
-            "success": run_row["success"] if run_row["success"] is not None else None,
-            "duration_ms": int(run_row["duration_ms"] or 0),
+            "job_id": str(run_row.get("run_id", "")),
+            "recipe": str(run_row.get("recipe_name", "")),
+            "recipe_path": str(run_row.get("recipe_path", "")),
+            "started": str(run_row.get("started_at", "")),
+            "ended": str(run_row.get("ended_at", "")),
+            "success": run_row.get("success"),
+            "duration_ms": int(run_row.get("duration_ms") or 0),
             "steps": [],
             "variables": {},
-            "hosts": load_run_hosts(self.conn, job_id),
-            "storages": load_run_storages(self.conn, job_id),
+            "hosts": run_row.get("hosts", {}) if isinstance(run_row.get("hosts"), dict) else {},
+            "storages": run_row.get("storages", {}) if isinstance(run_row.get("storages"), dict) else {},
             "recent_events": [],
         }
 
@@ -320,31 +268,10 @@ class ExecutionLogReader:
         exclude_events: Optional[set[str]] = None,
     ) -> List[dict]:
         excluded = set(exclude_events or {"step_output", "wait_poll"})
-        rows = self.conn.execute(
-            """
-            SELECT event_name, step_num, payload_json, ts
-            FROM recipe_events
-            WHERE run_id=?
-            ORDER BY event_id DESC
-            LIMIT ?
-            """,
-            (job_id, max(int(limit) * 5, int(limit))),
-        ).fetchall()
-        events: List[dict] = []
-        for row in rows:
-            event_name = str(row["event_name"])
-            if event_name in excluded:
+        events = []
+        for entry in reversed(self.read_execution(job_id)):
+            if entry.get("event") in excluded:
                 continue
-            payload = json_loads(row["payload_json"], {})
-            entry = {
-                "event": event_name,
-                "step_num": row["step_num"],
-                "ts": str(row["ts"]),
-            }
-            if isinstance(payload, dict):
-                entry.update(payload)
-            else:
-                entry["payload"] = payload
             events.append(entry)
             if len(events) >= limit:
                 break
@@ -352,10 +279,7 @@ class ExecutionLogReader:
         return events
 
     def close(self) -> None:
-        try:
-            self.conn.close()
-        except Exception:
-            pass
+        return None
 
     def __enter__(self) -> "ExecutionLogReader":
         return self
@@ -363,10 +287,6 @@ class ExecutionLogReader:
     def __exit__(self, exc_type, exc, tb) -> bool:
         self.close()
         return False
-
-    def __del__(self):
-        if hasattr(self, "conn"):
-            self.close()
 
 
 __all__ = ["ExecutionLogReader", "ExecutionLogger"]

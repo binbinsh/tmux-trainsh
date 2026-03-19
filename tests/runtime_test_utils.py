@@ -26,6 +26,7 @@ def isolated_executor(
             )
         )
         stack.enter_context(patch("trainsh.core.executor_main.CONFIG_DIR", config_dir))
+        stack.enter_context(patch("trainsh.core.executor_main.RUNTIME_STATE_DIR", config_dir / "runtime"))
         stack.enter_context(patch("trainsh.runtime.CONFIG_DIR", config_dir))
         stack.enter_context(patch("trainsh.commands.storage.load_storages", return_value={}))
 

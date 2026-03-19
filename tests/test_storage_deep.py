@@ -36,13 +36,13 @@ class StorageDeepTests(unittest.TestCase):
         with patched_storage_store():
             cases = [
                 ("localbox", ["localbox", "1", "/tmp/local", "y"], StorageType.LOCAL, {"path": "/tmp/local"}),
-                ("sshbox", ["sshbox", "2", "root@example", "/srv/data", "~/.ssh/id_ed25519", "n"], StorageType.SSH, {"host": "root@example", "path": "/srv/data", "key_path": "~/.ssh/id_ed25519"}),
+                ("sshbox", ["sshbox", "2", "root@example", "/srv/data", "1", "~/.ssh/id_ed25519", "n"], StorageType.SSH, {"host": "root@example", "path": "/srv/data", "key_path": "~/.ssh/id_ed25519"}),
                 ("drivebox", ["drivebox", "3", "gdrive-remote", "n"], StorageType.GOOGLE_DRIVE, {"remote_name": "gdrive-remote"}),
-                ("r2box", ["r2box", "4", "acct123", "bucket-a", "n"], StorageType.R2, {"account_id": "acct123", "bucket": "bucket-a", "endpoint": "https://acct123.r2.cloudflarestorage.com"}),
-                ("b2box", ["b2box", "5", "bucket-b", "n"], StorageType.B2, {"bucket": "bucket-b"}),
-                ("s3box", ["s3box", "6", "bucket-c", "us-west-2", "https://s3.example.com", "n"], StorageType.S3, {"bucket": "bucket-c", "region": "us-west-2", "endpoint": "https://s3.example.com"}),
-                ("gcsbox", ["gcsbox", "7", "bucket-d", "n"], StorageType.GCS, {"bucket": "bucket-d"}),
-                ("smbbox", ["smbbox", "8", "server", "share", "alice", "n"], StorageType.SMB, {"server": "server", "share": "share", "username": "alice"}),
+                ("r2box", ["r2box", "4", "acct123", "bucket-a", "n", "n"], StorageType.R2, {"account_id": "acct123", "bucket": "bucket-a", "endpoint": "https://acct123.r2.cloudflarestorage.com"}),
+                ("b2box", ["b2box", "5", "bucket-b", "n", "n"], StorageType.B2, {"bucket": "bucket-b"}),
+                ("s3box", ["s3box", "6", "bucket-c", "us-west-2", "https://s3.example.com", "n", "n"], StorageType.S3, {"bucket": "bucket-c", "region": "us-west-2", "endpoint": "https://s3.example.com"}),
+                ("gcsbox", ["gcsbox", "7", "bucket-d", "", "n", "n"], StorageType.GCS, {"bucket": "bucket-d"}),
+                ("smbbox", ["smbbox", "8", "server", "share", "alice", "n", "n"], StorageType.SMB, {"server": "server", "share": "share", "username": "alice"}),
             ]
             for name, inputs, expected_type, expected_config in cases:
                 with patch("trainsh.commands.storage.prompt_input", side_effect=inputs):
@@ -84,17 +84,23 @@ class StorageDeepTests(unittest.TestCase):
                 ["ssh-cancel", "2", None],
                 ["ssh-cancel2", "2", "host", None],
                 ["ssh-cancel3", "2", "host", "/srv", None],
+                ["ssh-cancel4", "2", "host", "/srv", "1", None],
                 ["drive-cancel", "3", None],
                 ["r2-cancel", "4", None],
                 ["r2-cancel2", "4", "acct", None],
+                ["r2-cancel3", "4", "acct", "bucket", None],
                 ["b2-cancel", "5", None],
+                ["b2-cancel2", "5", "bucket", None],
                 ["s3-cancel", "6", None],
                 ["s3-cancel2", "6", "bucket", None],
                 ["s3-cancel3", "6", "bucket", "us-east-1", None],
+                ["s3-cancel4", "6", "bucket", "us-east-1", "", None],
                 ["gcs-cancel", "7", None],
+                ["gcs-cancel2", "7", "bucket", None],
                 ["smb-cancel", "8", None],
                 ["smb-cancel2", "8", "server", None],
                 ["smb-cancel3", "8", "server", "share", None],
+                ["smb-cancel4", "8", "server", "share", "user", None],
                 ["local-cancel", "1", "/tmp/local", None],
             ]
             for inputs in cancel_cases:
@@ -102,6 +108,40 @@ class StorageDeepTests(unittest.TestCase):
                     with patch("trainsh.commands.storage.prompt_input", side_effect=inputs):
                         out, code = capture(storage.cmd_add, [])
                     self.assertIsNone(code)
+
+    def test_cmd_add_can_store_cloud_and_file_credentials_in_secrets(self):
+        with patched_storage_store():
+            secrets = SimpleNamespace(set_bundle=unittest.mock.MagicMock(), set=unittest.mock.MagicMock())
+
+            with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets), patch(
+                "trainsh.commands.storage.prompt_input",
+                side_effect=["r2secret", "4", "acct123", "bucket-a", "y", "n"],
+            ), patch("trainsh.commands.storage.getpass.getpass", side_effect=["AKIA", "SECRET"]):
+                out, code = capture(storage.cmd_add, [])
+            self.assertIsNone(code)
+            self.assertIn("Stored R2 credentials in train secrets.", out)
+            secrets.set_bundle.assert_called_once()
+
+            secrets = SimpleNamespace(set_bundle=unittest.mock.MagicMock(), set=unittest.mock.MagicMock())
+            with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets), patch(
+                "trainsh.commands.storage.prompt_input",
+                side_effect=["s3secret", "6", "bucket-c", "us-west-2", "", "y", "n"],
+            ), patch("trainsh.commands.storage.getpass.getpass", side_effect=["AKIA2", "SECRET2"]):
+                out, code = capture(storage.cmd_add, [])
+            self.assertIsNone(code)
+            created = storage.load_storages()["s3secret"]
+            self.assertNotIn("access_key_secret", created.config)
+            self.assertNotIn("secret_key_secret", created.config)
+            self.assertEqual(secrets.set.call_count, 2)
+
+            with patch("trainsh.commands.storage._store_secret_file") as store_file, patch(
+                "trainsh.commands.storage.prompt_input",
+                side_effect=["gcssecret", "7", "bucket-d", "project-1", "y", "/tmp/gcs.json", "n"],
+            ):
+                out, code = capture(storage.cmd_add, [])
+            self.assertIsNone(code)
+            self.assertIn("Stored GCS service account JSON in train secrets.", out)
+            store_file.assert_called_once_with("GCSSECRET_SERVICE_ACCOUNT_JSON", "/tmp/gcs.json")
 
     def test_show_remove_test_and_main_paths(self):
         with patched_storage_store():
@@ -119,6 +159,28 @@ class StorageDeepTests(unittest.TestCase):
             out, code = capture(storage.cmd_show, ["localbox"])
             self.assertIsNone(code)
             self.assertIn("Default: Yes", out)
+
+            storage.save_storages(
+                {
+                    "localbox": local,
+                    "sshbox": sshbox,
+                    "cloud": cloud,
+                    "s3box": Storage(
+                        name="s3box",
+                        type=StorageType.S3,
+                        config={"bucket": "bucket", "access_key_secret": "S3BOX_ACCESS_KEY_ID"},
+                    ),
+                }
+            )
+            secrets = SimpleNamespace(
+                exists=lambda key: key in {"S3BOX_ACCESS_KEY_ID"},
+            )
+            with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets):
+                out, code = capture(storage.cmd_show, ["s3box"])
+            self.assertIsNone(code)
+            self.assertIn("Managed secrets:", out)
+            self.assertIn("S3 access key", out)
+            self.assertNotIn("access_key_secret", out)
 
             out, code = capture(storage.cmd_rm, [])
             self.assertEqual(code, 1)
@@ -157,7 +219,7 @@ class StorageDeepTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("Connection failed: boom", out)
 
-            with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="ok\n", stderr="")):
+            with patch("trainsh.services.ssh.SSHClient.from_host", return_value=SimpleNamespace(run=lambda *a, **k: SimpleNamespace(returncode=0, stdout="ok\n", stderr=""))):
                 out, code = capture(storage.cmd_test, ["sshbox"])
             self.assertIsNone(code)
             self.assertIn("Connection successful!", out)
@@ -168,7 +230,7 @@ class StorageDeepTests(unittest.TestCase):
             self.assertIn("No host configured for SSH storage.", out)
 
             storage.save_storages({"sshbad": Storage(name="sshbad", type=StorageType.SSH, config={"host": "root@example"})})
-            with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="denied")):
+            with patch("trainsh.services.ssh.SSHClient.from_host", return_value=SimpleNamespace(run=lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="denied"))):
                 out, code = capture(storage.cmd_test, ["sshbad"])
             self.assertEqual(code, 1)
             self.assertIn("Connection failed: denied", out)

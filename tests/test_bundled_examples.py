@@ -40,13 +40,13 @@ class FakeLocalTmux:
 class BundledExampleSmokeTests(unittest.TestCase):
     def test_all_bundled_examples_load_with_public_api(self):
         expected = {
-            "aptup.py": "aptup",
-            "brewup.py": "brewup",
-            "hello.py": "hello-world",
-            "nanochat.py": "nanochat",
+            "aptup.pyrecipe": "aptup",
+            "brewup.pyrecipe": "brewup",
+            "hello.pyrecipe": "hello-world",
+            "nanochat.pyrecipe": "nanochat",
         }
 
-        for path in sorted(EXAMPLES_DIR.glob("*.py")):
+        for path in sorted(EXAMPLES_DIR.glob("*.pyrecipe")):
             with self.subTest(example=path.name):
                 recipe = load_python_recipe(str(path))
                 self.assertEqual(recipe.name, expected[path.name])
@@ -54,18 +54,18 @@ class BundledExampleSmokeTests(unittest.TestCase):
 
     def test_local_bundled_examples_run_under_fake_tmux(self):
         cases = {
-            "brewup.py": [
+            "brewup.pyrecipe": [
                 "brew update",
                 "brew upgrade",
                 "brew upgrade --greedy --cask $(brew list --cask)",
                 "brew cleanup",
             ],
-            "aptup.py": [
+            "aptup.pyrecipe": [
                 "sudo apt update",
                 "sudo apt -y dist-upgrade",
                 "sudo apt -y autoremove",
             ],
-            "hello.py": [
+            "hello.pyrecipe": [
                 "printf",
                 "Hello from trainsh",
             ],
@@ -102,19 +102,25 @@ class BundledExampleSmokeTests(unittest.TestCase):
                 self.assertEqual(len(fake_tmux.killed), 1)
 
     def test_nanochat_example_declares_auto_pick_and_eval_flow(self):
-        recipe = load_python_recipe(str(EXAMPLES_DIR / "nanochat.py"))
-        steps = {step.id: step for step in recipe.steps}
+        recipe = load_python_recipe(str(EXAMPLES_DIR / "nanochat.pyrecipe"))
+        steps = list(recipe.steps)
 
         self.assertEqual(recipe.name, "nanochat")
-        self.assertEqual(steps["pick_h200"].params["gpu_name"], "H200")
-        self.assertTrue(steps["pick_h200"].params["auto_select"])
-        self.assertTrue(steps["pick_h200"].params["create_if_missing"])
-        self.assertEqual(steps["pick_h100"].params["gpu_name"], "H100")
-        self.assertIn("trainsh_nanochat.sh", steps["write_runner"].raw)
-        self.assertIn("scripts.chat_eval", steps["write_runner"].raw)
-        self.assertIn("wait_success_flag", steps)
-        self.assertIn("copy_success_flag", steps)
-        self.assertIn("stop_instance", steps)
+        pick_h200 = next(step for step in steps if getattr(step, "provider", "") == "vast" and step.params.get("gpu_name") == "H200")
+        pick_h100 = next(step for step in steps if getattr(step, "provider", "") == "vast" and step.params.get("gpu_name") == "H100")
+        write_runner = next(step for step in steps if "trainsh_nanochat.sh" in step.raw and "scripts.chat_eval" in step.raw)
+        wait_success = next(step for step in steps if "trainsh_success.txt" in step.raw and "wait @" in step.raw)
+        copy_success = next(step for step in steps if getattr(step, "provider", "") == "transfer" and "trainsh_success.txt" in step.params.get("source", ""))
+        stop_instance = next(step for step in steps if getattr(step, "provider", "") == "vast" and step.operation == "stop")
+
+        self.assertTrue(pick_h200.params["auto_select"])
+        self.assertTrue(pick_h200.params["create_if_missing"])
+        self.assertEqual(pick_h100.params["gpu_name"], "H100")
+        self.assertIn("trainsh_nanochat.sh", write_runner.raw)
+        self.assertIn("scripts.chat_eval", write_runner.raw)
+        self.assertIn("trainsh_success.txt", wait_success.raw)
+        self.assertIn("trainsh_success.txt", copy_success.params["source"])
+        self.assertEqual(stop_instance.operation, "stop")
 
 
 if __name__ == "__main__":

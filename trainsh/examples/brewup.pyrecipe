@@ -1,0 +1,15 @@
+from trainsh import Recipe, local
+
+recipe = Recipe(
+    "brewup",
+    owner="ops",
+    tags=["bundle", "local", "maintenance"],
+    callbacks=["console", "jsonl"],
+)
+
+with local.tmux("update") as tmux:
+    tmux.run("brew update")
+    tmux.run("brew upgrade")
+    tmux.run("brew upgrade --greedy --cask $(brew list --cask)")
+    tmux.run("brew cleanup")
+    recipe.notify("brew upgrade complete!")

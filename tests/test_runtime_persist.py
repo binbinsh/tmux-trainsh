@@ -1,7 +1,7 @@
-import sqlite3
 import subprocess
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +20,7 @@ from trainsh.core.runtime_db import (
     replace_run_windows,
     to_jsonable,
 )
+from trainsh.core.runtime_store import RuntimeStore
 
 
 class RuntimeDbHelpersTests(unittest.TestCase):
@@ -27,8 +28,8 @@ class RuntimeDbHelpersTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "runtime.db"
             resolved = get_runtime_db_path(db_path)
-            self.assertEqual(resolved, db_path)
-            self.assertTrue(db_path.parent.exists())
+            self.assertEqual(resolved, db_path.with_suffix(""))
+            self.assertTrue(resolved.exists())
 
         class CustomObject:
             def to_dict(self):
@@ -63,25 +64,17 @@ class RuntimeDbHelpersTests(unittest.TestCase):
                     "": {"host": "ignored"},
                 },
             )
-            conn.commit()
 
-            self.assertEqual(load_run_hosts(conn, "run-1"), {"gpu": "ssh://demo"})
-            self.assertEqual(
-                load_run_storages(conn, "run-1"),
-                {"artifacts": {"path": "/tmp/out"}},
-            )
-            self.assertEqual(
-                load_run_windows(conn, "run-1"),
-                {"main": {"host": "local", "remote_session": "train_run_0"}},
-            )
-            conn.close()
+            self.assertEqual(load_run_hosts(conn, "run-1")["gpu"], "ssh://demo")
+            self.assertEqual(load_run_storages(conn, "run-1")["artifacts"]["path"], "/tmp/out")
+            self.assertEqual(load_run_windows(conn, "run-1")["main"]["remote_session"], "train_run_0")
 
 
 class JobStateManagerTests(unittest.TestCase):
     def _state(self, **overrides):
         data = {
             "job_id": "job-1",
-            "recipe_path": "/tmp/demo.py",
+            "recipe_path": "/tmp/demo.pyrecipe",
             "recipe_name": "demo",
             "current_step": 2,
             "total_steps": 5,
@@ -102,8 +95,7 @@ class JobStateManagerTests(unittest.TestCase):
 
     def test_save_load_delete_and_query_job_states(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "runtime.db"
-            manager = JobStateManager(str(db_path))
+            manager = JobStateManager(str(Path(tmpdir) / "runtime"))
 
             self.assertIsNone(manager.load("missing"))
 
@@ -115,16 +107,16 @@ class JobStateManagerTests(unittest.TestCase):
             self.assertEqual(loaded.storages["artifacts"]["path"], "/tmp/out")
             self.assertEqual(loaded.window_sessions["gpu"], "train_demo_0")
 
-            by_recipe = manager.find_by_recipe("/tmp/demo.py")
+            by_recipe = manager.find_by_recipe("/tmp/demo.pyrecipe")
             self.assertIsNotNone(by_recipe)
             self.assertEqual(by_recipe.job_id, "job-1")
 
-            resumable = manager.find_resumable("/tmp/demo.py")
+            resumable = manager.find_resumable("/tmp/demo.pyrecipe")
             self.assertIsNotNone(resumable)
             self.assertEqual(resumable.job_id, "job-1")
 
             manager.save(self._state(job_id="job-2", status="failed", current_step=4, updated_at="2026-03-12T09:00:00"))
-            manager.save(self._state(job_id="job-3", status="completed", recipe_path="/tmp/other.py"))
+            manager.save(self._state(job_id="job-3", status="completed", recipe_path="/tmp/other.pyrecipe"))
 
             all_jobs = manager.list_all(limit=10)
             self.assertEqual([job.job_id for job in all_jobs], ["job-3", "job-2", "job-1"])
@@ -136,26 +128,32 @@ class JobStateManagerTests(unittest.TestCase):
 
     def test_cleanup_old_and_resumable_filters(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "runtime.db"
-            manager = JobStateManager(str(db_path))
+            root = Path(tmpdir) / "runtime"
+            manager = JobStateManager(str(root))
             manager.save(self._state(job_id="running-job", status="running"))
-            manager.save(self._state(job_id="completed-job", status="completed"))
-            manager.save(self._state(job_id="cancelled-job", status="cancelled", recipe_path="/tmp/cancelled.py"))
-
-            conn = connect_runtime_db(db_path)
-            try:
-                conn.execute(
-                    "UPDATE job_checkpoint SET updated_at=? WHERE run_id IN ('completed-job', 'cancelled-job')",
-                    ("2000-01-01T00:00:00",),
+            manager.save(self._state(job_id="completed-job", status="completed", updated_at="2000-01-01T00:00:00"))
+            manager.save(
+                self._state(
+                    job_id="cancelled-job",
+                    status="cancelled",
+                    recipe_path="/tmp/cancelled.pyrecipe",
+                    updated_at="2000-01-01T00:00:00",
                 )
-                conn.commit()
-            finally:
-                conn.close()
+            )
+
+            store = RuntimeStore(root)
+            updated = []
+            for line in store.checkpoints_path.read_text(encoding="utf-8").splitlines():
+                payload = json.loads(line)
+                if payload.get("run_id") in {"completed-job", "cancelled-job"}:
+                    payload["updated_at"] = "2000-01-01T00:00:00"
+                updated.append(json.dumps(payload, ensure_ascii=False))
+            store.checkpoints_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
             cleaned = manager.cleanup_old(days=7)
             self.assertEqual(cleaned, 2)
-            self.assertIsNotNone(manager.find_resumable("/tmp/demo.py"))
-            self.assertIsNone(manager.find_resumable("/tmp/cancelled.py"))
+            self.assertIsNotNone(manager.find_resumable("/tmp/demo.pyrecipe"))
+            self.assertIsNone(manager.find_resumable("/tmp/cancelled.pyrecipe"))
             self.assertEqual(manager.cleanup_old(days=7), 0)
 
     def test_generate_job_id_and_remote_condition_checks(self):
@@ -197,41 +195,33 @@ class JobStateManagerTests(unittest.TestCase):
 
 class ExecutionLogTests(unittest.TestCase):
     def _seed_run(self, db_path: Path, *, run_id: str = "run-1"):
-        conn = connect_runtime_db(db_path)
-        try:
-            conn.execute(
-                """
-                INSERT INTO recipe_runs (
-                    run_id, recipe_name, recipe_path, status, started_at, ended_at,
-                    duration_ms, success, metadata_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    run_id,
-                    "demo",
-                    "/tmp/demo.py",
-                    "succeeded",
-                    "2026-03-12T08:00:00",
-                    "2026-03-12T08:01:00",
-                    60000,
-                    1,
-                    "{}",
-                    "2026-03-12T08:01:00",
-                ),
-            )
-            replace_run_hosts(conn, run_id, {"gpu": "ssh://gpu"})
-            replace_run_storages(conn, run_id, {"artifacts": {"path": "/tmp/out"}})
-            conn.commit()
-        finally:
-            conn.close()
+        store = RuntimeStore(db_path)
+        store.append_run(
+            {
+                "run_id": run_id,
+                "dag_id": "/tmp/demo.pyrecipe",
+                "recipe_name": "demo",
+                "recipe_path": "/tmp/demo.pyrecipe",
+                "status": "succeeded",
+                "state": "success",
+                "started_at": "2026-03-12T08:00:00",
+                "ended_at": "2026-03-12T08:01:00",
+                "duration_ms": 60000,
+                "success": True,
+                "metadata": {},
+                "updated_at": "2026-03-12T08:01:00",
+                "hosts": {"gpu": "ssh://gpu"},
+                "storages": {"artifacts": {"path": "/tmp/out"}},
+            }
+        )
 
     def test_execution_logger_and_reader_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "runtime.db"
+            db_path = Path(tmpdir) / "runtime"
             self._seed_run(db_path)
 
             logger = ExecutionLogger("run-1", "demo", str(db_path))
-            logger.start("demo", {"MODEL": "tiny"}, {"gpu": "ssh://gpu"}, "/tmp/demo.py")
+            logger.start("demo", {"MODEL": "tiny"}, {"gpu": "ssh://gpu"}, "/tmp/demo.pyrecipe")
             logger.step_start(1, "echo hi", "execute", {})
             logger.step_end(1, True, 5, "ok", "")
             logger.log_detail("category", "message", {"ok": True})
@@ -267,29 +257,13 @@ class ExecutionLogTests(unittest.TestCase):
 
     def test_reader_handles_non_dict_payloads_and_event_filtering(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "runtime.db"
+            db_path = Path(tmpdir) / "runtime"
             self._seed_run(db_path, run_id="run-2")
-            conn = connect_runtime_db(db_path)
-            try:
-                conn.execute(
-                    "INSERT INTO recipe_events (run_id, event_name, step_num, payload_json, ts) VALUES (?, ?, ?, ?, ?)",
-                    ("run-2", "execution_start", None, json_dumps({"variables": {"MODE": "dev"}}), "2026-03-12T08:00:00"),
-                )
-                conn.execute(
-                    "INSERT INTO recipe_events (run_id, event_name, step_num, payload_json, ts) VALUES (?, ?, ?, ?, ?)",
-                    ("run-2", "step_output", 1, json_dumps("plain-text"), "2026-03-12T08:00:01"),
-                )
-                conn.execute(
-                    "INSERT INTO recipe_events (run_id, event_name, step_num, payload_json, ts) VALUES (?, ?, ?, ?, ?)",
-                    ("run-2", "wait_poll", 1, json_dumps({"status": "poll"}), "2026-03-12T08:00:02"),
-                )
-                conn.execute(
-                    "INSERT INTO recipe_events (run_id, event_name, step_num, payload_json, ts) VALUES (?, ?, ?, ?, ?)",
-                    ("run-2", "execution_end", None, json_dumps({"final_variables": {"MODE": "prod"}}), "2026-03-12T08:00:03"),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            store = RuntimeStore(db_path)
+            store.append_event({"run_id": "run-2", "event": "execution_start", "event_name": "execution_start", "step_num": None, "payload": {"variables": {"MODE": "dev"}}, "ts": "2026-03-12T08:00:00"})
+            store.append_event({"run_id": "run-2", "event": "step_output", "event_name": "step_output", "step_num": 1, "payload": "plain-text", "ts": "2026-03-12T08:00:01"})
+            store.append_event({"run_id": "run-2", "event": "wait_poll", "event_name": "wait_poll", "step_num": 1, "payload": {"status": "poll"}, "ts": "2026-03-12T08:00:02"})
+            store.append_event({"run_id": "run-2", "event": "execution_end", "event_name": "execution_end", "step_num": None, "payload": {"final_variables": {"MODE": "prod"}}, "ts": "2026-03-12T08:00:03"})
 
             reader = ExecutionLogReader(str(db_path))
             entries = reader.read_execution("run-2")
@@ -303,13 +277,9 @@ class ExecutionLogTests(unittest.TestCase):
             reader.close()
 
     def test_logger_destructor_is_safe(self):
-        class BrokenConn:
-            def close(self):
-                raise RuntimeError("close failed")
-
         logger = ExecutionLogger.__new__(ExecutionLogger)
         logger._closed = False
-        logger.conn = BrokenConn()
+        logger.store = RuntimeStore(Path(tempfile.gettempdir()) / "runtime-store-safe")
         ExecutionLogger.__del__(logger)
 
 

@@ -51,6 +51,23 @@ def storage_type_from_name(value: Any) -> Optional[StorageType]:
     return _STORAGE_TYPE_ALIASES.get(text)
 
 
+def unsupported_inline_storage_error(value: Any) -> Optional[str]:
+    """Return a user-facing error for intentionally unsupported inline specs."""
+    text = normalize_storage_reference(value)
+    if text.startswith("storage:"):
+        text = text[8:].strip()
+    if not text:
+        return None
+
+    provider, sep, _ = text.partition(":")
+    if sep and provider.strip().lower() == "s3":
+        return (
+            "Inline Amazon S3 endpoints are not supported. "
+            "Use `train storage add` and a named endpoint like `storage:<name>:/path`."
+        )
+    return None
+
+
 def sanitize_rclone_remote_name(name: Any, *, uppercase: bool = False) -> str:
     """Convert arbitrary storage names into safe rclone remote identifiers."""
     text = str(name).strip() if name is not None else ""

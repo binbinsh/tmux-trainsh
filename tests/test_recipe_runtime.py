@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from trainsh.commands import recipe_runtime
+from trainsh.commands import recipe_shared
 
 
 class CaptureMixin:
@@ -24,11 +25,12 @@ class CaptureMixin:
 class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
     def test_usage_and_parse_helpers(self):
         for func, exit_code in [
-            (recipe_runtime._print_run_usage, 0),
-            (recipe_runtime._print_resume_usage, 1),
-            (recipe_runtime._print_logs_usage, 1),
-            (recipe_runtime._print_status_usage, 1),
-            (recipe_runtime._print_jobs_usage, 1),
+            (recipe_shared._print_run_usage, 0),
+            (recipe_shared._print_exec_usage, 0),
+            (recipe_shared._print_resume_usage, 1),
+            (recipe_shared._print_logs_usage, 1),
+            (recipe_shared._print_status_usage, 1),
+            (recipe_shared._print_jobs_usage, 1),
         ]:
             out, code, _ = self.capture(func, exit_code)
             self.assertEqual(code, exit_code)
@@ -218,7 +220,7 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Recipe not found: demo", out)
 
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=True
         ):
             out, code, result = self.capture(recipe_runtime.cmd_run, ["demo"])
@@ -226,7 +228,7 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertIsNone(result)
 
         result_obj = SimpleNamespace(success=False)
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=False
         ), patch("trainsh.commands.recipe_runtime._pick_vast_host", return_value="vast:8"), patch(
             "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=result_obj
@@ -259,7 +261,7 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertIn("Recipe execution failed.", out)
 
         result_obj = SimpleNamespace(success=True)
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=False
         ), patch("trainsh.commands.recipe_runtime._pick_vast_host", return_value="vast:7"), patch(
             "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=result_obj
@@ -269,7 +271,7 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertIn("Recipe completed successfully!", out)
 
         result_obj = SimpleNamespace(success=True)
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=False
         ), patch(
             "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=result_obj
@@ -290,6 +292,66 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertIsNone(code)
         self.assertIn("Host overrides:", out)
         self.assertIn("Variable overrides:", out)
+
+    def test_cmd_exec_file_inline_and_stdin_paths(self):
+        out, code, _ = self.capture(recipe_runtime.cmd_exec, ["--help"])
+        self.assertEqual(code, 0)
+        self.assertIn("train exec <<'EOF'", out)
+
+        with patch.object(recipe_runtime.sys, "stdin", SimpleNamespace(isatty=lambda: True, read=lambda: "")):
+            out, code, _ = self.capture(recipe_runtime.cmd_exec, [])
+        self.assertEqual(code, 1)
+        self.assertIn("train recipe exec", out)
+
+        with patch.object(recipe_runtime.sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda: "")):
+            out, code, _ = self.capture(recipe_runtime.cmd_exec, [])
+        self.assertEqual(code, 1)
+        self.assertIn("No recipe code received on stdin.", out)
+
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
+            "trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=False
+        ), patch(
+            "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=SimpleNamespace(success=True)
+        ) as mocked:
+            out, code, _ = self.capture(recipe_runtime.cmd_exec, ["demo", "--set", "MODEL=tiny"])
+        self.assertIsNone(code)
+        self.assertIn("Recipe completed successfully!", out)
+        self.assertEqual(mocked.call_args.kwargs["var_overrides"], {"MODEL": "tiny"})
+
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value=None):
+            out, code, _ = self.capture(recipe_runtime.cmd_exec, ["demo"])
+        self.assertEqual(code, 1)
+        self.assertIn("Recipe not found: demo", out)
+
+        inline_code = "from trainsh import Recipe\nrecipe = Recipe('demo')\nrecipe.empty(id='start')\n"
+        with patch("trainsh.commands.recipe_runtime._write_inline_recipe_file", return_value="/tmp/.trainsh-exec-demo.pyrecipe"), patch(
+            "trainsh.commands.recipe_runtime._maybe_auto_enter_tmux"
+        ) as auto_tmux, patch(
+            "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=SimpleNamespace(success=True)
+        ), patch("os.remove") as remove_mock:
+            out, code, _ = self.capture(recipe_runtime.cmd_exec, ["--code", inline_code])
+        self.assertIsNone(code)
+        self.assertIn("Executing inline recipe code.", out)
+        auto_tmux.assert_not_called()
+        remove_mock.assert_called_once_with("/tmp/.trainsh-exec-demo.pyrecipe")
+
+        stdin_code = "from trainsh import Recipe\nrecipe = Recipe('stdin-demo')\nrecipe.empty(id='start')\n"
+        with patch.object(recipe_runtime.sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda: stdin_code)), patch(
+            "trainsh.commands.recipe_runtime._write_inline_recipe_file", return_value="/tmp/.trainsh-stdin-demo.pyrecipe"
+        ), patch(
+            "trainsh.commands.recipe_runtime._maybe_auto_enter_tmux"
+        ) as auto_tmux, patch(
+            "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=SimpleNamespace(success=True)
+        ) as mocked, patch("os.remove"):
+            out, code, _ = self.capture(recipe_runtime.cmd_exec, ["--set", "FLAG=1"])
+        self.assertIsNone(code)
+        self.assertIn("Executing recipe code from stdin.", out)
+        self.assertEqual(mocked.call_args.kwargs["var_overrides"], {"FLAG": "1"})
+        auto_tmux.assert_not_called()
+
+        for args in [["--code"], ["--code="], ["demo", "extra"]]:
+            _, code, _ = self.capture(recipe_runtime.cmd_exec, args)
+            self.assertEqual(code, 1)
 
     def test_logs_status_jobs_resume_and_formatters(self):
         class Reader:
@@ -428,20 +490,20 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Recipe not found", out)
 
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.core.job_state.JobStateManager", return_value=SimpleNamespace(find_resumable=lambda path: None)
         ):
             out, code, _ = self.capture(recipe_runtime.cmd_resume, ["demo"])
         self.assertEqual(code, 1)
         self.assertIn("No resumable state found", out)
 
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.core.job_state.JobStateManager", return_value=state_manager
         ), patch("trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=True):
             out, code, _ = self.capture(recipe_runtime.cmd_resume, ["demo"])
         self.assertIsNone(code)
 
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.core.job_state.JobStateManager", return_value=state_manager
         ), patch("trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=False), patch(
             "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=SimpleNamespace(success=False)
@@ -451,7 +513,7 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertIn("Variable overrides:", out)
         self.assertIn("retry from the failed step", out)
 
-        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.py"), patch(
+        with patch("trainsh.commands.recipe_runtime.find_recipe", return_value="/tmp/demo.pyrecipe"), patch(
             "trainsh.core.job_state.JobStateManager", return_value=state_manager
         ), patch("trainsh.commands.recipe_runtime._maybe_auto_enter_tmux", return_value=False), patch(
             "trainsh.commands.recipe_runtime.run_recipe_via_dag", return_value=SimpleNamespace(success=True)

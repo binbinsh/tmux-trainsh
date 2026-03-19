@@ -1,7 +1,5 @@
-import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,10 +8,11 @@ from trainsh.runtime import (
     CallbackEvent,
     CallbackManager,
     ConsoleCallbackSink,
-    SqliteCallbackSink,
+    JsonlCallbackSink,
     _sink_factory,
     build_sinks,
 )
+from trainsh.core.runtime_store import RuntimeStore
 
 
 class RuntimeCallbackTests(unittest.TestCase):
@@ -43,12 +42,12 @@ class RuntimeCallbackTests(unittest.TestCase):
 
         self.assertIsInstance(_sink_factory("console"), ConsoleCallbackSink)
         with tempfile.TemporaryDirectory() as tmpdir:
-            sqlite_sink = _sink_factory("sqlite", sqlite_db=str(Path(tmpdir) / "runtime.db"))
-            self.assertIsInstance(sqlite_sink, SqliteCallbackSink)
+            jsonl_sink = _sink_factory("jsonl", runtime_state=str(Path(tmpdir) / "runtime"))
+            self.assertIsInstance(jsonl_sink, JsonlCallbackSink)
         with self.assertRaises(ValueError):
             _sink_factory("missing")
 
-        sinks = build_sinks(["console,sqlite"], sqlite_db=":memory:")
+        sinks = build_sinks(["console,jsonl"], runtime_state=":memory:")
         self.assertEqual(len(sinks), 2)
         self.assertEqual(build_sinks([]), [])
         self.assertEqual(build_sinks(["", " , "]), [])
@@ -65,10 +64,10 @@ class RuntimeCallbackTests(unittest.TestCase):
         self.assertEqual(closers, ["ok"])
         mocked_print.assert_called()
 
-    def test_sqlite_callback_sink_helpers_and_send_paths(self):
+    def test_jsonl_callback_sink_helpers_and_send_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "runtime.db"
-            sink = SqliteCallbackSink(str(db_path))
+            state_path = Path(tmpdir) / "runtime"
+            sink = JsonlCallbackSink(str(state_path))
 
             self.assertTrue(sink._as_bool(True))
             self.assertTrue(sink._as_bool("yes"))
@@ -138,16 +137,16 @@ class RuntimeCallbackTests(unittest.TestCase):
                 )
             )
 
-            with closing(sqlite3.connect(db_path)) as conn:
-                dag_run = conn.execute("SELECT state FROM dag_run WHERE run_id='r1'").fetchone()
-                self.assertEqual(dag_run[0], "failed")
-                ti = conn.execute("SELECT state, try_number FROM task_instance WHERE run_id='r1'").fetchone()
-                self.assertEqual(ti[0], "failed")
-                self.assertEqual(ti[1], 3)
-                xcom = conn.execute("SELECT COUNT(1) FROM xcom WHERE key='rows'").fetchone()
-                self.assertEqual(xcom[0], 1)
-                events = conn.execute("SELECT COUNT(1) FROM recipe_events WHERE run_id='r1'").fetchone()
-                self.assertGreaterEqual(events[0], 4)
+            store = RuntimeStore(state_path)
+            dag_run = store.get_run("r1")
+            self.assertEqual(dag_run["state"], "failed")
+            ti = {item["task_id"]: item for item in store.list_tasks(run_id="r1")}["step_0001"]
+            self.assertEqual(ti["state"], "failed")
+            self.assertEqual(ti["try_number"], 3)
+            xcom = store.query_xcom(dag_id="/tmp/demo.py", key="rows", run_id="r1")
+            self.assertIsNotNone(xcom)
+            events = store.list_events("r1")
+            self.assertGreaterEqual(len(events), 4)
 
             sink.close()
             sink.send(start)

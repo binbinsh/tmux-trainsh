@@ -1,14 +1,14 @@
 import unittest
 from pathlib import Path
 
-from trainsh import Recipe
+from trainsh import Recipe, local
 from trainsh.core.models import Storage as RuntimeStorage, StorageType
 from trainsh.pyrecipe.base import RecipeSpecCore
 from trainsh.pyrecipe.models import Host, ProviderStep, PythonRecipeError, Storage, StoragePath
 
 
 class PyrecipeCoreTests(unittest.TestCase):
-    def test_constructor_executor_and_linear_context_edges(self):
+    def test_constructor_executor_and_default_linear_edges(self):
         self.assertEqual(Recipe("").name, "recipe")
         with self.assertRaises(PythonRecipeError):
             Recipe("   ")
@@ -24,15 +24,29 @@ class PyrecipeCoreTests(unittest.TestCase):
         with self.assertRaises(PythonRecipeError):
             recipe.set_executor("kubernetes")
 
-        with recipe.linear():
-            a = recipe.empty(id="a")
-            with recipe.linear():
-                b = recipe.empty(id="b")
-                c = recipe.empty(id="c")
-            d = recipe.empty(id="d")
+        a = recipe.empty(id="a")
+        b = recipe.empty(id="b")
+        c = recipe.empty(id="c")
+        d = recipe.empty(id="d")
         self.assertEqual(recipe.steps[1].depends_on, ["a"])
         self.assertEqual(recipe.steps[2].depends_on, ["b"])
         self.assertEqual(recipe.steps[3].depends_on, ["c"])
+
+        recipe = Recipe("linear-depends")
+        start = recipe.empty(id="start")
+        with local.tmux("main", depends_on=start) as tmux:
+            a = tmux.run("echo a", id="a")
+            b = tmux.run("echo b", id="b")
+        self.assertEqual(recipe.steps[1].depends_on, ["start"])
+        self.assertEqual(recipe.steps[2].depends_on, ["step_001"])
+        self.assertEqual(recipe.steps[3].depends_on, ["step_001", "a"])
+        self.assertEqual(recipe.steps[4].depends_on, ["step_001", "b"])
+        self.assertEqual(str(recipe.last()), "step_002")
+
+        recipe = Recipe("last-handle")
+        recipe.empty(id="first")
+        recipe.empty(id="second", depends_on=recipe.last())
+        self.assertEqual(recipe.steps[1].depends_on, ["first"])
 
     def test_normalize_options_timeout_callbacks_and_ids(self):
         recipe = Recipe("demo")

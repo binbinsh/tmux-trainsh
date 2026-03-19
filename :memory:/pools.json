@@ -1,0 +1,9 @@
+{
+  "pools": {
+    "default": {
+      "slots": 1,
+      "occupied": 0,
+      "updated_at": "2026-03-18T17:30:26.935633+00:00"
+    }
+  }
+}

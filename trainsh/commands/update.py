@@ -4,28 +4,15 @@
 import sys
 from typing import Optional, List
 
-from ..cli_utils import render_command_help
+from .help_catalog import render_command_help, render_top_level_help
 
-usage = render_command_help(
-    command="train update",
-    summary="Check for updates and optionally install them.",
-    usage_lines=(
-        "train update",
-        "train update --check",
-    ),
-    options=("--check            Only check for updates; do not install.",),
-    notes=("Installs by detecting whether tmux-trainsh came from uv, pip, or another supported method.",),
-    examples=(
-        "train update",
-        "train update --check",
-    ),
-)
+usage = render_command_help("update")
 
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for update command."""
     if args and args[0] in ("-h", "--help", "help"):
-        print(usage)
+        print(render_top_level_help())
         return None
 
     check_only = False

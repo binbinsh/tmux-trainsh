@@ -7,16 +7,14 @@ from typing import List
 from ..core.tmux_naming import get_window_session_name
 from .recipe_shared import (
     HELP_FLAGS,
-    _print_jobs_usage,
-    _print_logs_usage,
-    _print_status_usage,
+    _print_full_help,
 )
 
 
 def cmd_logs(args: List[str]) -> None:
     """View execution logs."""
     if args and args[0] in HELP_FLAGS:
-        _print_logs_usage(0)
+        _print_full_help(0)
 
     from ..core.execution_log import ExecutionLogReader
 
@@ -148,7 +146,7 @@ def _show_execution_details(reader, job_id: str) -> None:
 def cmd_status(args: List[str]) -> None:
     """View running recipe sessions."""
     if args and args[0] in HELP_FLAGS:
-        _print_status_usage(0)
+        _print_full_help(0)
 
     from ..core.job_state import JobStateManager
 
@@ -373,7 +371,7 @@ def _format_recent_event(event: dict) -> str:
 def cmd_jobs(args: List[str]) -> None:
     """List all job states."""
     if args and args[0] in HELP_FLAGS:
-        _print_jobs_usage(0)
+        _print_full_help(0)
 
     from ..core.job_state import JobStateManager
 

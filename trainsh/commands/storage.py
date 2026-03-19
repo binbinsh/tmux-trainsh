@@ -2,9 +2,11 @@
 # Storage backend management
 
 import sys
+import getpass
 from typing import Optional, List
 
-from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input, render_command_help
+from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
+from .help_catalog import render_command_help, render_top_level_help
 
 SUBCOMMAND_SPECS = (
     SubcommandSpec("list", "List configured storage backends."),
@@ -14,25 +16,49 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("remove", "Delete a stored backend."),
 )
 
-usage = render_command_help(
-    command="train storage",
-    summary="Manage storage backends used by transfers and recipes.",
-    usage_lines=(
-        "train storage <subcommand> [args...]",
-        "train storage check <name>",
-    ),
-    subcommands=SUBCOMMAND_SPECS,
-    notes=(
-        "Supported types: local, ssh, gdrive, r2, b2, s3, gcs, smb.",
-        "Backends are stored in ~/.config/tmux-trainsh/storages.yaml.",
-    ),
-    examples=(
-        "train storage list",
-        "train storage add",
-        "train storage show artifacts",
-        "train storage check artifacts",
-    ),
-)
+usage = render_command_help("storage")
+
+
+def _suggest_secret_name(storage_name: str, suffix: str) -> str:
+    from ..services.secret_materialize import suggest_secret_name
+
+    return suggest_secret_name(storage_name, suffix)
+
+
+def _store_secret_value(secret_name: str, value: str) -> None:
+    from ..core.secrets import get_secrets_manager
+
+    get_secrets_manager().set(secret_name, value)
+
+
+def _store_secret_file(secret_name: str, path: str) -> None:
+    from ..services.secret_materialize import store_secret_file
+
+    store_secret_file(secret_name, path)
+
+
+def _yes(value: str) -> bool:
+    return str(value or "").strip().lower() in {"", "y", "yes"}
+
+
+def _prompt_store_now(prompt_text: str = "Store credentials in train secrets now? (Y/n): ") -> Optional[bool]:
+    choice = prompt_input(prompt_text, default="Y")
+    if choice is None:
+        return None
+    return _yes(choice)
+
+
+def _prompt_secret(secret_prompt: str) -> Optional[str]:
+    try:
+        value = getpass.getpass(secret_prompt)
+    except (KeyboardInterrupt, EOFError):
+        print("\nCancelled.")
+        return None
+    value = value.strip()
+    if not value:
+        print("Cancelled - no value provided.")
+        return None
+    return value
 
 
 def load_storages() -> dict:
@@ -147,12 +173,51 @@ def cmd_add(args: List[str]) -> None:
         path = prompt_input("Base path: ")
         if path is None:
             return
-        key_path = prompt_input("SSH key path [~/.ssh/id_rsa]: ", default="~/.ssh/id_rsa")
-        if key_path is None:
+        print("\nSSH auth:")
+        print("  1. Private key (default)")
+        print("  2. Password")
+        auth_choice = prompt_input("Choice [1]: ", default="1")
+        if auth_choice is None:
             return
         config["host"] = host
         config["path"] = path
-        config["key_path"] = key_path
+        if str(auth_choice).strip() == "2":
+            store_now = _prompt_store_now("Store SSH password in train secrets now? (Y/n): ")
+            if store_now is None:
+                return
+            if store_now:
+                password = _prompt_secret("SSH password: ")
+                if password is None:
+                    return
+                secret_name = _suggest_secret_name(name, "PASSWORD")
+                _store_secret_value(secret_name, password)
+                config.pop("password_secret", None)
+                print("Stored SSH password in train secrets.")
+            else:
+                print("You can set it later with train secrets.")
+        else:
+            key_path = prompt_input(
+                "SSH key path [~/.ssh/id_rsa] (or type 'secret' to import into train secrets): ",
+                default="~/.ssh/id_rsa",
+            )
+            if key_path is None:
+                return
+            key_path = key_path.strip() or "~/.ssh/id_rsa"
+            if key_path.lower() == "secret":
+                import_path = prompt_input("Private key file to import [~/.ssh/id_rsa]: ", default="~/.ssh/id_rsa")
+                if import_path is None:
+                    return
+                import_path = import_path.strip() or "~/.ssh/id_rsa"
+                secret_name = _suggest_secret_name(name, "SSH_PRIVATE_KEY")
+                try:
+                    _store_secret_file(secret_name, import_path)
+                except Exception as exc:
+                    print(f"Failed to import SSH key into secrets: {exc}")
+                    return
+                config.pop("key_secret", None)
+                print("Stored SSH private key in train secrets.")
+            else:
+                config["key_path"] = key_path
 
     elif storage_type == StorageType.GOOGLE_DRIVE:
         print("\nGoogle Drive requires OAuth setup.")
@@ -169,22 +234,62 @@ def cmd_add(args: List[str]) -> None:
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
-        print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY_ID' and '{name.upper()}_SECRET_ACCESS_KEY'")
-        print("Option 2: Global - 'train secrets set R2_ACCESS_KEY_ID' and 'R2_SECRET_ACCESS_KEY'")
-        print("(Storage-specific credentials take priority over global ones)")
         config["account_id"] = account_id
         config["bucket"] = bucket
         config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
+        store_now = _prompt_store_now()
+        if store_now is None:
+            return
+        if store_now:
+            access_key_id = _prompt_secret("R2 Access Key ID: ")
+            if access_key_id is None:
+                return
+            secret_access_key = _prompt_secret("R2 Secret Access Key: ")
+            if secret_access_key is None:
+                return
+            from ..core.secrets import get_secrets_manager
+
+            bundle_name = _suggest_secret_name(name, "R2_CREDENTIALS")
+            get_secrets_manager().set_bundle(
+                bundle_name,
+                {
+                    "account_id": account_id.strip(),
+                    "access_key_id": access_key_id,
+                    "secret_access_key": secret_access_key,
+                },
+            )
+            print("Stored R2 credentials in train secrets.")
+        else:
+            print("You can set R2 credentials later with train secrets.")
 
     elif storage_type == StorageType.B2:
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
-        print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_APPLICATION_KEY_ID' and '{name.upper()}_APPLICATION_KEY'")
-        print("Option 2: Global - 'train secrets set B2_APPLICATION_KEY_ID' and 'B2_APPLICATION_KEY'")
         config["bucket"] = bucket
+        store_now = _prompt_store_now()
+        if store_now is None:
+            return
+        if store_now:
+            key_id = _prompt_secret("B2 Application Key ID: ")
+            if key_id is None:
+                return
+            app_key = _prompt_secret("B2 Application Key: ")
+            if app_key is None:
+                return
+            from ..core.secrets import get_secrets_manager
+
+            bundle_name = _suggest_secret_name(name, "B2_CREDENTIALS")
+            get_secrets_manager().set_bundle(
+                bundle_name,
+                {
+                    "application_key_id": key_id,
+                    "application_key": app_key,
+                },
+            )
+            print("Stored B2 credentials in train secrets.")
+        else:
+            print("You can set B2 credentials later with train secrets.")
 
     elif storage_type == StorageType.S3:
         bucket = prompt_input("Bucket name: ")
@@ -196,19 +301,62 @@ def cmd_add(args: List[str]) -> None:
         endpoint = prompt_input("Custom endpoint (optional, for S3-compatible): ")
         if endpoint is None:
             return
-        print("\nCredentials will be automatically loaded from secrets.")
-        print(f"Option 1: Storage-specific - 'train secrets set {name.upper()}_ACCESS_KEY_ID' and '{name.upper()}_SECRET_ACCESS_KEY'")
-        print("Option 2: Global - 'train secrets set AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'")
         config["bucket"] = bucket
         config["region"] = region
         if endpoint:
             config["endpoint"] = endpoint
+        store_now = _prompt_store_now()
+        if store_now is None:
+            return
+        if store_now:
+            access_key_id = _prompt_secret("S3 Access Key ID: ")
+            if access_key_id is None:
+                return
+            secret_access_key = _prompt_secret("S3 Secret Access Key: ")
+            if secret_access_key is None:
+                return
+            access_name = _suggest_secret_name(name, "S3_ACCESS_KEY_ID")
+            secret_name = _suggest_secret_name(name, "S3_SECRET_ACCESS_KEY")
+            _store_secret_value(access_name, access_key_id)
+            _store_secret_value(secret_name, secret_access_key)
+            config.pop("access_key_secret", None)
+            config.pop("secret_key_secret", None)
+            print("Stored S3 credentials in train secrets.")
+        else:
+            print("You can set S3 credentials later with train secrets.")
 
     elif storage_type == StorageType.GCS:
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
         config["bucket"] = bucket
+        project_id = prompt_input("Project ID (optional): ", default="")
+        if project_id is None:
+            return
+        project_id = project_id.strip()
+        if project_id:
+            config["project_id"] = project_id
+        store_now = _prompt_store_now("Import a GCS service account JSON into train secrets now? (Y/n): ")
+        if store_now is None:
+            return
+        if store_now:
+            json_path = prompt_input("Service account JSON file path: ")
+            if json_path is None:
+                return
+            json_path = json_path.strip()
+            if not json_path:
+                print("Cancelled - service account JSON path is required.")
+                return
+            secret_name = _suggest_secret_name(name, "SERVICE_ACCOUNT_JSON")
+            try:
+                _store_secret_file(secret_name, json_path)
+            except Exception as exc:
+                print(f"Failed to import GCS service account JSON: {exc}")
+                return
+            config.pop("service_account_secret", None)
+            print("Stored GCS service account JSON in train secrets.")
+        else:
+            print("You can set the GCS service account later with train secrets.")
 
     elif storage_type == StorageType.SMB:
         server = prompt_input("Server: ")
@@ -223,6 +371,19 @@ def cmd_add(args: List[str]) -> None:
         config["server"] = server
         config["share"] = share
         config["username"] = username
+        store_now = _prompt_store_now("Store SMB password in train secrets now? (Y/n): ")
+        if store_now is None:
+            return
+        if store_now:
+            password = _prompt_secret("SMB password: ")
+            if password is None:
+                return
+            secret_name = _suggest_secret_name(name, "PASSWORD")
+            _store_secret_value(secret_name, password)
+            config.pop("password_secret", None)
+            print("Stored SMB password in train secrets.")
+        else:
+            print("You can set the SMB password later with train secrets.")
 
     default_choice = prompt_input("\nSet as default? (y/N): ")
     if default_choice is None:
@@ -251,6 +412,10 @@ def cmd_add(args: List[str]) -> None:
 
 def cmd_show(args: List[str]) -> None:
     """Show storage details."""
+    from ..core.secrets import get_secrets_manager
+    from ..core.models import StorageType
+    from ..services.secret_materialize import resolve_resource_secret_name
+
     if not args:
         print("Usage: train storage show <name>")
         sys.exit(1)
@@ -268,7 +433,39 @@ def cmd_show(args: List[str]) -> None:
     print(f"  Default: {'Yes' if storage.is_default else 'No'}")
     print(f"  Config:")
     for k, v in storage.config.items():
+        if str(k).endswith("_secret"):
+            continue
         print(f"    {k}: {v}")
+
+    secrets = get_secrets_manager()
+    managed = []
+    if storage.type == StorageType.R2 and secrets.exists(_suggest_secret_name(storage.name, "R2_CREDENTIALS")):
+        managed.append("R2 credentials")
+    elif storage.type == StorageType.B2 and secrets.exists(_suggest_secret_name(storage.name, "B2_CREDENTIALS")):
+        managed.append("B2 credentials")
+    elif storage.type == StorageType.S3:
+        if secrets.exists(resolve_resource_secret_name(storage.name, storage.config.get("access_key_secret"), "ACCESS_KEY_ID")):
+            managed.append("S3 access key")
+        if secrets.exists(resolve_resource_secret_name(storage.name, storage.config.get("secret_key_secret"), "SECRET_ACCESS_KEY")):
+            managed.append("S3 secret key")
+    elif storage.type == StorageType.GCS and secrets.exists(
+        resolve_resource_secret_name(storage.name, storage.config.get("service_account_secret"), "SERVICE_ACCOUNT_JSON")
+    ):
+        managed.append("GCS service account")
+    elif storage.type == StorageType.SSH:
+        if secrets.exists(resolve_resource_secret_name(storage.name, storage.config.get("key_secret"), "SSH_PRIVATE_KEY")):
+            managed.append("SSH private key")
+        if secrets.exists(resolve_resource_secret_name(storage.name, storage.config.get("password_secret"), "PASSWORD")):
+            managed.append("SSH password")
+    elif storage.type == StorageType.SMB and secrets.exists(
+        resolve_resource_secret_name(storage.name, storage.config.get("password_secret"), "PASSWORD")
+    ):
+        managed.append("SMB password")
+
+    if managed:
+        print("  Managed secrets:")
+        for item in managed:
+            print(f"    {item}")
 
 
 def cmd_rm(args: List[str]) -> None:
@@ -360,31 +557,42 @@ def cmd_test(args: List[str]) -> None:
             sys.exit(1)
     elif storage.type.value == "ssh":
         # Test SSH connection
-        import subprocess
         host_spec = str(storage.config.get("host") or storage.config.get("hostname") or "").strip()
         user = str(storage.config.get("user") or storage.config.get("username") or "").strip()
         if not host_spec:
             print("Error: No host configured for SSH storage.")
             sys.exit(1)
 
-        target = host_spec if "@" in host_spec or not user else f"{user}@{host_spec}"
-        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
-        if storage.config.get("port"):
-            cmd.extend(["-p", str(storage.config["port"])])
-        key_path = str(storage.config.get("key_file") or storage.config.get("key_path") or "").strip()
-        if key_path:
-            cmd.extend(["-i", key_path])
-        cmd.extend([target, "echo", "ok"])
+        from ..core.models import AuthMethod, Host, HostType
+        from ..core.secrets import get_secrets_manager
+        from ..services.ssh import SSHClient
+        from ..services.secret_materialize import resolve_resource_secret_name
+        from ..services.transfer_support import _split_ssh_target
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
+        parsed_user, parsed_host = _split_ssh_target(host_spec)
+        password_secret_name = resolve_resource_secret_name(storage.name, storage.config.get("password_secret"), "PASSWORD")
+        key_secret_name = resolve_resource_secret_name(storage.name, storage.config.get("key_secret"), "SSH_PRIVATE_KEY")
+        auth_method = AuthMethod.PASSWORD if (storage.config.get("password") or get_secrets_manager().exists(password_secret_name)) else AuthMethod.KEY
+        host = Host(
+            name=storage.name,
+            type=HostType.SSH,
+            hostname=parsed_host or host_spec,
+            port=int(storage.config.get("port", 22) or 22),
+            username=user or parsed_user,
+            auth_method=auth_method,
+            ssh_key_path=str(storage.config.get("key_file") or storage.config.get("key_path") or "").strip() or None,
+            env_vars={},
         )
-        if result.returncode == 0 and "ok" in result.stdout:
+        host.env_vars["ssh_key_secret"] = key_secret_name
+        host.env_vars["ssh_password_secret"] = password_secret_name
+
+        client = SSHClient.from_host(host)
+        result = client.run("echo ok", timeout=10)
+        exit_code = getattr(result, "exit_code", getattr(result, "returncode", 1))
+        if exit_code == 0 and "ok" in result.stdout:
             print("Connection successful!")
         else:
-            print(f"Connection failed: {result.stderr}")
+            print(f"Connection failed: {result.stderr or result.stdout}")
             sys.exit(1)
     elif storage.type.value == "local":
         import os
@@ -400,8 +608,11 @@ def cmd_test(args: List[str]) -> None:
 
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for storage command."""
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
         print(usage)
+        return None
+    if args[0] in ("-h", "--help", "help"):
+        print(render_top_level_help())
         return None
 
     subcommand = args[0]

@@ -13,6 +13,7 @@ from trainsh.commands import vast
 from trainsh.core.executor_vast import VastControlHelper
 from trainsh.core.models import VastInstance, VastOffer
 from trainsh.services.vast_api import VastAPIClient, VastAPIError, get_vast_client
+from trainsh.services.vast_connection import preferred_vast_ssh_target, vast_ssh_targets
 from trainsh.utils import vast_formatter
 
 
@@ -56,6 +57,14 @@ class VastApiClientTests(unittest.TestCase):
         with patch.object(client, "_request", return_value={"instances": {"id": 2, "ssh_host": "h", "ssh_port": 22}}):
             inst = client.get_instance(2)
         self.assertEqual(client.get_ssh_command(inst), "ssh -p 22 root@h")
+
+        with patch.object(
+            client,
+            "_request",
+            return_value={"instances": {"id": 3, "public_ipaddr": "1.2.3.4", "ports": {"22/tcp": [{"HostPort": "2201"}]}, "ssh_host": "proxy", "ssh_port": 2222}},
+        ):
+            inst = client.get_instance(3)
+        self.assertEqual(client.get_ssh_command(inst), "ssh -p 2201 root@1.2.3.4")
 
         with patch.object(client, "_request", return_value={"offers": [{"id": 9, "gpu_name": "A100", "gpu_ram": 81920}]}):
             offers = client.search_offers(gpu_name="a100", num_gpus=2, min_gpu_ram=80, max_dph=4.5, limit=3)
@@ -155,6 +164,26 @@ class VastFormatterTests(unittest.TestCase):
         self.assertIn("No instances found.", text)
 
 
+class VastConnectionTests(unittest.TestCase):
+    def test_target_order_prefers_official_port_map_then_fallbacks(self):
+        inst = VastInstance(
+            id=1,
+            public_ipaddr="1.2.3.4",
+            ports={"22/tcp": [{"HostPort": "2201"}]},
+            direct_port_start=2200,
+            ssh_host="proxy",
+            ssh_port=2222,
+            image_runtype="jupyter",
+        )
+
+        targets = vast_ssh_targets(inst)
+        self.assertEqual(
+            [(target["hostname"], target["port"]) for target in targets],
+            [("1.2.3.4", 2201), ("1.2.3.4", 2200), ("proxy", 2223), ("proxy", 2222)],
+        )
+        self.assertEqual(preferred_vast_ssh_target(inst)["port"], 2201)
+
+
 class VastCommandTests(unittest.TestCase):
     def make_instance(self, **overrides):
         data = dict(id=1, actual_status="running", ssh_host="proxy", ssh_port=2222, public_ipaddr="1.2.3.4", direct_port_start=2200)
@@ -204,7 +233,22 @@ class VastCommandTests(unittest.TestCase):
             out, code = capture_output(vast.cmd_ssh, ["1"])
         self.assertIsNone(code)
         os_system.assert_called_once()
-        self.assertIn("Connecting to proxy:2222", out)
+        self.assertIn("Connecting to 1.2.3.4:2200", out)
+
+        mapped_client = SimpleNamespace(
+            get_instance=lambda instance_id: self.make_instance(
+                id=instance_id,
+                ports={"22/tcp": [{"HostPort": "2201"}]},
+                direct_port_start=2200,
+                ssh_host="proxy",
+                ssh_port=2222,
+            )
+        )
+        with patch("trainsh.services.vast_api.get_vast_client", return_value=mapped_client), patch("os.system") as os_system:
+            out, code = capture_output(vast.cmd_ssh, ["1"])
+        self.assertIsNone(code)
+        self.assertIn("Connecting to 1.2.3.4:2201", out)
+        self.assertIn("2201", os_system.call_args.args[0])
 
         with patch("trainsh.services.vast_api.get_vast_client", return_value=client):
             out, code = capture_output(vast.cmd_start, ["1"])

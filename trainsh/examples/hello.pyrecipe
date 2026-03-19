@@ -1,0 +1,13 @@
+from trainsh import Recipe, local
+
+recipe = Recipe(
+    "hello-world",
+    owner="examples",
+    tags=["bundle", "local", "intro"],
+    callbacks=["console", "jsonl"],
+)
+message = "Hello from trainsh"
+
+with local.tmux("hello") as tmux:
+    tmux.run(["printf", "%s\n", message])
+    recipe.notify(message)

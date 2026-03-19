@@ -58,15 +58,31 @@ class TransferEngineHelpersTests(unittest.TestCase):
             "B2_APPLICATION_KEY_ID": "b2id",
             "B2_APPLICATION_KEY": "b2key",
             "GOOGLE_DRIVE_CREDENTIALS": '{"token":"abc"}',
+            "GCS_SERVICE_ACCOUNT_JSON": '{"type":"service_account"}',
+            "SMBBOX_PASSWORD": "secret-from-secrets",
+            "S3BOX_S3_ACCESS_KEY_ID": "AKIA-S3",
+            "S3BOX_S3_SECRET_ACCESS_KEY": "SECRET-S3",
         }.get(key)
 
-        with patch("trainsh.services.transfer_engine.get_secrets_manager", return_value=secrets):
+        with patch("trainsh.services.transfer_engine.get_secrets_manager", return_value=secrets), patch(
+            "trainsh.services.transfer_support.materialize_secret_file", return_value="/tmp/secret.key"
+        ):
             env = build_rclone_env(self._storage(account_id="acct"))
             self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_ACCESS_KEY_ID"], "AKIA")
             self.assertIn("acct.r2.cloudflarestorage.com", env["RCLONE_CONFIG_ARTIFACTS_ENDPOINT"])
 
-            env = build_rclone_env(self._storage(type_=StorageType.S3, region="us-east-1", endpoint="https://s3.local"))
-            self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_REGION"], "us-east-1")
+            env = build_rclone_env(
+                self._storage(
+                    name="s3box",
+                    type_=StorageType.S3,
+                    region="us-east-1",
+                    endpoint="https://s3.local",
+                    access_key_secret="S3BOX_S3_ACCESS_KEY_ID",
+                    secret_key_secret="S3BOX_S3_SECRET_ACCESS_KEY",
+                )
+            )
+            self.assertEqual(env["RCLONE_CONFIG_S3BOX_REGION"], "us-east-1")
+            self.assertEqual(env["RCLONE_CONFIG_S3BOX_ACCESS_KEY_ID"], "AKIA-S3")
 
             env = build_rclone_env(self._storage(type_=StorageType.B2))
             self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_ACCOUNT"], "b2id")
@@ -86,26 +102,28 @@ class TransferEngineHelpersTests(unittest.TestCase):
             env = build_rclone_env(self._storage(type_=StorageType.GOOGLE_DRIVE, remote_name="drive"))
             self.assertTrue(env["RCLONE_CONFIG_DRIVE_TYPE"], "drive")
 
-            env = build_rclone_env(self._storage(type_=StorageType.GCS, project_id="pid", service_account_json="{}"))
+            env = build_rclone_env(self._storage(type_=StorageType.GCS, project_id="pid"))
             self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_PROJECT_NUMBER"], "pid")
+            self.assertIn("service_account", env["RCLONE_CONFIG_ARTIFACTS_SERVICE_ACCOUNT_CREDENTIALS"])
 
             env = build_rclone_env(self._storage(type_=StorageType.SSH, host="ssh.example.com", user="root", port=22))
             self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_HOST"], "ssh.example.com")
 
-            env = build_rclone_env(self._storage(type_=StorageType.SMB, host="smb", user="u", password="p", domain="d"))
-            self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_DOMAIN"], "d")
+            env = build_rclone_env(self._storage(type_=StorageType.SMB, name="smbbox", host="smb", user="u", domain="d"))
+            self.assertEqual(env["RCLONE_CONFIG_SMBBOX_DOMAIN"], "d")
+            self.assertEqual(env["RCLONE_CONFIG_SMBBOX_PASS"], "secret-from-secrets")
 
             env = build_rclone_env(
                 self._storage(
                     name="sshbox",
                     type_=StorageType.SSH,
                     host="root@ssh.example.com",
-                    key_path="~/.ssh/id_ed25519",
+                    key_secret="SSHBOX_SSH_PRIVATE_KEY",
                 )
             )
             self.assertEqual(env["RCLONE_CONFIG_SSHBOX_HOST"], "ssh.example.com")
             self.assertEqual(env["RCLONE_CONFIG_SSHBOX_USER"], "root")
-            self.assertIn("KEY_FILE", "".join(env.keys()))
+            self.assertEqual(env["RCLONE_CONFIG_SSHBOX_KEY_FILE"], "/tmp/secret.key")
 
             env = build_rclone_env(
                 self._storage(

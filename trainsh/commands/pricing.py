@@ -4,7 +4,7 @@
 import argparse
 from typing import Optional
 
-from ..cli_utils import render_command_help
+from .help_catalog import render_command_help, render_top_level_help
 from ..services.pricing import (
     Currency,
     ExchangeRates,
@@ -22,22 +22,7 @@ from ..services.pricing import (
 )
 
 
-usage = render_command_help(
-    command="train pricing",
-    summary="Show exchange rates, display currency settings, and cloud cost estimates.",
-    usage_lines=("train pricing <rates|currency|colab|vast|convert> [args...]",),
-    notes=(
-        "Cross-currency views auto-refresh cached exchange rates when needed.",
-        "Exchange rates are refreshed at most once every 3 days unless you force --refresh.",
-    ),
-    examples=(
-        "train pricing rates --refresh",
-        "train pricing currency --set CNY",
-        "train pricing colab",
-        "train pricing vast",
-        "train pricing convert 10 USD CNY",
-    ),
-)
+usage = render_command_help("pricing")
 
 
 def cmd_rates(args: argparse.Namespace) -> None:
@@ -211,8 +196,11 @@ def cmd_convert(args: argparse.Namespace) -> None:
 
 def main(args: list) -> Optional[str]:
     """Main entry point for pricing command."""
-    if not args or args[0] in {"-h", "--help", "help"}:
+    if not args:
         print(usage)
+        return None
+    if args[0] in {"-h", "--help", "help"}:
+        print(render_top_level_help())
         return None
 
     parser = argparse.ArgumentParser(

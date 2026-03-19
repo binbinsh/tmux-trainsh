@@ -8,33 +8,14 @@ import time
 from typing import Optional
 
 from ..core.models import AuthMethod, Host, HostType
+from .vast_connection import vast_ssh_targets
 
 AUTO_DISCOVERED_VAST_ENV = "_auto_discovered_vast"
 
 
 def _instance_connection_targets(instance) -> list[dict]:
     """Build ordered SSH connection targets for a Vast instance."""
-    targets = []
-
-    if getattr(instance, "public_ipaddr", None) and getattr(instance, "direct_port_start", None):
-        targets.append(
-            {
-                "type": "ssh",
-                "hostname": instance.public_ipaddr,
-                "port": int(instance.direct_port_start),
-            }
-        )
-
-    if getattr(instance, "ssh_host", None) and getattr(instance, "ssh_port", None):
-        proxy_target = {
-            "type": "ssh",
-            "hostname": instance.ssh_host,
-            "port": int(instance.ssh_port),
-        }
-        if proxy_target not in targets:
-            targets.append(proxy_target)
-
-    return targets
+    return vast_ssh_targets(instance)
 
 
 def _apply_connection_targets(host: Host, targets: list[dict]) -> Host:

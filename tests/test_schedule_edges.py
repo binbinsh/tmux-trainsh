@@ -1,4 +1,3 @@
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from trainsh.commands import schedule_cmd
+from trainsh.core.runtime_store import RuntimeStore
 
 
 def capture(fn, *args, **kwargs):
@@ -30,7 +30,7 @@ class ScheduleCommandMoreTests(unittest.TestCase):
                 "--once",
                 "--recipe=demo",
                 "--recipes-dir=/tmp/recipes",
-                "--runtime-db=/tmp/db.sqlite",
+                "--runtime-state=/tmp/runtime",
                 "--loop-interval=9",
                 "--max-active-runs=2",
                 "--max-active-runs-per-recipe=3",
@@ -43,7 +43,7 @@ class ScheduleCommandMoreTests(unittest.TestCase):
         self.assertTrue(parsed["once"])
         self.assertEqual(parsed["dag_ids"], ["demo"])
         self.assertEqual(parsed["dags_dir"], "/tmp/recipes")
-        self.assertEqual(parsed["sqlite_db"], "/tmp/db.sqlite")
+        self.assertEqual(parsed["runtime_state"], "/tmp/runtime")
         self.assertEqual(parsed["loop_interval"], 9)
         self.assertEqual(parsed["max_active_runs"], 2)
         self.assertEqual(parsed["max_active_runs_per_dag"], 3)
@@ -65,8 +65,8 @@ class ScheduleCommandMoreTests(unittest.TestCase):
         self.assertIn("train recipe schedule", out)
 
         with patch("trainsh.commands.schedule_cmd.cmd_schedule_list") as mocked_list:
-            schedule_cmd.cmd_schedule(["list", "--runtime-db", "/tmp/db.sqlite"])
-        mocked_list.assert_called_once_with(["--runtime-db", "/tmp/db.sqlite"])
+            schedule_cmd.cmd_schedule(["list", "--runtime-state", "/tmp/runtime"])
+        mocked_list.assert_called_once_with(["--runtime-state", "/tmp/runtime"])
 
         with patch("trainsh.commands.schedule_cmd.cmd_schedule_status") as mocked_status:
             schedule_cmd.cmd_schedule(["status", "--rows", "5"])
@@ -82,33 +82,38 @@ class ScheduleCommandMoreTests(unittest.TestCase):
 
     def test_history_and_status_edge_rendering(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = Path(tmpdir) / "db.sqlite"
-            conn = sqlite3.connect(db)
-            conn.execute(
-                "CREATE TABLE dag_run (dag_id TEXT, run_id TEXT, state TEXT, run_type TEXT, execution_date TEXT, start_date TEXT, end_date TEXT)"
+            db = Path(tmpdir) / "runtime"
+            RuntimeStore(db).append_run(
+                {
+                    "run_id": "run-1",
+                    "dag_id": "bad-path-\0",
+                    "recipe_name": "bad-path-\0",
+                    "recipe_path": "bad-path-\0",
+                    "state": "success",
+                    "status": "succeeded",
+                    "run_type": "scheduled",
+                    "execution_date": "now",
+                    "started_at": "",
+                    "ended_at": "",
+                    "updated_at": "now",
+                }
             )
-            conn.execute(
-                "INSERT INTO dag_run VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("bad-path-\0", "run-1", "success", "scheduled", "now", None, None),
-            )
-            conn.commit()
-            conn.close()
 
-            out, code = capture(schedule_cmd.cmd_schedule_status, ["--runtime-db", str(db), "--rows=1"])
+            out, code = capture(schedule_cmd.cmd_schedule_status, ["--runtime-state", str(db), "--rows=1"])
             self.assertIsNone(code)
             self.assertIn("bad-path-\x00\trun-1\tsuccess\tscheduled\t-", out)
 
-            dag = SimpleNamespace(recipe_name="demo", dag_id="/tmp/demo.py", schedule=None, path="/tmp/demo.py", is_valid=True, load_error=None)
+            dag = SimpleNamespace(recipe_name="demo", dag_id="/tmp/demo.pyrecipe", schedule=None, path="/tmp/demo.pyrecipe", is_valid=True, load_error=None)
             with patch("trainsh.commands.schedule_cmd.DagProcessor") as mocked_proc, patch(
                 "trainsh.commands.schedule_cmd._latest_state_for_dag",
                 return_value={"state": "", "run_id": "", "start_date": ""},
             ):
                 mocked_proc.return_value.discover_dags.return_value = [dag]
-                out, code = capture(schedule_cmd.cmd_schedule_list, ["--runtime-db", str(db)])
+                out, code = capture(schedule_cmd.cmd_schedule_list, ["--runtime-state", str(db)])
             self.assertIsNone(code)
-            self.assertIn("demo\t-\t-\t-\t-\t/tmp/demo.py", out)
+            self.assertIn("demo\t-\t-\t-\t-\t/tmp/demo.pyrecipe", out)
 
-            records = [SimpleNamespace(state="success", dag_id="/tmp/demo.py", run_id="run-2", message="ok")]
+            records = [SimpleNamespace(state="success", dag_id="/tmp/demo.pyrecipe", run_id="run-2", message="ok")]
             scheduler = SimpleNamespace(run_once=lambda **kwargs: records, run_forever=lambda **kwargs: None)
             with patch("trainsh.commands.schedule_cmd.DagScheduler", return_value=scheduler):
                 out, code = capture(schedule_cmd.cmd_schedule_run, ["--wait"])

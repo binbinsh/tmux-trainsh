@@ -3,13 +3,13 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from trainsh.core.pool_manager import SqlitePoolManager
+from trainsh.core.pool_manager import RuntimeStatePoolManager
 
 
-class SqlitePoolManagerTests(unittest.TestCase):
+class RuntimeStatePoolManagerTests(unittest.TestCase):
     def test_utcnow_is_timezone_aware_isoformat(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            manager = SqlitePoolManager(str(Path(tmpdir) / "runtime.db"))
+            manager = RuntimeStatePoolManager(str(Path(tmpdir) / "runtime.db"))
             try:
                 stamp = manager._utcnow()
             finally:
@@ -21,7 +21,7 @@ class SqlitePoolManagerTests(unittest.TestCase):
 
     def test_try_acquire_and_release_respect_pool_capacity(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            manager = SqlitePoolManager(str(Path(tmpdir) / "runtime.db"), default_slots={"gpu": 2})
+            manager = RuntimeStatePoolManager(str(Path(tmpdir) / "runtime.db"), default_slots={"gpu": 2})
             try:
                 self.assertTrue(manager.try_acquire("gpu"))
                 self.assertTrue(manager.try_acquire("gpu"))
@@ -39,7 +39,7 @@ class SqlitePoolManagerTests(unittest.TestCase):
     def test_context_manager_and_missing_pool_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "runtime.db"
-            with SqlitePoolManager(str(db_path), default_slots={"default": 2}) as manager:
+            with RuntimeStatePoolManager(str(db_path), default_slots={"default": 2}) as manager:
                 stats = manager.get_stats("missing")
                 self.assertEqual(stats.pool, "missing")
                 self.assertTrue(manager.has_capacity("missing", 0))
@@ -50,9 +50,7 @@ class SqlitePoolManagerTests(unittest.TestCase):
             self.assertTrue(manager._closed)
             manager.close()
 
-        manager = SqlitePoolManager(":memory:")
-        manager.conn.close()
-        manager.conn = unittest.mock.MagicMock(close=unittest.mock.MagicMock(side_effect=RuntimeError("boom")))
+        manager = RuntimeStatePoolManager(":memory:")
         manager.close()
         self.assertTrue(manager._closed)
 

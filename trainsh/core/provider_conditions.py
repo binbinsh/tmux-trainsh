@@ -89,7 +89,7 @@ class ExecutorProviderConditionsMixin:
         return False, f"Condition blocked: {message}"
 
     def _exec_provider_latest_only(self, params: Dict[str, Any]) -> tuple[bool, str]:
-        """Keep only the newest run for this recipe when sqlite state is available."""
+        """Keep only the newest run for this recipe when runtime state is available."""
         if not isinstance(params, dict):
             return False, "Provider util.latest_only params must be an object"
 
@@ -100,21 +100,26 @@ class ExecutorProviderConditionsMixin:
         message = str(params.get("message", "Skipped by latest_only"))
         fail_if_unknown = self._coerce_bool(params.get("fail_if_unknown", False), default=False)
 
-        from ..constants import CONFIG_DIR
+        from ..constants import RUNTIME_STATE_DIR
+        from ..core.runtime_store import RuntimeStore
+
+        runtime_state = str(params.get("runtime_state", "")).strip()
+        if not runtime_state:
+            runtime_state = str(RUNTIME_STATE_DIR)
+
+        import os
         from pathlib import Path
-        import sqlite3
 
-        sqlite_db = str(params.get("sqlite_db", "")).strip()
-        if not sqlite_db:
-            sqlite_db = str(Path(CONFIG_DIR) / "runtime.db")
+        runtime_path = Path(runtime_state).expanduser()
+        if runtime_path.suffix:
+            runtime_path = runtime_path.with_suffix("")
 
-        db_path = Path(sqlite_db)
-        if not db_path.exists():
+        if not os.path.exists(runtime_path):
             if fail_if_unknown:
-                return False, "latest_only cannot determine state: runtime sqlite DB not found"
+                return False, "latest_only cannot determine state: runtime state not found"
             return (
                 True,
-                "latest_only passed (runtime sqlite DB not found; install sqlite callback or set fail_if_unknown=False)",
+                "latest_only passed (runtime state not found; install the jsonl callback or set fail_if_unknown=False)",
             )
 
         current_run_id = self.ctx.job_id
@@ -127,50 +132,21 @@ class ExecutorProviderConditionsMixin:
             return True, "latest_only passed (current run start time unavailable)"
 
         try:
-            conn = sqlite3.connect(str(db_path))
-            try:
-                row = None
-
-                has_recipe_runs = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recipe_runs'"
-                ).fetchone()
-                if has_recipe_runs:
-                    row = conn.execute(
-                        """
-                        SELECT started_at
-                        FROM recipe_runs
-                        WHERE recipe_name = ?
-                          AND run_id != ?
-                          AND started_at > ?
-                        ORDER BY started_at DESC
-                        LIMIT 1
-                        """,
-                        (recipe_name, current_run_id, current_started_at),
-                    ).fetchone()
-
-                if row is None:
-                    has_dag_run = conn.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dag_run'"
-                    ).fetchone()
-                    if has_dag_run:
-                        row = conn.execute(
-                            """
-                            SELECT start_date
-                            FROM dag_run
-                            WHERE dag_id = ?
-                              AND run_id != ?
-                              AND start_date > ?
-                            ORDER BY start_date DESC
-                            LIMIT 1
-                            """,
-                            (dag_id, current_run_id, current_started_at),
-                        ).fetchone()
-            finally:
-                conn.close()
+            store = RuntimeStore(runtime_path)
+            row = None
+            for record in store.list_runs():
+                if str(record.get("run_id", "")) == current_run_id:
+                    continue
+                started_at = str(record.get("started_at", "") or "")
+                if not started_at or started_at <= current_started_at:
+                    continue
+                if str(record.get("recipe_name", "")) == recipe_name or str(record.get("dag_id", "")) == dag_id:
+                    row = record
+                    break
         except Exception as exc:
             if fail_if_unknown:
-                return False, f"latest_only sqlite check failed: {exc}"
-            return True, f"latest_only passed (sqlite check failed: {exc})"
+                return False, f"latest_only runtime-state check failed: {exc}"
+            return True, f"latest_only passed (runtime-state check failed: {exc})"
 
         if row:
             return False, message

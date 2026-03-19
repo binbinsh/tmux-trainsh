@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from .executor_runtime import WindowInfo
 from .executor_utils import _resolve_vast_host
 from .models import Host
-from .runtime_db import to_jsonable
+from .runtime_store import to_jsonable
 
 
 class ExecutorSupportMixin:
@@ -41,7 +41,7 @@ class ExecutorSupportMixin:
         self,
         window: WindowInfo,
         commands: str,
-        timeout: int,
+        timeout: Optional[int],
         background: bool,
         start_time: float,
     ) -> Optional[tuple[bool, str]]:

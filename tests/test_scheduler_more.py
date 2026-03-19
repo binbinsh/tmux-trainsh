@@ -136,20 +136,26 @@ class SchedulerMoreTests(unittest.TestCase):
     def test_db_counts_sqlite_helpers_and_filters(self):
         dag = make_dag("demo")
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "runtime.db"
-            scheduler = DagScheduler(dag_processor=SimpleNamespace(discover_dags=lambda: []), dag_executor=SimpleNamespace(run=lambda *a, **k: None), sqlite_db=str(db_path))
+            from trainsh.core.runtime_store import RuntimeStore
 
-            with scheduler._sqlite_conn() as conn:
-                self.assertIsNotNone(conn)
-                conn.execute("CREATE TABLE dag_run (dag_id TEXT, state TEXT, start_date TEXT)")
-                conn.execute("INSERT INTO dag_run VALUES (?, ?, ?)", (dag.dag_id, "running", "2026-03-13T00:00:00+00:00"))
-                conn.commit()
+            db_path = Path(tmpdir) / "runtime"
+            scheduler = DagScheduler(dag_processor=SimpleNamespace(discover_dags=lambda: []), dag_executor=SimpleNamespace(run=lambda *a, **k: None), runtime_state=str(db_path))
+            RuntimeStore(db_path).append_run(
+                {
+                    "run_id": "run-1",
+                    "dag_id": dag.dag_id,
+                    "recipe_name": dag.recipe_name,
+                    "recipe_path": str(dag.path),
+                    "state": "running",
+                    "status": "running",
+                    "started_at": "2026-03-13T00:00:00+00:00",
+                    "updated_at": "2026-03-13T00:00:00+00:00",
+                }
+            )
 
             self.assertEqual(scheduler._count_db_running(), 1)
             self.assertEqual(scheduler._count_db_running(dag.dag_id), 1)
             self.assertIsNotNone(scheduler._latest_run_start(dag.dag_id))
-            with closing(sqlite3.connect(db_path)) as conn:
-                self.assertTrue(scheduler._has_table(conn, "dag_run"))
             self.assertIsNone(scheduler._parse_time(""))
             self.assertIsNotNone(scheduler._parse_time("1700000000"))
 
@@ -170,9 +176,7 @@ class SchedulerMoreTests(unittest.TestCase):
             self.assertTrue(scheduler._matches_filter(dag, {dag.path.name}))
             self.assertFalse(scheduler._matches_filter(dag, {"missing"}))
 
-        scheduler = DagScheduler(dag_processor=SimpleNamespace(discover_dags=lambda: []), dag_executor=SimpleNamespace(run=lambda *a, **k: None), sqlite_db="/tmp/does-not-exist/dir/runtime.db")
-        with scheduler._sqlite_conn() as conn:
-            self.assertIsNone(conn)
+        scheduler = DagScheduler(dag_processor=SimpleNamespace(discover_dags=lambda: []), dag_executor=SimpleNamespace(run=lambda *a, **k: None), runtime_state="/tmp/does-not-exist/dir/runtime")
         self.assertEqual(scheduler._count_db_running(), 0)
         self.assertIsNone(scheduler._latest_run_start("missing"))
 

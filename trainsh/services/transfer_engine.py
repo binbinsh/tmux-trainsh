@@ -1,10 +1,12 @@
 import subprocess
 import os
 import re
+import shlex
+import shutil
 import tempfile
 from typing import Optional, List, Callable
 
-from ..core.models import Host, Storage, StorageType, TransferEndpoint, HostType
+from ..core.models import AuthMethod, Host, Storage, StorageType, TransferEndpoint, HostType
 from . import transfer_support as _transfer_support
 from .transfer_support import (
     TransferPlan,
@@ -111,11 +113,11 @@ class TransferEngine:
             # Build source/destination with SSH host
             if host:
                 host = self._prepare_host(host)
-                ssh_cmd = f"ssh -p {host.port}"
+                ssh_cmd = " ".join([*self._ssh_auth_prefix(host), "ssh", "-p", str(host.port)])
                 if host.ssh_key_path:
                     key_path = os.path.expanduser(host.ssh_key_path)
                     if os.path.exists(key_path):
-                        ssh_cmd += f" -i {key_path}"
+                        ssh_cmd += f" -i {shlex.quote(key_path)}"
                 args.extend(["-e", ssh_cmd])
 
                 host_prefix = f"{host.username}@{host.hostname}:" if host.username else f"{host.hostname}:"
@@ -142,20 +144,26 @@ class TransferEngine:
 
             output_lines = []
             bytes_transferred = 0
+            stdout = process.stdout
 
-            # Stream output in real-time
-            for line in process.stdout:
-                line = line.rstrip()
-                output_lines.append(line)
+            if stdout is not None:
+                try:
+                    for line in stdout:
+                        line = line.rstrip()
+                        output_lines.append(line)
 
-                # Show progress lines (rsync progress format)
-                if line and not line.startswith(' '):
-                    print(f"  {line}", flush=True)
+                        # Show progress lines (rsync progress format)
+                        if line and not line.startswith(' '):
+                            print(f"  {line}", flush=True)
 
-                # Parse bytes from final summary
-                match = re.search(r"sent ([\d,]+) bytes", line)
-                if match:
-                    bytes_transferred = int(match.group(1).replace(",", ""))
+                        # Parse bytes from final summary
+                        match = re.search(r"sent ([\d,]+) bytes", line)
+                        if match:
+                            bytes_transferred = int(match.group(1).replace(",", ""))
+                finally:
+                    close = getattr(stdout, "close", None)
+                    if callable(close):
+                        close()
 
             process.wait()
 
@@ -251,34 +259,40 @@ class TransferEngine:
 
             output_lines = []
             bytes_transferred = 0
+            stdout = process.stdout
 
-            # Stream output in real-time
-            for line in process.stdout:
-                line = line.rstrip()
-                output_lines.append(line)
+            if stdout is not None:
+                try:
+                    for line in stdout:
+                        line = line.rstrip()
+                        output_lines.append(line)
 
-                # Show progress lines
-                if line:
-                    # rclone progress format: "Transferred: X / Y, ETA X"
-                    print(f"  {line}", flush=True)
+                        # Show progress lines
+                        if line:
+                            # rclone progress format: "Transferred: X / Y, ETA X"
+                            print(f"  {line}", flush=True)
 
-                    # Parse transferred bytes from rclone output
-                    match = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
-                    if match:
-                        size_str = match.group(1)
-                        unit = match.group(2).upper()
-                        try:
-                            size = float(size_str)
-                            if unit == "KIB" or unit == "KB":
-                                bytes_transferred = int(size * 1024)
-                            elif unit == "MIB" or unit == "MB":
-                                bytes_transferred = int(size * 1024 * 1024)
-                            elif unit == "GIB" or unit == "GB":
-                                bytes_transferred = int(size * 1024 * 1024 * 1024)
-                            else:
-                                bytes_transferred = int(size)
-                        except ValueError:
-                            pass
+                            # Parse transferred bytes from rclone output
+                            match = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
+                            if match:
+                                size_str = match.group(1)
+                                unit = match.group(2).upper()
+                                try:
+                                    size = float(size_str)
+                                    if unit == "KIB" or unit == "KB":
+                                        bytes_transferred = int(size * 1024)
+                                    elif unit == "MIB" or unit == "MB":
+                                        bytes_transferred = int(size * 1024 * 1024)
+                                    elif unit == "GIB" or unit == "GB":
+                                        bytes_transferred = int(size * 1024 * 1024 * 1024)
+                                    else:
+                                        bytes_transferred = int(size)
+                                except ValueError:
+                                    pass
+                finally:
+                    close = getattr(stdout, "close", None)
+                    if callable(close):
+                        close()
 
             process.wait()
 
@@ -467,24 +481,64 @@ class TransferEngine:
         config = storage.config
         host_value = str(config.get("host") or config.get("hostname") or "").strip()
         parsed_user, parsed_host = _transfer_support._split_ssh_target(host_value)
-        return Host(
+        from .secret_materialize import resolve_resource_secret_name
+
+        password_secret = resolve_resource_secret_name(storage.name, config.get("password_secret"), "PASSWORD")
+        key_secret = resolve_resource_secret_name(storage.name, config.get("key_secret"), "SSH_PRIVATE_KEY")
+        auth_method = AuthMethod.PASSWORD if (_transfer_support.get_secrets_manager().exists(password_secret) or config.get("password")) else AuthMethod.KEY
+        host = Host(
             id=storage.id,
             name=storage.name,
             type=HostType.SSH,
             hostname=parsed_host or host_value,
             port=config.get("port", 22),
             username=config.get("user") or config.get("username") or parsed_user,
+            auth_method=auth_method,
             ssh_key_path=config.get("key_file") or config.get("key_path"),
         )
+        host.env_vars["ssh_key_secret"] = key_secret
+        host.env_vars["ssh_password_secret"] = password_secret
+        return host
 
     def _prepare_host(self, host: Host) -> Host:
         """Resolve provider-backed hosts before using them in transfers."""
-        if host.type != HostType.VASTAI or not host.vast_instance_id:
-            return host
+        if host.type == HostType.VASTAI and host.vast_instance_id:
+            from .host_resolver import prepare_vast_host
 
-        from .host_resolver import prepare_vast_host
+            host = prepare_vast_host(host)
 
-        return prepare_vast_host(host)
+        key_secret = str((host.env_vars or {}).get("ssh_key_secret", "")).strip()
+        if key_secret:
+            from .secret_materialize import materialize_secret_file
+
+            resolved_key = materialize_secret_file(key_secret, suffix=".key")
+            if resolved_key:
+                host = Host.from_dict(host.to_dict())
+                host.ssh_key_path = resolved_key
+        return host
+
+    def _host_password_file(self, host: Host) -> Optional[str]:
+        if host.auth_method != AuthMethod.PASSWORD:
+            return None
+        from .secret_materialize import resolve_resource_secret_name
+
+        password_secret = resolve_resource_secret_name(host.name or host.hostname, (host.env_vars or {}).get("ssh_password_secret"), "SSH_PASSWORD")
+        if not password_secret:
+            return None
+        from .secret_materialize import materialize_secret_file
+
+        return materialize_secret_file(password_secret, suffix=".pass")
+
+    def _ssh_auth_prefix(self, host: Host) -> List[str]:
+        password_file = self._host_password_file(host)
+        if not password_file:
+            return []
+        if not shutil.which("sshpass"):
+            raise RuntimeError(
+                "sshpass is required for secret-managed password SSH authentication. "
+                "Install sshpass or switch this host/storage to SSH key auth."
+            )
+        return ["sshpass", "-f", password_file]
 
     def _storage_rooted_path(self, storage: Storage, path: str) -> str:
         """Resolve a transfer path within a local or SSH storage root."""
@@ -622,7 +676,18 @@ class TransferEngine:
             dst = self._prepare_host(dst)
             # Build SSH command to check connectivity
             dst_spec = f"{dst.username}@{dst.hostname}" if dst.username else dst.hostname
-            check_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no"
+            check_cmd = " ".join(
+                [
+                    *self._ssh_auth_prefix(dst),
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=5",
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                ]
+            )
             if dst.port != 22:
                 check_cmd += f" -p {dst.port}"
             check_cmd += f" {dst_spec} echo ok"
@@ -665,8 +730,11 @@ class TransferEngine:
 
         # Destination spec
         dst_spec = f"{dst_host.username}@{dst_host.hostname}" if dst_host.username else dst_host.hostname
+        ssh_remote = " ".join([*self._ssh_auth_prefix(dst_host), "ssh"])
         if dst_host.port != 22:
-            rsync_parts.extend(["-e", f"'ssh -p {dst_host.port}'"])
+            rsync_parts.extend(["-e", f"'{ssh_remote} -p {dst_host.port}'"])
+        elif self._ssh_auth_prefix(dst_host):
+            rsync_parts.extend(["-e", f"'{ssh_remote}'"])
 
         rsync_parts.append(source.path)
         rsync_parts.append(f"{dst_spec}:{destination.path}")
@@ -689,17 +757,24 @@ class TransferEngine:
 
             output_lines = []
             bytes_transferred = 0
+            stdout = process.stdout
 
-            for line in process.stdout:
-                line = line.rstrip()
-                output_lines.append(line)
-                # Show all non-empty lines
-                if line:
-                    print(f"  {line}", flush=True)
-                # Parse bytes from final summary
-                match = re.search(r"sent ([\d,]+) bytes", line)
-                if match:
-                    bytes_transferred = int(match.group(1).replace(",", ""))
+            if stdout is not None:
+                try:
+                    for line in stdout:
+                        line = line.rstrip()
+                        output_lines.append(line)
+                        # Show all non-empty lines
+                        if line:
+                            print(f"  {line}", flush=True)
+                        # Parse bytes from final summary
+                        match = re.search(r"sent ([\d,]+) bytes", line)
+                        if match:
+                            bytes_transferred = int(match.group(1).replace(",", ""))
+                finally:
+                    close = getattr(stdout, "close", None)
+                    if callable(close):
+                        close()
 
             process.wait()
 
@@ -817,7 +892,7 @@ class TransferEngine:
     def _build_ssh_args(self, host: Host) -> List[str]:
         """Build SSH command arguments for a host."""
         host = self._prepare_host(host)
-        args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no"]
+        args = [*self._ssh_auth_prefix(host), "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no"]
 
         if host.port != 22:
             args.extend(["-p", str(host.port)])

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .base import RecipeSpec as Recipe
 from .loader import load_python_recipe
-from .models import Host, HostPath, Storage, StoragePath, VastHost
+from .models import Host, HostPath, Storage, StoragePath, VastHost, local
 from .session_steps import official_uv_install_command
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "Storage",
     "StoragePath",
     "VastHost",
+    "local",
     "load_python_recipe",
     "official_uv_install_command",
 ]

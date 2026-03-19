@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from ..constants import CONFIG_DIR
+from ..constants import RECIPE_FILE_EXTENSION
 from ..pyrecipe.loader import load_python_recipe
 
 
@@ -125,7 +126,7 @@ class ParsedDag:
     tags: List[str] = field(default_factory=list)
     owner: str = "trainsh"
     catchup: bool = False
-    callbacks: List[str] = field(default_factory=lambda: ["console", "sqlite"])
+    callbacks: List[str] = field(default_factory=lambda: ["console", "jsonl"])
     max_active_runs: int = 1
     max_active_runs_per_dag: Optional[int] = None
     executor: Optional[str] = None
@@ -172,7 +173,7 @@ class DagProcessor:
         recursive: bool = True,
     ):
         self.dag_roots = [Path(p) for p in (dag_roots or [str(CONFIG_DIR / "recipes")])]
-        self.include_patterns = list(include_patterns or ["**/*.py"])
+        self.include_patterns = list(include_patterns or [f"**/*{RECIPE_FILE_EXTENSION}"])
         self.recursive = recursive
 
     def discover_dags(self) -> List[ParsedDag]:
@@ -192,7 +193,7 @@ class DagProcessor:
                 continue
 
             if path.is_file():
-                if path.suffix.lower() == ".py":
+                if path.suffix.lower() == RECIPE_FILE_EXTENSION:
                     files.append(path)
                 continue
 
@@ -225,7 +226,7 @@ class DagProcessor:
             load_error = str(exc)
 
         recipe_name = str(meta.get("name", path.stem))
-        callbacks = self._coerce_list(meta.get("callbacks", ["console", "sqlite"]))
+        callbacks = self._coerce_list(meta.get("callbacks", ["console", "jsonl"]))
         return ParsedDag(
             dag_id=str(path),
             path=path,

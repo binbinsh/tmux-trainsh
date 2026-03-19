@@ -113,11 +113,15 @@ class HostCommandTests(unittest.TestCase):
             ssh_client = MagicMock()
             ssh_client.connect_interactive.return_value = 0
             ssh_client.test_connection.return_value = True
+            ssh_client.run.return_value = SimpleNamespace(exit_code=0, stdout="GPU OK\n", stderr="")
             with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh_client):
                 text = capture_output(host.cmd_test, ["gpu-box"])
                 self.assertIn("Connection successful!", text)
                 text = capture_output(host.cmd_ssh, ["gpu-box"])
                 self.assertIn("Connecting to gpu-box", text)
+                text = capture_output(host.cmd_run, ["gpu-box", "--", "nvidia-smi"])
+                self.assertIn("Running on gpu-box...", text)
+                self.assertIn("GPU OK", text)
 
             ssh_client.test_connection.return_value = False
             with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh_client):
@@ -225,7 +229,8 @@ class StorageCommandTests(unittest.TestCase):
                 text = capture_output(storage.cmd_test, ["cloud"])
             self.assertIn("Using rclone remote: cloudremote:bucket", text)
 
-            with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="ok\n", stderr="")):
+            ssh_storage_client = SimpleNamespace(run=lambda *args, **kwargs: SimpleNamespace(exit_code=0, stdout="ok\n", stderr=""))
+            with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh_storage_client):
                 text = capture_output(storage.cmd_test, ["sshbox"])
             self.assertIn("Connection successful!", text)
 
@@ -404,6 +409,13 @@ class TransferColabVastCommandTests(unittest.TestCase):
                 text = capture_output(vast.cmd_ssh, ["123"])
             self.assertIn("Connecting to ssh.host:2222", text)
             system_mock.assert_called_once()
+
+            ssh_client = MagicMock()
+            ssh_client.run.return_value = SimpleNamespace(exit_code=0, stdout="VAST OK\n", stderr="")
+            with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh_client):
+                text = capture_output(vast.cmd_run, ["123", "--", "nvidia-smi"])
+            self.assertIn("Running on Vast.ai #123...", text)
+            self.assertIn("VAST OK", text)
 
             text = capture_output(vast.cmd_start, ["123"])
             self.assertIn("Instance started.", text)

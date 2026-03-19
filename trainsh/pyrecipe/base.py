@@ -25,9 +25,16 @@ from .condition_steps import RecipeProviderConditionMixin
 from .transfer_steps import RecipeProviderTransferMixin
 from .session_steps import RecipeSessionMixin
 from .storage_steps import RecipeStorageMixin
-from .provider_sqlite_steps import RecipeProviderSQLiteMixin
 from .network_steps import RecipeProviderNetworkMixin
 from .references import wrap_step_handle
+
+
+_ACTIVE_RECIPE: "RecipeSpecCore | None" = None
+
+
+def get_active_recipe():
+    """Return the most recently created recipe used for authoring."""
+    return _ACTIVE_RECIPE
 
 
 class RecipeSpecCore:
@@ -49,6 +56,7 @@ class RecipeSpecCore:
         callbacks: Optional[Iterable[str]] = None,
         **extra_executor_kwargs: Any,
     ):
+        global _ACTIVE_RECIPE
         self.name = (name or "recipe").strip()
         if not self.name:
             raise PythonRecipeError("recipe name cannot be empty")
@@ -72,7 +80,7 @@ class RecipeSpecCore:
         if workers is not None and "max_workers" not in self.executor_kwargs:
             self.executor_kwargs["max_workers"] = workers
         self.executor_kwargs.update(extra_executor_kwargs)
-        self.callbacks = list(callbacks) if callbacks is not None else ["console", "sqlite"]
+        self.callbacks = list(callbacks) if callbacks is not None else ["console", "jsonl"]
         self.schedule = schedule
         self.owner = owner or "trainsh"
         self.tags = list(tags or [])
@@ -86,6 +94,8 @@ class RecipeSpecCore:
         self._linear_contexts: list[dict[str, Any]] = []
         self._resource_host_aliases: dict[Host, str] = {}
         self._resource_storage_aliases: dict[int, str] = {}
+        self._session_registry: dict[str, dict[str, Any]] = {}
+        _ACTIVE_RECIPE = self
 
     def __enter__(self) -> "RecipeSpecCore":
         return self
@@ -110,10 +120,17 @@ class RecipeSpecCore:
         self.executor_kwargs.update(kwargs)
 
     @contextmanager
-    def linear(self):
-        """Author a simple linear task chain in statement order."""
+    def _linear(self, *, depends_on: Any = None):
+        """Internal linear authoring context used by tmux-backed blocks."""
+        from .authoring_support import normalize_after
+
+        initial_depends = normalize_after(depends_on)
         state = {
-            "last": self._linear_contexts[-1]["last"] if self._linear_contexts else None,
+            "last": None if initial_depends is not None else (
+                self._linear_contexts[-1]["last"] if self._linear_contexts
+                else (wrap_step_handle(self, self.steps[-1].id) if self.steps else None)
+            ),
+            "depends_on": initial_depends,
         }
         self._linear_contexts.append(state)
         try:
@@ -375,15 +392,23 @@ class RecipeSpecCore:
         self,
         step: object,
         id: Optional[str] = None,
-        depends_on: Optional[Iterable[str]] = None,
+        depends_on: Any = None,
         step_options: Optional[Dict[str, Any]] = None,
         step_id: Optional[str] = None,
     ) -> str:
+        from .authoring_support import normalize_after
+
         resolved_id = self._next_step_id(id if id is not None else step_id)
         options = self._normalize_step_options(step_options or {})
-        implicit_depends = depends_on
-        if implicit_depends is None and self._linear_contexts and self._linear_contexts[-1].get("last") is not None:
-            implicit_depends = [self._linear_contexts[-1]["last"]]
+        implicit_depends = normalize_after(depends_on)
+        if implicit_depends is None and self._linear_contexts:
+            current_linear = self._linear_contexts[-1]
+            if current_linear.get("last") is not None:
+                implicit_depends = [current_linear["last"]]
+            elif current_linear.get("depends_on"):
+                implicit_depends = list(current_linear["depends_on"])
+        if implicit_depends is None and self.steps:
+            implicit_depends = [self.steps[-1].id]
         deps: List[str] = []
         for dependency in implicit_depends or []:
             dep_id = str(dependency).strip()
@@ -465,6 +490,49 @@ class RecipeSpecCore:
         if not self._linear_contexts:
             return None
         return self._linear_contexts[-1].get("last")
+
+    def current_linear_seed_dependencies(self) -> list[str]:
+        """Return the current linear block's seed dependencies, if any."""
+        if not self._linear_contexts:
+            return []
+        current = self._linear_contexts[-1]
+        if current.get("last") is not None:
+            return [str(current["last"]).strip()]
+        return [str(item).strip() for item in (current.get("depends_on") or []) if str(item).strip()]
+
+    def last(self):
+        """Return a handle to the most recently added step."""
+        if not self.steps:
+            raise PythonRecipeError("recipe has no steps yet")
+        return wrap_step_handle(self, self.steps[-1].id)
+
+    def last_step(self):
+        """Alias for :meth:`last`."""
+        return self.last()
+
+    def remember_session(
+        self,
+        name: str,
+        *,
+        open_step_id: Optional[str],
+        host_ref: Optional[str],
+        cwd: Optional[str],
+        env: Optional[Dict[str, Any]],
+    ) -> None:
+        """Persist reusable session metadata by session name."""
+        session_name = self._clean_session(str(name))
+        if not session_name:
+            return
+        self._session_registry[session_name] = {
+            "open_step_id": open_step_id,
+            "host_ref": host_ref,
+            "cwd": cwd,
+            "env": dict(env or {}),
+        }
+
+    def lookup_session(self, name: str) -> Optional[dict[str, Any]]:
+        """Look up previously remembered session metadata."""
+        return self._session_registry.get(self._clean_session(str(name)))
 
     def _host_alias_for(self, host: Host) -> str:
         cached = self._resource_host_aliases.get(host)
@@ -572,7 +640,6 @@ class RecipeSpec(
     RecipeProviderMiscMixin,
     RecipeProviderConditionMixin,
     RecipeProviderNetworkMixin,
-    RecipeProviderSQLiteMixin,
     RecipeProviderTransferMixin,
     RecipeStorageMixin,
     RecipeSessionMixin,
@@ -581,4 +648,4 @@ class RecipeSpec(
     """Complete recipe builder combining provider, storage, and control helpers."""
 
 
-__all__ = ["RecipeSpec", "RecipeSpecCore"]
+__all__ = ["RecipeSpec", "RecipeSpecCore", "get_active_recipe"]

@@ -19,12 +19,29 @@
   - `Recipe`
   - `Host` / `VastHost` / `HostPath`
   - `Storage` / `StoragePath`
-  - `recipe.session(...)`
-  - `with recipe.linear():`
+  - `host.tmux(...)`
+  - `local.tmux(...)`
+
+## Recipe-First Workflow
+
+- For repeatable automation, prefer Python recipe authoring over ad-hoc `ssh`, `bash`, or manual polling loops.
+- For one-off remote commands, prefer `train host run <name> -- <command>` or `train vast run <id> -- <command>` over raw `ssh`.
+- Prefer `train run <recipe>` or `train exec <recipe>` for immediate execution.
+- Prefer `train exec --code ...` or `train exec <<'EOF' ... EOF` when a temporary one-off recipe is clearer than creating a file.
+- Prefer `train recipe show <name>` and `train help` when you need to inspect or recall the recipe surface.
+- For Vast automation, prefer `recipe.vast.pick(...)`, `recipe.vast.start(...)`, and `recipe.vast.wait_ready(...)` over manually assembling SSH endpoints.
+- Prefer `with local.tmux(...) as tmux:` or `with gpu.tmux(...) as tmux:` for straightforward tmux-backed flows.
+- Let tmux blocks chain by file order by default.
+- Use explicit `depends_on` only for branch fallback, fan-in/join, or cross-block edges.
+- `depends_on=` may be a single handle or a list of handles.
+- For hosts saved with `train host add`, prefer using the alias directly in recipes, such as `Host("gpu-box").tmux("main")`.
+- Keep Python variables for handles only when they anchor a later stage or branch.
+- Reuse a tmux context later by name with `gpu.tmux("work")` instead of carrying one Python variable across the whole file.
+- Use `tmux.after(...)` only to set default dependencies for future tmux steps; do not treat it as a retroactive open-step rewrite.
 
 ## Runtime Guarantees
 
-- `.py` recipes still run as: load -> dependency graph from `depends_on` -> executor run.
+- `.pyrecipe` recipes still run as: load -> dependency graph from `depends_on` -> executor run.
 - Airflow-like retry / timeout / callback / trigger-rule semantics remain supported.
 - Supported executor aliases include:
   - `sequential`

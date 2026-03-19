@@ -579,9 +579,11 @@ class VastInstance:
     ssh_idx: Optional[str] = None
     ssh_host: Optional[str] = None
     ssh_port: Optional[int] = None
+    ports: Optional[Dict[str, Any]] = None
     public_ipaddr: Optional[str] = None
     direct_port_start: Optional[int] = None
     direct_port_end: Optional[int] = None
+    image_runtype: Optional[str] = None
     label: Optional[str] = None
     template_name: Optional[str] = None
     image_uuid: Optional[str] = None

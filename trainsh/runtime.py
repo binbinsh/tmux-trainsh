@@ -8,17 +8,13 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Prot
 from datetime import datetime
 
 import json
-import sqlite3
 import threading
 
-from .constants import CONFIG_DIR
-from .core.runtime_db import (
-    connect_runtime_db,
-    ensure_runtime_schema,
-    json_dumps,
-    replace_run_hosts,
-    replace_run_storages,
-)
+from .constants import RUNTIME_STATE_DIR
+from .core.runtime_store import RuntimeStore, json_dumps
+
+
+CONFIG_DIR = RUNTIME_STATE_DIR
 
 
 class CallbackSink(Protocol):
@@ -100,20 +96,14 @@ class ConsoleCallbackSink:
             )
 
 
-class SqliteCallbackSink:
-    """Persist execution events in sqlite database."""
+class JsonlCallbackSink:
+    """Persist execution events in JSONL runtime state files."""
 
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = Path(db_path or CONFIG_DIR / "runtime.db")
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = connect_runtime_db(self.db_path, check_same_thread=False)
+        self.db_path = Path(db_path or CONFIG_DIR)
+        self.store = RuntimeStore(self.db_path)
         self._lock = threading.Lock()
         self._closed = False
-        self._ensure_schema()
-
-    def _ensure_schema(self) -> None:
-        """Initialize callback tables."""
-        ensure_runtime_schema(self.conn)
 
     def _serialize(self, payload: Dict[str, Any]) -> str:
         return json_dumps(payload)
@@ -159,68 +149,32 @@ class SqliteCallbackSink:
             return
         with self._lock:
             now = datetime.now().isoformat()
-            payload_json = self._serialize(event.payload)
             dag_id = self._coerce_dag_id(event.recipe_name, event.recipe_path)
             run_type = self._coerce_text(event.payload.get("run_type"), "manual")
             try_number = self._coerce_int(event.payload.get("try_number"), default=1)
             execution_date = self._coerce_text(event.payload.get("execution_date"), "")
+            payload_json = self._serialize(event.payload)
 
             if event.event == "execution_start":
-                hosts = event.payload.get("hosts")
-                if isinstance(hosts, dict):
-                    replace_run_hosts(self.conn, event.run_id, hosts)
-                storages = event.payload.get("storages")
-                if isinstance(storages, dict):
-                    replace_run_storages(self.conn, event.run_id, storages)
-                self.conn.execute(
-                    """
-                    INSERT INTO dag (
-                        dag_id, file_path, is_paused, is_active, owner, created_at, updated_at
-                    ) VALUES (?, ?, 0, 1, 'trainsh', ?, ?)
-                    ON CONFLICT(dag_id) DO UPDATE SET
-                        file_path=excluded.file_path,
-                        updated_at=excluded.updated_at
-                    """,
-                    (
-                        dag_id,
-                        event.recipe_path,
-                        event.ts,
-                        now,
-                    ),
-                )
-                self.conn.execute(
-                    """
-                    INSERT OR REPLACE INTO dag_run (
-                        dag_id, run_id, state, run_type, execution_date, start_date,
-                        end_date, external_trigger, conf
-                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, 1, ?)
-                    """,
-                    (
-                        dag_id,
-                        event.run_id,
-                        "running",
-                        run_type,
-                        event.ts,
-                        event.ts,
-                        payload_json,
-                    ),
-                )
-                self.conn.execute(
-                    """
-                    INSERT OR REPLACE INTO recipe_runs (
-                        run_id, recipe_name, recipe_path, status, started_at, ended_at,
-                        duration_ms, success, metadata_json, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
-                    """,
-                    (
-                        event.run_id,
-                        event.recipe_name,
-                        event.recipe_path,
-                        "running",
-                        event.ts,
-                        self._serialize(event.payload),
-                        now,
-                    ),
+                self.store.append_run(
+                    {
+                        "run_id": event.run_id,
+                        "dag_id": dag_id,
+                        "recipe_name": event.recipe_name,
+                        "recipe_path": event.recipe_path,
+                        "status": "running",
+                        "state": "running",
+                        "run_type": run_type,
+                        "execution_date": event.ts,
+                        "started_at": event.ts,
+                        "ended_at": "",
+                        "duration_ms": None,
+                        "success": None,
+                        "metadata": dict(event.payload),
+                        "hosts": event.payload.get("hosts", {}) if isinstance(event.payload.get("hosts"), dict) else {},
+                        "storages": event.payload.get("storages", {}) if isinstance(event.payload.get("storages"), dict) else {},
+                        "updated_at": now,
+                    }
                 )
 
             elif event.event == "step_start":
@@ -234,39 +188,24 @@ class SqliteCallbackSink:
                 if not isinstance(details, dict):
                     details = dict(event.payload)
 
-                self.conn.execute(
-                    """
-                    INSERT INTO task_instance (
-                        dag_id, task_id, run_id, state, start_date, end_date,
-                        duration_ms, operator, host, pool, trigger_rule,
-                        details_json, output, try_number
-                    ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, ?)
-                    ON CONFLICT(dag_id, task_id, run_id) DO UPDATE SET
-                        state=excluded.state,
-                        start_date=excluded.start_date,
-                        operator=excluded.operator,
-                        host=excluded.host,
-                        pool=excluded.pool,
-                        trigger_rule=excluded.trigger_rule,
-                        details_json=excluded.details_json,
-                        try_number=excluded.try_number,
-                        duration_ms=COALESCE(excluded.duration_ms, task_instance.duration_ms),
-                        output=COALESCE(task_instance.output, excluded.output)
-                    """,
-                    (
-                        dag_id,
-                        step_id,
-                        event.run_id,
-                        "running",
-                        event.ts,
-                        None,
-                        str(details.get("operation", "")),
-                        str(details.get("host", "")),
-                        str(details.get("pool", "default")),
-                        str(details.get("trigger_rule", "all_success")),
-                        self._serialize(details),
-                        try_number,
-                    ),
+                self.store.append_task(
+                    {
+                        "dag_id": dag_id,
+                        "task_id": step_id,
+                        "run_id": event.run_id,
+                        "state": "running",
+                        "start_date": event.ts,
+                        "end_date": "",
+                        "duration_ms": None,
+                        "operator": str(details.get("operation", "")),
+                        "host": str(details.get("host", "")),
+                        "pool": str(details.get("pool", "default")),
+                        "trigger_rule": str(details.get("trigger_rule", "all_success")),
+                        "details": details,
+                        "output": "",
+                        "try_number": try_number,
+                        "updated_at": now,
+                    }
                 )
 
             elif event.event == "step_end":
@@ -313,41 +252,28 @@ class SqliteCallbackSink:
                 else:
                     output_text = str(output_text)
 
-                self.conn.execute(
-                    """
-                    INSERT INTO task_instance (
-                        dag_id, task_id, run_id, state, start_date, end_date,
-                        duration_ms, operator, host, pool, trigger_rule,
-                        details_json, output, try_number
-                    ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(dag_id, task_id, run_id) DO UPDATE SET
-                        state=excluded.state,
-                        end_date=excluded.end_date,
-                        duration_ms=excluded.duration_ms,
-                        operator=excluded.operator,
-                        host=excluded.host,
-                        pool=excluded.pool,
-                        trigger_rule=excluded.trigger_rule,
-                        details_json=excluded.details_json,
-                        output=excluded.output,
-                        try_number=excluded.try_number,
-                        start_date=COALESCE(task_instance.start_date, excluded.start_date)
-                    """,
-                    (
-                        dag_id,
-                        step_id,
-                        event.run_id,
-                        normalized_state,
-                        event.ts,
-                        duration_ms,
-                        str(details.get("operation", "")),
-                        str(details.get("host", "")),
-                        str(details.get("pool", "default")),
-                        str(details.get("trigger_rule", "all_success")),
-                        self._serialize(details),
-                        output_text,
-                        try_number,
-                    ),
+                existing = {
+                    str(item.get("task_id", "")): item
+                    for item in self.store.list_tasks(run_id=event.run_id)
+                }.get(step_id, {})
+                self.store.append_task(
+                    {
+                        "dag_id": dag_id,
+                        "task_id": step_id,
+                        "run_id": event.run_id,
+                        "state": normalized_state,
+                        "start_date": str(existing.get("start_date", "") or event.ts),
+                        "end_date": event.ts,
+                        "duration_ms": duration_ms,
+                        "operator": str(details.get("operation", existing.get("operator", ""))),
+                        "host": str(details.get("host", existing.get("host", ""))),
+                        "pool": str(details.get("pool", existing.get("pool", "default"))),
+                        "trigger_rule": str(details.get("trigger_rule", existing.get("trigger_rule", "all_success"))),
+                        "details": details,
+                        "output": output_text,
+                        "try_number": try_number,
+                        "updated_at": now,
+                    }
                 )
 
             elif event.event == "xcom_push":
@@ -360,89 +286,64 @@ class SqliteCallbackSink:
                 key = self._coerce_text(event.payload.get("key"), "")
                 if key:
                     map_index = self._coerce_int(event.payload.get("map_index"), default=0)
-                    self.conn.execute(
-                        """
-                        INSERT INTO xcom (
-                            dag_id, task_id, run_id, map_index, key, value, created_at, execution_date
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(dag_id, task_id, run_id, map_index, key) DO UPDATE SET
-                            value=excluded.value,
-                            created_at=excluded.created_at,
-                            execution_date=excluded.execution_date
-                        """,
-                        (
-                            dag_id,
-                            task_id,
-                            event.run_id,
-                            map_index,
-                            key,
-                            self._coerce_text(event.payload.get("value")),
-                            now,
-                            execution_date,
-                        ),
+                    self.store.append_xcom(
+                        {
+                            "dag_id": dag_id,
+                            "task_id": task_id,
+                            "run_id": event.run_id,
+                            "map_index": map_index,
+                            "key": key,
+                            "value": self._coerce_text(event.payload.get("value")),
+                            "created_at": now,
+                            "execution_date": execution_date or now,
+                            "updated_at": now,
+                        }
                     )
 
             elif event.event == "execution_end":
                 success = self._as_bool(event.payload.get("success"), default=False)
-                self.conn.execute(
-                    """
-                    UPDATE dag_run
-                    SET state=?, end_date=? , conf=?
-                    WHERE dag_id=? AND run_id=?
-                    """,
-                    (
-                        "success" if success else "failed",
-                        event.ts,
-                        payload_json,
-                        dag_id,
-                        event.run_id,
-                    ),
-                )
-                self.conn.execute(
-                    """
-                    UPDATE recipe_runs
-                    SET status=?, ended_at=?, duration_ms=?, success=?, metadata_json=?, updated_at=?
-                    WHERE run_id=?
-                    """,
-                    (
-                        "succeeded" if event.payload.get("success") else "failed",
-                        event.ts,
-                        event.payload.get("duration_ms"),
-                        1 if event.payload.get("success") else 0,
-                        self._serialize(event.payload),
-                        now,
-                        event.run_id,
-                    ),
+                previous = self.store.get_run(event.run_id) or {}
+                self.store.append_run(
+                    {
+                        "run_id": event.run_id,
+                        "dag_id": dag_id,
+                        "recipe_name": event.recipe_name,
+                        "recipe_path": event.recipe_path,
+                        "status": "succeeded" if success else "failed",
+                        "state": "success" if success else "failed",
+                        "run_type": str(previous.get("run_type", run_type)),
+                        "execution_date": str(previous.get("execution_date", event.ts)),
+                        "started_at": str(previous.get("started_at", event.ts)),
+                        "ended_at": event.ts,
+                        "duration_ms": event.payload.get("duration_ms"),
+                        "success": success,
+                        "metadata": dict(event.payload),
+                        "hosts": previous.get("hosts", {}),
+                        "storages": previous.get("storages", {}),
+                        "updated_at": now,
+                    }
                 )
 
-            self.conn.execute(
-                """
-                INSERT INTO recipe_events (
-                    run_id, event_name, step_num, payload_json, ts
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    event.run_id,
-                    event.event,
-                    event.step_num,
-                    payload_json,
-                    event.ts,
-                ),
+            self.store.append_event(
+                {
+                    "run_id": event.run_id,
+                    "event": event.event,
+                    "event_name": event.event,
+                    "step_num": event.step_num,
+                    "payload": dict(event.payload),
+                    "payload_json": payload_json,
+                    "recipe_name": event.recipe_name,
+                    "recipe_path": event.recipe_path,
+                    "dag_id": dag_id,
+                    "ts": event.ts,
+                }
             )
-            self.conn.commit()
 
     def close(self) -> None:
-        if self._closed:
-            return
-        try:
-            self.conn.close()
-        except Exception:
-            pass
         self._closed = True
 
     def __del__(self):
-        if hasattr(self, "conn"):
-            self.close()
+        self.close()
 
 
 def _sink_factory(name: str, **kwargs: Any) -> CallbackSink:
@@ -450,9 +351,9 @@ def _sink_factory(name: str, **kwargs: Any) -> CallbackSink:
     lower = name.lower()
     if lower in ("console", "stdout", "print"):
         return ConsoleCallbackSink(log_callback=kwargs.get("log_callback", print))
-    if lower == "sqlite":
-        db_path = kwargs.get("sqlite_db")
-        return SqliteCallbackSink(db_path=db_path)
+    if lower == "jsonl":
+        db_path = kwargs.get("runtime_state")
+        return JsonlCallbackSink(db_path=db_path)
     raise ValueError(f"unknown callback sink: {name}")
 
 
@@ -460,7 +361,7 @@ def build_sinks(
     names: Optional[Sequence[str]],
     *,
     log_callback: Callable[[str], None] = print,
-    sqlite_db: Optional[str] = None,
+    runtime_state: Optional[str] = None,
 ) -> List[CallbackSink]:
     """Build callback sinks from simple names."""
     if not names:
@@ -473,7 +374,13 @@ def build_sinks(
         if not parts:
             continue
         for part in parts:
-            sinks.append(_sink_factory(part, log_callback=log_callback, sqlite_db=sqlite_db))
+            sinks.append(
+                _sink_factory(
+                    part,
+                    log_callback=log_callback,
+                    runtime_state=runtime_state,
+                )
+            )
     return sinks
 
 from .runtime_executors import (

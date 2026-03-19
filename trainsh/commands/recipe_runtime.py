@@ -6,8 +6,10 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 from typing import List, Optional
 
+from ..constants import RECIPE_FILE_EXTENSION
 from ..core.job_state import generate_job_id
 from ..core.tmux_naming import get_live_session_name
 from .recipe import find_recipe
@@ -19,11 +21,10 @@ from .recipe_shared import (
     WORKER_OPTION_FLAGS,
     _parse_assignment,
     _parse_int_flag,
-    _print_jobs_usage,
-    _print_logs_usage,
     _print_resume_usage,
+    _print_exec_usage,
+    _print_full_help,
     _print_run_usage,
-    _print_status_usage,
 )
 from .recipe_views import (
     _format_recent_event,
@@ -35,6 +36,36 @@ from .recipe_views import (
     cmd_status,
 )
 from .runtime_dispatch import run_recipe_via_dag
+
+
+UNSUPPORTED_EXECUTORS = {
+    "k8s",
+    "kubernetes",
+    "kubernetesexecutor",
+    "kubernetesexecutors",
+    "kubernetes_executor",
+    "kubeexecutor",
+}
+RUNTIME_FLAGS_WITH_VALUE = {
+    "--host",
+    "--set",
+    "--pick-host",
+    "--executor",
+    "--executor-workers",
+    "--executor-option",
+    "--executor-options",
+    "--callback",
+}
+RUNTIME_FLAGS_WITH_INLINE_VALUE = (
+    "--host=",
+    "--set=",
+    "--pick-host=",
+    "--executor=",
+    "--executor-workers=",
+    "--executor-option=",
+    "--executor-options=",
+    "--callback=",
+)
 
 
 def _maybe_auto_enter_tmux(
@@ -142,69 +173,54 @@ def _pick_vast_host(host_name: str) -> Optional[str]:
         return None
 
 
-def cmd_run(args: List[str]) -> None:
-    """Execute a recipe."""
-    if not args:
-        _print_run_usage(1)
-    if args[0] in HELP_FLAGS:
-        _print_run_usage(0)
+def _coerce_executor_kw_value(raw: str) -> int | float | bool | str:
+    value = raw.strip()
+    lowered = value.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    if value.replace(".", "", 1).isdigit():
+        try:
+            return float(value)
+        except ValueError:
+            pass
+    return value
 
-    name = args[0]
-    rest_args = args[1:]
 
+def _parse_executor_kwargs(raw: str) -> dict:
+    text = raw.strip()
+    if not text:
+        raise ValueError("empty value")
+    if text.startswith("{"):
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError("must decode to object")
+        return dict(parsed)
+    parsed = {}
+    for item in text.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        key, sep, value = item.partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"invalid token {item!r}")
+        parsed[key.strip()] = _coerce_executor_kw_value(value.strip())
+    if not parsed:
+        raise ValueError("no key=value pairs")
+    return parsed
+
+
+def _parse_runtime_options(rest_args: List[str]) -> tuple[dict, dict, list[str], list[str], Optional[str], dict]:
     host_overrides = {}
     var_overrides = {}
     pick_hosts = []
     callbacks = []
     executor: Optional[str] = None
     executor_kwargs = {}
-    unsupported_executors = {
-        "k8s",
-        "kubernetes",
-        "kubernetesexecutor",
-        "kubernetesexecutors",
-        "kubernetes_executor",
-        "kubeexecutor",
-    }
-
-    def _coerce_executor_kw_value(raw: str) -> int | float | bool | str:
-        value = raw.strip()
-        lowered = value.lower()
-        if lowered in {"true", "false"}:
-            return lowered == "true"
-        if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
-            try:
-                return int(value)
-            except ValueError:
-                pass
-        if value.replace(".", "", 1).isdigit():
-            try:
-                return float(value)
-            except ValueError:
-                pass
-        return value
-
-    def _parse_executor_kwargs(raw: str) -> dict:
-        text = raw.strip()
-        if not text:
-            raise ValueError("empty value")
-        if text.startswith("{"):
-            parsed = json.loads(text)
-            if not isinstance(parsed, dict):
-                raise ValueError("must decode to object")
-            return dict(parsed)
-        parsed = {}
-        for item in text.split(","):
-            item = item.strip()
-            if not item:
-                continue
-            key, sep, value = item.partition("=")
-            if not sep or not key.strip():
-                raise ValueError(f"invalid token {item!r}")
-            parsed[key.strip()] = _coerce_executor_kw_value(value.strip())
-        if not parsed:
-            raise ValueError("no key=value pairs")
-        return parsed
 
     i = 0
     while i < len(rest_args):
@@ -244,7 +260,7 @@ def cmd_run(args: List[str]) -> None:
         elif arg.startswith("--executor="):
             executor = arg.split("=", 1)[1].strip()
             normalized_executor = "".join(ch for ch in str(executor).lower() if ch.isalnum())
-            if normalized_executor in unsupported_executors:
+            if normalized_executor in UNSUPPORTED_EXECUTORS:
                 print("Error: kubernetes executor is not supported in this runtime.")
                 raise SystemExit(1)
         elif arg == "--executor":
@@ -254,7 +270,7 @@ def cmd_run(args: List[str]) -> None:
             i += 1
             executor = rest_args[i]
             normalized_executor = "".join(ch for ch in str(executor).lower() if ch.isalnum())
-            if normalized_executor in unsupported_executors:
+            if normalized_executor in UNSUPPORTED_EXECUTORS:
                 print("Error: kubernetes executor is not supported in this runtime.")
                 raise SystemExit(1)
         elif arg.startswith("--executor-workers="):
@@ -306,11 +322,32 @@ def cmd_run(args: List[str]) -> None:
             callbacks.extend(parts)
         elif arg.startswith("-"):
             print(f"Unknown option: {arg}")
-            _print_run_usage(1)
+            raise SystemExit(1)
         else:
             print(f"Unexpected argument: {arg}")
-            _print_run_usage(1)
+            raise SystemExit(1)
         i += 1
+
+    return host_overrides, var_overrides, pick_hosts, callbacks, executor, executor_kwargs
+
+
+def _execute_recipe_path(
+    recipe_path: str,
+    *,
+    runtime_args: List[str],
+    original_args: List[str],
+    command_parts: List[str],
+    allow_auto_enter_tmux: bool = True,
+    announce_text: Optional[str] = None,
+) -> None:
+    (
+        host_overrides,
+        var_overrides,
+        pick_hosts,
+        callbacks,
+        executor,
+        executor_kwargs,
+    ) = _parse_runtime_options(runtime_args)
 
     for host_name in pick_hosts:
         selected = _pick_vast_host(host_name)
@@ -320,18 +357,13 @@ def cmd_run(args: List[str]) -> None:
         print(f"No host selected for {host_name}")
         raise SystemExit(1)
 
-    recipe_path = find_recipe(name)
-    if not recipe_path:
-        print(f"Recipe not found: {name}")
-        raise SystemExit(1)
-
     run_job_id = os.environ.get("TRAINSH_JOB_ID") or generate_job_id()
     session_start = int(os.environ.get("TRAINSH_SESSION_INDEX_START", "0") or "0")
     recipe_display_name = os.path.splitext(os.path.basename(recipe_path))[0]
 
-    if _maybe_auto_enter_tmux(
-        ["recipe", "run"],
-        args,
+    if allow_auto_enter_tmux and _maybe_auto_enter_tmux(
+        command_parts,
+        original_args,
         recipe_name=recipe_display_name,
         job_id=run_job_id,
         session_index=session_start,
@@ -339,7 +371,7 @@ def cmd_run(args: List[str]) -> None:
     ):
         return
 
-    print(f"Running recipe: {os.path.basename(recipe_path)}")
+    print(announce_text or f"Running recipe: {os.path.basename(recipe_path)}")
     print("Commands run in remote tmux sessions (survive SSH disconnect)")
 
     if host_overrides:
@@ -374,12 +406,173 @@ def cmd_run(args: List[str]) -> None:
     raise SystemExit(1)
 
 
+def _parse_exec_source(args: List[str]) -> tuple[str, str, List[str]]:
+    if args and args[0] in HELP_FLAGS:
+        _print_full_help(0)
+
+    source_kind: Optional[str] = None
+    source_value: Optional[str] = None
+    runtime_args: List[str] = []
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+
+        if arg in {"-c", "--code"}:
+            if source_kind is not None:
+                print("Multiple recipe sources provided to train exec.")
+                raise SystemExit(1)
+            if i + 1 >= len(args):
+                print("Missing value for --code.")
+                raise SystemExit(1)
+            source_kind = "code"
+            source_value = args[i + 1]
+            i += 2
+            continue
+
+        if arg.startswith("--code=") or arg.startswith("-c="):
+            if source_kind is not None:
+                print("Multiple recipe sources provided to train exec.")
+                raise SystemExit(1)
+            source_kind = "code"
+            source_value = arg.split("=", 1)[1]
+            i += 1
+            continue
+
+        if arg == "-":
+            if source_kind is not None:
+                print("Multiple recipe sources provided to train exec.")
+                raise SystemExit(1)
+            source_kind = "stdin"
+            i += 1
+            continue
+
+        if arg in RUNTIME_FLAGS_WITH_VALUE:
+            runtime_args.append(arg)
+            if i + 1 < len(args):
+                runtime_args.append(args[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        if arg.startswith(RUNTIME_FLAGS_WITH_INLINE_VALUE):
+            runtime_args.append(arg)
+            i += 1
+            continue
+
+        if arg.startswith("-"):
+            runtime_args.append(arg)
+            i += 1
+            continue
+
+        if source_kind is None:
+            source_kind = "recipe"
+            source_value = arg
+        else:
+            runtime_args.append(arg)
+        i += 1
+
+    if source_kind is None:
+        if sys.stdin.isatty():
+            _print_exec_usage(1)
+        source_kind = "stdin"
+
+    if source_kind == "stdin":
+        source_value = sys.stdin.read()
+        if not str(source_value or "").strip():
+            print("No recipe code received on stdin.")
+            raise SystemExit(1)
+    elif source_kind == "code":
+        if not str(source_value or "").strip():
+            print("Inline recipe code cannot be empty.")
+            raise SystemExit(1)
+    elif not str(source_value or "").strip():
+        _print_exec_usage(1)
+
+    return source_kind, str(source_value), runtime_args
+
+
+def _write_inline_recipe_file(code: str) -> str:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=RECIPE_FILE_EXTENSION,
+        prefix=".trainsh-exec-",
+        delete=False,
+        dir=os.getcwd(),
+    ) as handle:
+        text = code if code.endswith("\n") else f"{code}\n"
+        handle.write(text)
+        return handle.name
+
+
+def cmd_run(args: List[str]) -> None:
+    """Execute a recipe."""
+    if not args:
+        _print_run_usage(1)
+    if args[0] in HELP_FLAGS:
+        _print_full_help(0)
+
+    name = args[0]
+    rest_args = args[1:]
+
+    recipe_path = find_recipe(name)
+    if not recipe_path:
+        print(f"Recipe not found: {name}")
+        raise SystemExit(1)
+    _execute_recipe_path(
+        recipe_path,
+        runtime_args=rest_args,
+        original_args=args,
+        command_parts=["recipe", "run"],
+    )
+
+
+def cmd_exec(args: List[str]) -> None:
+    """Execute a recipe file, path, inline code, or stdin recipe."""
+    source_kind, source_value, runtime_args = _parse_exec_source(args)
+
+    if source_kind == "recipe":
+        recipe_path = find_recipe(source_value)
+        if not recipe_path:
+            print(f"Recipe not found: {source_value}")
+            raise SystemExit(1)
+        _execute_recipe_path(
+            recipe_path,
+            runtime_args=runtime_args,
+            original_args=args,
+            command_parts=["recipe", "exec"],
+        )
+        return
+
+    temp_path = _write_inline_recipe_file(source_value)
+    try:
+        announce_map = {
+            "code": "Executing inline recipe code.",
+            "stdin": "Executing recipe code from stdin.",
+        }
+        _execute_recipe_path(
+            temp_path,
+            runtime_args=runtime_args,
+            original_args=args,
+            command_parts=["recipe", "exec"],
+            allow_auto_enter_tmux=False,
+            announce_text=announce_map.get(source_kind, f"Running recipe: {os.path.basename(temp_path)}"),
+        )
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
 def cmd_resume(args: List[str]) -> None:
     """Resume a failed/interrupted Python recipe."""
     if not args:
         _print_resume_usage(1)
     if args[0] in HELP_FLAGS:
-        _print_resume_usage(0)
+        _print_full_help(0)
 
     name = args[0]
     rest_args = args[1:]

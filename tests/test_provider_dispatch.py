@@ -87,35 +87,20 @@ class ProviderDispatchAliasTests(unittest.TestCase):
 
     def test_sqlite_provider_routes_to_query_exec_and_script(self):
         with isolated_executor(RecipeModel(name="dispatch")) as (executor, _config_dir):
-            with patch.object(
-                executor,
-                "_exec_provider_sqlite_query",
-                return_value=(True, "query"),
-            ) as query_mock, patch.object(
-                executor,
-                "_exec_provider_sqlite_exec",
-                return_value=(True, "exec"),
-            ) as exec_mock, patch.object(
-                executor,
-                "_exec_provider_sqlite_script",
-                return_value=(True, "script"),
-            ) as script_mock:
-                query_result = executor._exec_provider(
-                    ProviderStep("sqlite", "select", {"sql": "select 1"}, id="q")
-                )
-                exec_result = executor._exec_provider(
-                    ProviderStep("sqlite", "execute", {"sql": "insert into t values (1)"}, id="e")
-                )
-                script_result = executor._exec_provider(
-                    ProviderStep("sqlite", "script", {"script": "select 1;"}, id="s")
-                )
+            query_result = executor._exec_provider(
+                ProviderStep("sqlite", "select", {"sql": "select 1"}, id="q")
+            )
+            exec_result = executor._exec_provider(
+                ProviderStep("sqlite", "execute", {"sql": "insert into t values (1)"}, id="e")
+            )
+            script_result = executor._exec_provider(
+                ProviderStep("sqlite", "script", {"script": "select 1;"}, id="s")
+            )
 
-        self.assertEqual(query_result, (True, "query"))
-        self.assertEqual(exec_result, (True, "exec"))
-        self.assertEqual(script_result, (True, "script"))
-        self.assertEqual(query_mock.call_args.args[0]["sql"], "select 1")
-        self.assertEqual(exec_mock.call_args.args[0]["sql"], "insert into t values (1)")
-        self.assertEqual(script_mock.call_args.args[0]["script"], "select 1;")
+        self.assertFalse(query_result[0])
+        self.assertFalse(exec_result[0])
+        self.assertFalse(script_result[0])
+        self.assertIn("Unsupported provider step", query_result[1])
 
     def test_xcom_helpers_inject_step_id_when_missing(self):
         with isolated_executor(RecipeModel(name="dispatch")) as (executor, _config_dir):

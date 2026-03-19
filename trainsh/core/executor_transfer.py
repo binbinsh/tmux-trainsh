@@ -8,6 +8,7 @@ from .models import Host
 from .storage_specs import (
     build_storage_from_spec,
     parse_inline_storage_endpoint,
+    unsupported_inline_storage_error,
 )
 
 
@@ -64,6 +65,11 @@ class TransferHelper:
 
         source = self.executor._interpolate(str(source or "").strip())
         destination = self.executor._interpolate(str(destination or "").strip())
+
+        for label, value in (("source", source), ("destination", destination)):
+            error = unsupported_inline_storage_error(value)
+            if error:
+                return False, f"{label.capitalize()} endpoint {value!r}: {error}"
 
         if not source or not destination:
             return False, "Transfer requires both source and destination"
