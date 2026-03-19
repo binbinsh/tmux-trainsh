@@ -255,8 +255,8 @@ class StorageDeepTests(unittest.TestCase):
             self.assertIsNone(code)
 
             out, code = capture(storage.main, ["--help"])
-            self.assertIsNone(code)
-            self.assertIn("train storage", out)
+            self.assertEqual(code, 1)
+            self.assertIn("Use `train help` or `train --help`.", out)
             out, code = capture(storage.main, ["unknown"])
             self.assertEqual(code, 1)
             self.assertIn("Unknown subcommand", out)

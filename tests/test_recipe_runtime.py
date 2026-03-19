@@ -183,7 +183,8 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertIn("train recipe run", out)
 
         out, code, _ = self.capture(recipe_runtime.cmd_run, ["--help"])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         bad_args = [
             ["demo", "--host"],
@@ -295,8 +296,8 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
 
     def test_cmd_exec_file_inline_and_stdin_paths(self):
         out, code, _ = self.capture(recipe_runtime.cmd_exec, ["--help"])
-        self.assertEqual(code, 0)
-        self.assertIn("train exec <<'EOF'", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         with patch.object(recipe_runtime.sys, "stdin", SimpleNamespace(isatty=lambda: True, read=lambda: "")):
             out, code, _ = self.capture(recipe_runtime.cmd_exec, [])
@@ -377,7 +378,8 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         self.assertIn("No execution logs found.", out)
 
         out, code, _ = self.capture(recipe_runtime.cmd_logs, ["--help"])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         class FilledReader:
             def __enter__(self):
@@ -479,7 +481,8 @@ class RecipeRuntimeDeepTests(CaptureMixin, unittest.TestCase):
         out, code, _ = self.capture(recipe_runtime.cmd_resume, [])
         self.assertEqual(code, 1)
         out, code, _ = self.capture(recipe_runtime.cmd_resume, ["--help"])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         for args in [["demo", "--host", "gpu=local"], ["demo", "--bad"]]:
             _, code, _ = self.capture(recipe_runtime.cmd_resume, args)

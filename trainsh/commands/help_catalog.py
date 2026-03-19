@@ -948,13 +948,11 @@ def render_top_level_help() -> str:
     return "\n".join(lines).rstrip()
 
 def render_readme_overview() -> str:
-    version = _package_version()
     examples = ", ".join(_bundled_examples())
     return (
         "# tmux-trainsh\n\n"
         "<!-- AUTO-GENERATED FROM trainsh.commands.help_catalog; DO NOT EDIT DIRECTLY. -->\n\n"
         "`tmux-trainsh` is a terminal-first workflow runner for GPU and remote automation work.\n\n"
-        f"Current version: `{version}`\n\n"
         "README is the quick overview and landing page. The canonical command reference stays in the CLI:\n\n"
         "```bash\n"
         "train help\n"

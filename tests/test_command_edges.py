@@ -47,7 +47,9 @@ class ScheduleCommandEdgeTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("--rows must be >= 1", out)
 
-        self.assertEqual(schedule_cmd._parse_args(["help"])["mode"], "help")
+        out, code = capture(schedule_cmd._parse_args, ["help"])
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
         for args in [
             ["run", "--recipe"],
             ["run", "--recipes-dir"],
@@ -250,8 +252,8 @@ class ColabCommandEdgeTests(unittest.TestCase):
                 self.assertIn("Usage: train colab run <command>", out)
 
                 out, code = capture(colab.main, ["--help"])
-                self.assertIsNone(code)
-                self.assertIn("train colab", out)
+                self.assertEqual(code, 1)
+                self.assertIn("Use `train help` or `train --help`.", out)
 
                 out, code = capture(colab.main, ["unknown"])
                 self.assertEqual(code, 1)
@@ -521,8 +523,8 @@ class RecipeCommandEdgeTests(unittest.TestCase):
             self.assertIn("Unknown subcommand", out)
 
             out, code = capture(recipe.main, ["--help"])
-            self.assertIsNone(code)
-            self.assertIn("train recipe", out)
+            self.assertEqual(code, 1)
+            self.assertIn("Use `train help` or `train --help`.", out)
 
 
 class TransferCommandEdgeTests(unittest.TestCase):

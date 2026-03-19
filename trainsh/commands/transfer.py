@@ -4,7 +4,8 @@
 import sys
 from typing import Optional, List
 
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 from ..core.models import Storage, StorageType
 from ..core.storage_specs import unsupported_inline_storage_error
 from ..services.transfer_support import resolve_storage_remote_path
@@ -120,8 +121,7 @@ def main(args: List[str]) -> Optional[str]:
         print(usage)
         return None
     if args[0] in ("-h", "--help", "help"):
-        print(render_top_level_help())
-        return None
+        reject_subcommand_help()
 
     # Parse arguments
     delete = False

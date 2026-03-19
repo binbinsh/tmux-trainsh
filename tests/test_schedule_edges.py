@@ -24,7 +24,8 @@ def capture(fn, *args, **kwargs):
 
 class ScheduleCommandMoreTests(unittest.TestCase):
     def test_parse_eq_flags_and_help_dispatch_paths(self):
-        parsed = schedule_cmd._parse_args(
+        out, code = capture(
+            schedule_cmd._parse_args,
             [
                 "run",
                 "--once",
@@ -37,32 +38,24 @@ class ScheduleCommandMoreTests(unittest.TestCase):
                 "--iterations=4",
                 "--rows=6",
                 "--help",
-            ]
+            ],
         )
-        self.assertEqual(parsed["mode"], "help")
-        self.assertTrue(parsed["once"])
-        self.assertEqual(parsed["dag_ids"], ["demo"])
-        self.assertEqual(parsed["dags_dir"], "/tmp/recipes")
-        self.assertEqual(parsed["runtime_state"], "/tmp/runtime")
-        self.assertEqual(parsed["loop_interval"], 9)
-        self.assertEqual(parsed["max_active_runs"], 2)
-        self.assertEqual(parsed["max_active_runs_per_dag"], 3)
-        self.assertEqual(parsed["iterations"], 4)
-        self.assertEqual(parsed["rows"], 6)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         out, code = capture(schedule_cmd.cmd_schedule_list, ["--help"])
-        self.assertIsNone(code)
-        self.assertIn("train recipe schedule", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         out, code = capture(schedule_cmd.cmd_schedule_status, ["--help"])
-        self.assertIsNone(code)
-        self.assertIn("train recipe schedule status", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         scheduler = SimpleNamespace(run_once=lambda **kwargs: [], run_forever=lambda **kwargs: None)
         with patch("trainsh.commands.schedule_cmd.DagScheduler", return_value=scheduler):
             out, code = capture(schedule_cmd.cmd_schedule_run, ["--help"])
-        self.assertIsNone(code)
-        self.assertIn("train recipe schedule", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         with patch("trainsh.commands.schedule_cmd.cmd_schedule_list") as mocked_list:
             schedule_cmd.cmd_schedule(["list", "--runtime-state", "/tmp/runtime"])
@@ -121,8 +114,8 @@ class ScheduleCommandMoreTests(unittest.TestCase):
             self.assertIn("success\tdemo\trun-2\tok", out)
 
         out, code = capture(schedule_cmd.main, ["help"])
-        self.assertIsNone(code)
-        self.assertIn("train recipe schedule", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
 
 if __name__ == "__main__":

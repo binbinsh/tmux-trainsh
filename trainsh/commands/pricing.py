@@ -4,7 +4,8 @@
 import argparse
 from typing import Optional
 
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 from ..services.pricing import (
     Currency,
     ExchangeRates,
@@ -200,8 +201,7 @@ def main(args: list) -> Optional[str]:
         print(usage)
         return None
     if args[0] in {"-h", "--help", "help"}:
-        print(render_top_level_help())
-        return None
+        reject_subcommand_help()
 
     parser = argparse.ArgumentParser(
         prog="train pricing",

@@ -4,8 +4,6 @@
 
 `tmux-trainsh` is a terminal-first workflow runner for GPU and remote automation work.
 
-Current version: `26.319.900`
-
 README is the quick overview and landing page. The canonical command reference stays in the CLI:
 
 ```bash

@@ -292,6 +292,10 @@ class RecipeFileCommandTests(CaptureMixin, unittest.TestCase):
         self.assertIsNone(code)
         self.assertIn("Single entry point", out)
 
+        out, code, _ = self.capture(recipe_cmd.main, ["--help"])
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
+
         with patch("trainsh.commands.recipe.main", return_value=None) as mocked_recipe:
             recipe_cmd.main(["list"])
         mocked_recipe.assert_called_once_with(["list"])

@@ -11,7 +11,8 @@ from typing import List, Optional
 
 from ..cli_utils import SubcommandSpec, prompt_input
 from ..constants import RECIPE_FILE_EXTENSION, RECIPE_FILE_EXTENSIONS
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 from .recipe_templates import get_recipe_template, list_template_names
 
 SUBCOMMAND_SPECS = (
@@ -375,8 +376,7 @@ def main(args: List[str]) -> Optional[str]:
         print(usage)
         return None
     if args[0] in {"-h", "--help", "help"}:
-        print(render_top_level_help())
-        return None
+        reject_subcommand_help()
 
     subcommand = args[0]
     subargs = args[1:]

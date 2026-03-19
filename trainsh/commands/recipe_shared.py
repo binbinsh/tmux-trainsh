@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 
 
 HELP_FLAGS = {"-h", "--help", "help"}
@@ -43,8 +44,8 @@ def _print_jobs_usage(exit_code: int) -> None:
 
 
 def _print_full_help(exit_code: int) -> None:
-    print(render_top_level_help())
-    raise SystemExit(exit_code)
+    del exit_code
+    reject_subcommand_help()
 
 
 def _parse_assignment(raw: str, *, flag_name: str) -> tuple[str, str]:

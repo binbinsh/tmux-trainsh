@@ -411,11 +411,11 @@ class TransferSupportAndViewsTests(unittest.TestCase):
             self.assertFalse(check_rclone_available())
 
         out, code, _ = capture(recipe.main, ["--help"])
-        self.assertIsNone(code)
-        self.assertIn("train recipe", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
         out, code, _ = capture(config_cmd.main, ["tmux", "--help"])
-        self.assertIsNone(code)
-        self.assertIn("train config tmux", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
 
 if __name__ == "__main__":

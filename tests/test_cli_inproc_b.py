@@ -27,7 +27,10 @@ def patched_config_files():
 def capture_output(func, *args, **kwargs):
     stream = StringIO()
     with redirect_stdout(stream):
-        func(*args, **kwargs)
+        try:
+            func(*args, **kwargs)
+        except SystemExit:
+            pass
     return stream.getvalue()
 
 
@@ -97,7 +100,7 @@ class HostCommandTests(unittest.TestCase):
             self.assertIn("Cancelled.", text)
 
             text = capture_output(host.main, ["--help"])
-            self.assertIn("train host", text)
+            self.assertIn("Use `train help` or `train --help`.", text)
             with self.assertRaises(SystemExit):
                 host.main(["unknown"])
 
@@ -193,7 +196,7 @@ class StorageCommandTests(unittest.TestCase):
             self.assertIn("Cancelled.", text)
 
             text = capture_output(storage.main, ["help"])
-            self.assertIn("train storage", text)
+            self.assertIn("Use `train help` or `train --help`.", text)
             with self.assertRaises(SystemExit):
                 storage.main(["unknown"])
 
@@ -279,7 +282,7 @@ class TransferColabVastCommandTests(unittest.TestCase):
         self.assertEqual(transfer.parse_endpoint("./data"), ("local", "./data", None))
 
         text = capture_output(transfer.main, ["--help"])
-        self.assertIn("train transfer", text)
+        self.assertIn("Use `train help` or `train --help`.", text)
         with self.assertRaises(SystemExit):
             transfer.main(["--bad"])
         with self.assertRaises(SystemExit):
@@ -345,7 +348,7 @@ class TransferColabVastCommandTests(unittest.TestCase):
     def test_colab_and_vast_commands(self):
         with patched_config_files() as config_dir:
             text = capture_output(colab.main, ["--help"])
-            self.assertIn("train colab", text)
+            self.assertIn("Use `train help` or `train --help`.", text)
             with self.assertRaises(SystemExit):
                 colab.main(["unknown"])
 
@@ -378,7 +381,7 @@ class TransferColabVastCommandTests(unittest.TestCase):
                 colab.cmd_run([])
 
         text = capture_output(vast.main, ["help"])
-        self.assertIn("train vast", text)
+        self.assertIn("Use `train help` or `train --help`.", text)
         with self.assertRaises(SystemExit):
             vast.main(["unknown"])
 

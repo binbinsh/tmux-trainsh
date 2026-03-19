@@ -4,7 +4,8 @@
 import sys
 from typing import Optional, List
 
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 
 usage = render_command_help("update")
 
@@ -12,8 +13,7 @@ usage = render_command_help("update")
 def main(args: List[str]) -> Optional[str]:
     """Main entry point for update command."""
     if args and args[0] in ("-h", "--help", "help"):
-        print(render_top_level_help())
-        return None
+        reject_subcommand_help()
 
     check_only = False
     if args and args[0] in ("--check", "-c"):

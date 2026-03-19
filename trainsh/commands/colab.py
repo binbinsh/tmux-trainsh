@@ -6,7 +6,8 @@ import sys
 from typing import Optional, List
 
 from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 from ..constants import CONFIG_DIR
 
 SUBCOMMAND_SPECS = (
@@ -217,8 +218,7 @@ def main(args: List[str]) -> Optional[str]:
         print(usage)
         return None
     if args[0] in ("-h", "--help", "help"):
-        print(render_top_level_help())
-        return None
+        reject_subcommand_help()
 
     subcommand = args[0]
     subargs = args[1:]

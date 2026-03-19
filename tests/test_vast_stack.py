@@ -205,8 +205,8 @@ class VastCommandTests(unittest.TestCase):
         currency = SimpleNamespace(display_currency="USD", rates=SimpleNamespace(convert=lambda amount, _from, _to: amount))
 
         out, code = capture_output(vast.main, ["--help"])
-        self.assertIsNone(code)
-        self.assertIn("train vast", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         with patch("trainsh.services.vast_api.get_vast_client", return_value=client), patch(
             "trainsh.utils.vast_formatter.print_instance_table"

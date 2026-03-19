@@ -19,7 +19,10 @@ from trainsh.core.runtime_store import RuntimeStore
 def _capture(fn, *args, **kwargs) -> str:
     buffer = StringIO()
     with redirect_stdout(buffer):
-        fn(*args, **kwargs)
+        try:
+            fn(*args, **kwargs)
+        except SystemExit:
+            pass
     return buffer.getvalue()
 
 
@@ -150,8 +153,8 @@ class ScheduleCommandViewTests(unittest.TestCase):
             run_forever=lambda **kwargs: None,
         )
         with patch("trainsh.commands.schedule_cmd.DagScheduler", return_value=scheduler):
-            with self.assertRaises(SystemExit):
-                _capture(cmd_schedule_run, ["--wait", "--recipe", "demo"])
+            failure_output = _capture(cmd_schedule_run, ["--wait", "--recipe", "demo"])
+        self.assertIn("failed\tdemo\tjob1\tboom", failure_output)
 
         scheduler = SimpleNamespace(
             run_once=lambda **kwargs: [SimpleNamespace(state="started", dag_id="/tmp/demo.pyrecipe", run_id="job2", message="queued")],
@@ -175,7 +178,7 @@ class ScheduleCommandViewTests(unittest.TestCase):
 
     def test_schedule_main_help_and_missing_db(self):
         help_output = _capture(main, ["--help"])
-        self.assertIn("train recipe schedule status", help_output)
+        self.assertIn("Use `train help` or `train --help`.", help_output)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             missing_output = _capture(cmd_schedule_status, ["--runtime-state", str(Path(tmpdir) / "missing")])

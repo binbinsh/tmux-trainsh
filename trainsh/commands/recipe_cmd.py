@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 
 
 HELP_FLAGS = {"-h", "--help", "help"}
@@ -18,8 +19,7 @@ def main(args: List[str]) -> Optional[str]:
         print(usage)
         return None
     if args[0] in HELP_FLAGS:
-        print(render_top_level_help())
-        return None
+        reject_subcommand_help()
 
     subcommand = args[0]
     subargs = args[1:]

@@ -1,6 +1,6 @@
 [project]
 name = "tmux-trainsh"
-version = "26.319.900"
+version = "26.319.0929"
 description = "GPU training workflow automation with tmux"
 readme = "README.md"
 requires-python = ">=3.10"

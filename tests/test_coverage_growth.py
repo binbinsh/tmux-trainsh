@@ -157,8 +157,10 @@ class CoverageGrowthTests(unittest.TestCase):
 
         stream = io.StringIO()
         with patch.object(sys, "argv", ["config_cmd.py", "--help"]), redirect_stdout(stream):
-            runpy.run_module("trainsh.commands.config_cmd", run_name="__main__")
-        self.assertIn("train config", stream.getvalue())
+            with self.assertRaises(SystemExit) as exc:
+                runpy.run_module("trainsh.commands.config_cmd", run_name="__main__")
+        self.assertEqual(exc.exception.code, 1)
+        self.assertIn("Use `train help` or `train --help`.", stream.getvalue())
 
         old_cli_docs = getattr(sys, "cli_docs", None)
         try:
@@ -492,7 +494,8 @@ class CoverageGrowthTests(unittest.TestCase):
             return_value=SimpleNamespace(build_attach_command=lambda session, status_mode="keep": f"remote:{session}:{status_mode}"),
         ), patch("trainsh.core.tmux_session.session_exists", return_value=False):
             output, code, _ = capture_output(recipe_views.cmd_status, ["--help"])
-            self.assertIn("train recipe status", output)
+            self.assertEqual(code, 1)
+            self.assertIn("Use `train help` or `train --help`.", output)
             output, code, _ = capture_output(recipe_views.cmd_status, ["--last"])
             self.assertIn("Job ID: job-123456", output)
             output, code, _ = capture_output(recipe_views.cmd_status, ["--last"])
@@ -503,7 +506,8 @@ class CoverageGrowthTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("Job not found", output)
             output, code, _ = capture_output(recipe_views.cmd_jobs, ["--help"])
-            self.assertIn("train recipe jobs", output)
+            self.assertEqual(code, 1)
+            self.assertIn("Use `train help` or `train --help`.", output)
             output, code, _ = capture_output(recipe_views.cmd_jobs, [])
             self.assertIn("Use '--all' to show all jobs.", output)
 

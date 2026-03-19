@@ -7,7 +7,8 @@ from typing import Optional, List
 import re
 
 from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 from .remote_run import parse_remote_run_args, run_remote_command
 from .host_interactive import (
     _normalize_connection_candidates,
@@ -382,8 +383,7 @@ def main(args: List[str]) -> Optional[str]:
         print(usage)
         return None
     if args[0] in ("-h", "--help", "help"):
-        print(render_top_level_help())
-        return None
+        reject_subcommand_help()
 
     subcommand = args[0]
     subargs = args[1:]

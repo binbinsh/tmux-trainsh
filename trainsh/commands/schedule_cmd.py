@@ -11,7 +11,8 @@ import sys
 from ..constants import RUNTIME_STATE_DIR
 from ..core import DagRunState, DagScheduler
 from ..core.dag_processor import DagProcessor
-from .help_catalog import render_command_help, render_top_level_help
+from .help_catalog import render_command_help
+from .help_cmd import reject_subcommand_help
 from ..core.runtime_store import RuntimeStore
 
 
@@ -38,7 +39,7 @@ def _parse_args(args: Sequence[str], *, default_mode: str = "run") -> Dict[str, 
         mode = args[i]
         i += 1
     if mode == "help":
-        return {"mode": "help"}
+        reject_subcommand_help()
 
     options: Dict[str, object] = {
         "mode": mode,
@@ -85,8 +86,7 @@ def _parse_args(args: Sequence[str], *, default_mode: str = "run") -> Dict[str, 
             i += 1
             continue
         if arg == "--help":
-            options["mode"] = "help"
-            return options
+            reject_subcommand_help()
 
         if arg.startswith("--recipe="):
             options.setdefault("dag_ids", []).append(arg.split("=", 1)[1])
@@ -252,9 +252,6 @@ def _recipe_label(dag_id: object) -> str:
 
 def cmd_schedule_list(args: Sequence[str]) -> None:
     parsed = _parse_args(args, default_mode="list")
-    if parsed.get("mode") == "help":
-        print(render_top_level_help())
-        return
     dags_dir = parsed.get("dags_dir")
     processor = DagProcessor([str(dags_dir)] if dags_dir else None)
     dags = processor.discover_dags()
@@ -295,9 +292,6 @@ def cmd_schedule_list(args: Sequence[str]) -> None:
 
 def cmd_schedule_status(args: Sequence[str]) -> None:
     parsed = _parse_args(args, default_mode="status")
-    if parsed.get("mode") == "help":
-        print(render_top_level_help())
-        return
     rows = int(parsed.get("rows", 50))
     runtime_state = str(parsed.get("runtime_state") or "").strip() or str(RUNTIME_STATE_DIR)
 
@@ -331,9 +325,6 @@ def cmd_schedule_status(args: Sequence[str]) -> None:
 
 def cmd_schedule_run(args: Sequence[str]) -> None:
     parsed = _parse_args(args, default_mode="run")
-    if parsed.get("mode") == "help":
-        print(render_top_level_help())
-        return
 
     dags_dir = parsed.get("dags_dir")
     loop_interval = int(parsed.get("loop_interval", 60))
@@ -393,9 +384,6 @@ def cmd_schedule_run(args: Sequence[str]) -> None:
 def cmd_schedule(args: List[str]) -> None:
     parsed = _parse_args(args, default_mode="run")
     mode = str(parsed.get("mode", "run"))
-    if mode == "help":
-        print(render_top_level_help())
-        return
 
     if mode == "list":
         cmd_schedule_list(args[1:] if args and args[0] == "list" else args)
@@ -414,8 +402,7 @@ def cmd_schedule(args: List[str]) -> None:
 def main(args: Sequence[str]) -> None:
     """Entry point for the top-level schedule command."""
     if args and args[0] in {"-h", "--help", "help"}:
-        print(render_top_level_help())
-        return
+        reject_subcommand_help()
     cmd_schedule(list(args))
 
 

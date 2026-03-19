@@ -11,6 +11,13 @@ from .help_catalog import render_top_level_help
 INDEX_TEXT = render_top_level_help()
 
 
+def reject_subcommand_help() -> None:
+    """Reject legacy subcommand help entrypoints."""
+    print("Explicit subcommand `--help` is removed.")
+    print("Use `train help` or `train --help`.")
+    raise SystemExit(1)
+
+
 def main(args: List[str]) -> None:
     """Print the single canonical CLI reference."""
     if args and args[0] not in {"-h", "--help"}:

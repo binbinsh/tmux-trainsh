@@ -305,8 +305,8 @@ class PricingCommandTests(CaptureMixin, unittest.TestCase):
 class UpdateCommandTests(CaptureMixin, unittest.TestCase):
     def test_update_help_unknown_and_unavailable(self):
         out, _err, code = self.capture(update.main, ["--help"])
-        self.assertIsNone(code)
-        self.assertIn("train update", out)
+        self.assertEqual(code, 1)
+        self.assertIn("Use `train help` or `train --help`.", out)
 
         out, _err, code = self.capture(update.main, ["--bogus"])
         self.assertEqual(code, 1)

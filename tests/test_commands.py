@@ -45,31 +45,31 @@ COMMANDS = [
     ("help recipes", "train help takes no topic"),
     ("help schedule", "train help takes no topic"),
     ("gui --help", "Unknown command"),
-    ("exec --help", "train exec <<'EOF'"),
+    ("exec --help", "Use `train help` or `train --help`."),
     ("recipes --help", "Use 'train recipe"),
-    ("run --help", "train recipe run <name>"),
+    ("run --help", "Use `train help` or `train --help`."),
     ("resume", "Use 'train recipe resume"),
     ("status", "Use 'train recipe status"),
     ("logs", "Use 'train recipe logs"),
     ("jobs", "Use 'train recipe jobs"),
     ("schedule --help", "Use 'train recipe schedule"),
-    ("recipe --help", "Single entry point"),
+    ("recipe --help", "Use `train help` or `train --help`."),
     ("recipe list", "Bundled examples"),
     ("recipe show", "Usage"),
     ("recipe show hello", "hello-world"),
     ("recipe new", "Usage"),
     ("recipe edit", "Usage"),
     ("recipe remove", "Usage"),
-    ("recipe run --help", "train recipe run"),
+    ("recipe run --help", "Use `train help` or `train --help`."),
     ("recipe resume", "train recipe resume"),
     ("recipe status", "Recipe sessions"),
     ("recipe logs", "No execution logs found"),
     ("recipe jobs", "No job states found"),
-    ("recipe schedule --help", "train recipe schedule"),
+    ("recipe schedule --help", "Use `train help` or `train --help`."),
     ("recipe schedule list", "No scheduled recipes found"),
 
     # Host
-    ("host --help", "ssh"),
+    ("host --help", "Use `train help` or `train --help`."),
     ("host list", "hosts"),
     ("host add", "Add new host"),
     ("host edit", "Usage"),
@@ -85,7 +85,7 @@ COMMANDS = [
     ("host rm", "Unknown subcommand"),
 
     # Storage
-    ("storage --help", "check"),
+    ("storage --help", "Use `train help` or `train --help`."),
     ("storage list", "backends"),
     ("storage add", "Add new storage backend"),
     ("storage show", "Usage"),
@@ -95,11 +95,11 @@ COMMANDS = [
     ("storage rm", "Unknown subcommand"),
 
     # Transfer
-    ("transfer --help", "@host:/path"),
+    ("transfer --help", "Use `train help` or `train --help`."),
     ("transfer ./data s3:bucket/path", "Inline Amazon S3 endpoints are not supported"),
 
     # Secrets
-    ("secrets --help", "remove"),
+    ("secrets --help", "Use `train help` or `train --help`."),
     ("secrets list", "secrets"),
     ("secrets set", "Usage"),
     ("secrets get", "Usage"),
@@ -107,19 +107,19 @@ COMMANDS = [
     ("secrets delete", "Unknown subcommand"),
 
     # Config
-    ("config --help", "tmux"),
+    ("config --help", "Use `train help` or `train --help`."),
     ("config show", "Configuration"),
     ("config get", "Usage"),
     ("config set", "Usage"),
     ("config reset", "Reset all settings"),
-    ("config tmux --help", "train config tmux"),
+    ("config tmux --help", "Use `train help` or `train --help`."),
     ("config tmux show", "Tmux options"),
     ("config tmux list", "Unknown tmux subcommand"),
     ("config tmux setup", "Unknown tmux subcommand"),
     ("config tmux-edit", "Unknown subcommand"),
 
     # Colab
-    ("colab --help", "Quick helper"),
+    ("colab --help", "Use `train help` or `train --help`."),
     ("colab list", "Colab"),
     ("colab connect", "Connect to Google Colab"),
     ("colab ssh", "Colab"),
@@ -128,7 +128,7 @@ COMMANDS = [
     ("colab exec", "Unknown subcommand"),
 
     # Vast.ai
-    ("vast --help", "VAST_API_KEY"),
+    ("vast --help", "Use `train help` or `train --help`."),
     ("vast list", "instances"),
     ("vast show", "Usage"),
     ("vast ssh", "Usage"),
@@ -145,7 +145,7 @@ COMMANDS = [
     ("vast offers", "Unknown subcommand"),
 
     # Pricing
-    ("pricing --help", "exchange rates"),
+    ("pricing --help", "Use `train help` or `train --help`."),
     ("pricing rates", "exchange rates"),
     ("pricing currency", "Display currency"),
     ("pricing colab", "Colab Subscription"),
