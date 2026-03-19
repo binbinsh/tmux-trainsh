@@ -1,6 +1,6 @@
 [project]
 name = "tmux-trainsh"
-version = "26.319.930"
+version = "26.319.940"
 description = "GPU training workflow automation with tmux"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,7 +15,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-include = ["trainsh/**/*.pyrecipe"]
+include = ["trainsh/**/*.py", "trainsh/**/*.pyrecipe"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["trainsh"]

@@ -8,6 +8,7 @@ import sys
 import os
 import atexit
 import tempfile
+import zipfile
 from pathlib import Path
 
 # Get project root
@@ -221,6 +222,40 @@ def test_project_entrypoint() -> tuple[bool, str]:
     return True, ""
 
 
+def test_built_wheel_contains_cli_module() -> tuple[bool, str]:
+    """Build a wheel and verify the CLI entrypoint module is packaged."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            result = subprocess.run(
+                ["uv", "build", "--wheel", "--out-dir", tmpdir],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=PROJECT_ROOT,
+                env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT), "HOME": TEST_HOME.name},
+                stdin=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            return False, str(exc)
+
+        output = result.stdout + result.stderr
+        if result.returncode != 0:
+            return False, f"uv build failed: {output[:300]}"
+
+        wheels = sorted(Path(tmpdir).glob("*.whl"))
+        if not wheels:
+            return False, "uv build did not produce a wheel"
+
+        with zipfile.ZipFile(wheels[0]) as zf:
+            names = set(zf.namelist())
+
+        required = {"trainsh/__init__.py", "trainsh/__main__.py", "trainsh/main.py"}
+        missing = sorted(path for path in required if path not in names)
+        if missing:
+            return False, f"wheel is missing required packaged modules: {', '.join(missing)}"
+        return True, ""
+
+
 def test_imports() -> list[tuple[str, bool, str]]:
     """Test that all command modules can be imported."""
     import importlib.util
@@ -332,6 +367,15 @@ def main():
     else:
         print("  FAIL: pyproject entry point")
         print(f"        {entrypoint_error}")
+        wrapper_failed += 1
+
+    wheel_ok, wheel_error = test_built_wheel_contains_cli_module()
+    if wheel_ok:
+        print("  OK: built wheel contains cli module")
+        wrapper_passed += 1
+    else:
+        print("  FAIL: built wheel contains cli module")
+        print(f"        {wheel_error}")
         wrapper_failed += 1
 
     print(f"\nWrapper/metadata: {wrapper_passed} passed, {wrapper_failed} failed")
