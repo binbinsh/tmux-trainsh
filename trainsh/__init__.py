@@ -63,10 +63,8 @@ else:
     __version__ = _local_version if _should_prefer_local_version() else _installed_version
 
 __build_number__ = _resolve_build_number()
-if __build_number__ > 0:
-    __display_version__ = f"{__version__} (build {__build_number__})"
-else:
-    __display_version__ = __version__
+# Keep the CLI display version aligned to the normalized package version.
+__display_version__ = __version__
 
 
 def main(args: list[str]) -> str | None:

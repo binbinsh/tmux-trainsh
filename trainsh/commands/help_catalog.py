@@ -506,6 +506,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                     "VAST_API_KEY",
                     "HF_TOKEN",
                     "OPENAI_API_KEY",
+                    "OPENROUTER_API_KEY",
                     "ANTHROPIC_API_KEY",
                     "GITHUB_TOKEN",
                     "GOOGLE_DRIVE_CREDENTIALS",

@@ -273,7 +273,7 @@ class TestPromptBackendSelection(unittest.TestCase):
 
 
 class TestSecretsCommand(unittest.TestCase):
-    def test_cmd_list_includes_cloud_storage_secret_keys(self):
+    def test_cmd_list_includes_known_secret_keys(self):
         import trainsh.commands.secrets_cmd as secrets_cmd
 
         backend = MagicMock()
@@ -289,6 +289,7 @@ class TestSecretsCommand(unittest.TestCase):
             secrets_cmd.cmd_list([])
 
         output = stdout.getvalue()
+        self.assertIn("OPENROUTER_API_KEY", output)
         self.assertIn("R2_CREDENTIALS", output)
         self.assertIn("B2_CREDENTIALS", output)
 

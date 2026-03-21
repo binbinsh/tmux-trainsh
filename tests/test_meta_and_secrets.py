@@ -30,6 +30,7 @@ class CaptureMixin:
 class PackageMetaTests(CaptureMixin, unittest.TestCase):
     def test_package_helpers_and_main_wrapper(self):
         self.assertTrue(trainsh.__display_version__)
+        self.assertEqual(trainsh.__display_version__, trainsh.__version__)
         self.assertIn("main", trainsh.__all__)
 
         with tempfile.TemporaryDirectory() as tmpdir:
