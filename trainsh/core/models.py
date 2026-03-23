@@ -192,6 +192,7 @@ class StorageType(Enum):
     LOCAL = "local"
     SSH = "ssh"
     GOOGLE_DRIVE = "gdrive"
+    HF = "hf"
     R2 = "r2"
     B2 = "b2"
     GCS = "gcs"
@@ -205,6 +206,7 @@ class StorageType(Enum):
             StorageType.LOCAL: "local",
             StorageType.SSH: "sftp",
             StorageType.GOOGLE_DRIVE: "drive",
+            StorageType.HF: "hf",
             StorageType.R2: "s3",
             StorageType.B2: "b2",
             StorageType.GCS: "google cloud storage",

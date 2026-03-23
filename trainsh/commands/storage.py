@@ -143,6 +143,7 @@ def cmd_add(args: List[str]) -> None:
     print("  6. Amazon S3")
     print("  7. Google Cloud Storage")
     print("  8. SMB/CIFS")
+    print("  9. Hugging Face Buckets")
     type_choice = prompt_input("Choice [1]: ", default="1")
     if type_choice is None:
         return
@@ -156,6 +157,7 @@ def cmd_add(args: List[str]) -> None:
         "6": StorageType.S3,
         "7": StorageType.GCS,
         "8": StorageType.SMB,
+        "9": StorageType.HF,
     }
     storage_type = type_map.get(type_choice, StorageType.LOCAL)
 
@@ -386,6 +388,29 @@ def cmd_add(args: List[str]) -> None:
         else:
             print("You can set the SMB password later with train secrets.")
 
+    elif storage_type == StorageType.HF:
+        bucket = prompt_input("Bucket ID [namespace/name]: ")
+        if bucket is None:
+            return
+        bucket = bucket.strip().strip("/")
+        if not bucket:
+            print("Cancelled - bucket id is required.")
+            return
+        config["bucket"] = bucket
+        store_now = _prompt_store_now("Store HF token in train secrets now? (Y/n): ")
+        if store_now is None:
+            return
+        if store_now:
+            token = _prompt_secret("HF token: ")
+            if token is None:
+                return
+            secret_name = _suggest_secret_name(name, "HF_TOKEN")
+            _store_secret_value(secret_name, token)
+            config.pop("token_secret", None)
+            print("Stored HF token in train secrets.")
+        else:
+            print("You can set an HF token later with train secrets.")
+
     default_choice = prompt_input("\nSet as default? (y/N): ")
     if default_choice is None:
         return
@@ -453,6 +478,10 @@ def cmd_show(args: List[str]) -> None:
         resolve_resource_secret_name(storage.name, storage.config.get("service_account_secret"), "SERVICE_ACCOUNT_JSON")
     ):
         managed.append("GCS service account")
+    elif storage.type == StorageType.HF:
+        token_secret = resolve_resource_secret_name(storage.name, storage.config.get("token_secret"), "HF_TOKEN")
+        if secrets.exists(token_secret) or secrets.exists("HF_TOKEN"):
+            managed.append("HF token")
     elif storage.type == StorageType.SSH:
         if secrets.exists(resolve_resource_secret_name(storage.name, storage.config.get("key_secret"), "SSH_PRIVATE_KEY")):
             managed.append("SSH private key")
@@ -513,9 +542,46 @@ def cmd_test(args: List[str]) -> None:
         build_rclone_env,
         get_rclone_remote_name,
     )
+    from ..services.hf_storage import build_hf_env, check_hf_available, resolve_hf_bucket_id
     from ..services.transfer_support import resolve_storage_remote_path
 
-    if storage.type.value in ("gdrive", "r2", "b2", "s3", "gcs", "smb"):
+    if storage.type.value == "hf":
+        if not check_hf_available():
+            print("Error: hf CLI is required but not installed.")
+            print("Install with: brew install hf")
+            sys.exit(1)
+
+        import os
+        import subprocess
+
+        bucket_id = resolve_hf_bucket_id(storage)
+        if not bucket_id:
+            print("Error: No bucket configured for HF storage.")
+            sys.exit(1)
+
+        env = os.environ.copy()
+        hf_env = build_hf_env(storage)
+        env.update(hf_env)
+
+        print(f"  Using HF bucket: {bucket_id}")
+        if hf_env:
+            print(f"  Auto-configured with {len(hf_env)} environment variables")
+
+        result = subprocess.run(
+            ["hf", "buckets", "info", bucket_id],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if result.returncode == 0:
+            print("Connection successful!")
+            if result.stdout.strip():
+                for line in result.stdout.strip().split("\n")[:5]:
+                    print(f"  {line}")
+        else:
+            print(f"Connection failed: {result.stderr or result.stdout}")
+            sys.exit(1)
+    elif storage.type.value in ("gdrive", "r2", "b2", "s3", "gcs", "smb"):
         if not check_rclone_available():
             print("Error: rclone is required but not installed.")
             print("Install with: brew install rclone")

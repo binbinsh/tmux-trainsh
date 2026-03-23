@@ -18,6 +18,12 @@ class StorageResolutionTests(unittest.TestCase):
         self.assertEqual(path, "/checkpoints")
         self.assertEqual(storage_id, "r2:logs-bucket")
 
+    def test_transfer_command_parses_inline_hf_endpoint(self):
+        endpoint_type, path, storage_id = parse_transfer_endpoint("hf:team/checkpoints:/nightly")
+        self.assertEqual(endpoint_type, "storage")
+        self.assertEqual(path, "/nightly")
+        self.assertEqual(storage_id, "hf:team/checkpoints")
+
     def test_legacy_s3_inline_spec_is_no_longer_supported(self):
         self.assertIsNone(build_storage_from_spec("s3:old-bucket"))
 
@@ -70,13 +76,22 @@ class StorageResolutionTests(unittest.TestCase):
         self.assertEqual(resolved_inline.type, StorageType.R2)
         self.assertEqual(resolved_inline.config["bucket"], "logs-bucket")
 
+    def test_resolve_storage_supports_inline_hf_spec(self):
+        with isolated_executor(RecipeModel(name="resolve-storage-hf")) as (executor, _config_dir):
+            resolved_inline = executor._resolve_storage("hf:team/checkpoints")
+
+        self.assertIsNotNone(resolved_inline)
+        self.assertEqual(resolved_inline.type, StorageType.HF)
+        self.assertEqual(resolved_inline.config["bucket"], "team/checkpoints")
+
     def test_inline_r2_uses_safe_rclone_remote_names(self):
         with isolated_executor(RecipeModel(name="inline-rclone")) as (executor, _config_dir):
             storage = executor._resolve_storage("r2:logs-bucket")
 
         self.assertIsNotNone(storage)
         remote_name = get_rclone_remote_name(storage)
-        env = build_rclone_env(storage)
+        with patch("trainsh.services.transfer_engine.get_secrets_manager", return_value=unittest.mock.MagicMock(get=lambda _key: None)):
+            env = build_rclone_env(storage)
 
         self.assertNotIn(":", remote_name)
         self.assertTrue(remote_name.startswith("r2_"))

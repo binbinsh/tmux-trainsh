@@ -39,6 +39,20 @@
 - Reuse a tmux context later by name with `gpu.tmux("work")` instead of carrying one Python variable across the whole file.
 - Use `tmux.after(...)` only to set default dependencies for future tmux steps; do not treat it as a retroactive open-step rewrite.
 
+## Storage Guidance
+
+- Treat Hugging Face Buckets as a first-class storage backend, alongside `r2`, `b2`, `gcs`, `s3`, `ssh`, and local storage.
+- Prefer a named storage or a Python `Storage(...)` object over hand-written shell calls to `hf buckets`.
+- For Python recipes, prefer explicit storage specs such as:
+  - `Storage("hf:<namespace>/<bucket>")`
+  - `Storage("r2:<bucket>")`
+  - `Storage({"type": "hf", "config": {"bucket": "<namespace>/<bucket>"}})`
+- For CLI transfers, the direct HF endpoint form is `hf:<namespace>/<bucket>:/path`.
+- Prefer the colon path form for HF buckets because the bucket id itself contains `/`.
+- For HF bucket authentication, prefer `HF_TOKEN` or a storage-scoped secret like `<STORAGE_NAME>_HF_TOKEN`.
+- When moving data between local paths, hosts, and HF buckets, prefer `train transfer` or recipe storage steps over raw `hf buckets sync`.
+- For bucket creation in recipes, prefer `recipe.storage_ensure_bucket(...)` instead of shelling out.
+
 ## Runtime Guarantees
 
 - `.pyrecipe` recipes still run as: load -> dependency graph from `depends_on` -> executor run.

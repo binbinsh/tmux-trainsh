@@ -67,6 +67,12 @@ class ExecutorProviderDataMixin:
         path_text = resolve_storage_remote_path(storage, path)
         return f"{remote_name}:{path_text}"
 
+    def _storage_hf_uri(self, storage: Storage, path: str) -> str:
+        """Resolve a path for Hugging Face bucket operations."""
+        from ..services.hf_storage import resolve_hf_bucket_uri
+
+        return resolve_hf_bucket_uri(storage, path)
+
     def _exec_storage_rclone(
         self,
         storage: Storage,
@@ -94,6 +100,43 @@ class ExecutorProviderDataMixin:
             return False, "rclone command not found. Install with: brew install rclone"
         except subprocess.TimeoutExpired:
             return False, f"rclone command timed out after {timeout}s"
+        except Exception as exc:
+            return False, str(exc)
+
+        output = (result.stdout or "").strip()
+        error = (result.stderr or "").strip()
+        message = output or error
+        if result.returncode == 0:
+            return True, message or "storage operation completed"
+        return False, message or "storage operation failed"
+
+    def _exec_storage_hf(
+        self,
+        storage: Storage,
+        args: List[str],
+        *,
+        timeout: int = 300,
+    ) -> tuple[bool, str]:
+        """Execute a storage command through the hf CLI."""
+        from ..services.hf_storage import build_hf_env, check_hf_available
+
+        if not check_hf_available():
+            return False, "hf CLI is required. Install with: brew install hf"
+
+        env = os.environ.copy()
+        env.update(build_hf_env(storage))
+        try:
+            result = subprocess.run(
+                ["hf", "buckets", *args],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+        except FileNotFoundError:
+            return False, "hf command not found. Install with: brew install hf"
+        except subprocess.TimeoutExpired:
+            return False, f"hf command timed out after {timeout}s"
         except Exception as exc:
             return False, str(exc)
 

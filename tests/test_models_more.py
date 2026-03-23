@@ -55,6 +55,7 @@ class ModelsMoreTests(unittest.TestCase):
         self.assertEqual(StorageType.LOCAL.rclone_type, "local")
         self.assertEqual(StorageType.SSH.rclone_type, "sftp")
         self.assertEqual(StorageType.GOOGLE_DRIVE.rclone_type, "drive")
+        self.assertEqual(StorageType.HF.rclone_type, "hf")
         self.assertEqual(StorageType.R2.rclone_type, "s3")
         self.assertEqual(StorageType.B2.rclone_type, "b2")
         self.assertEqual(StorageType.GCS.rclone_type, "google cloud storage")

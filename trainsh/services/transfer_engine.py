@@ -8,6 +8,13 @@ from typing import Optional, List, Callable
 
 from ..core.models import AuthMethod, Host, Storage, StorageType, TransferEndpoint, HostType
 from . import transfer_support as _transfer_support
+from .hf_storage import (
+    build_hf_env,
+    check_hf_available,
+    is_hf_bucket_uri,
+    local_path_for_cli,
+    resolve_hf_bucket_uri,
+)
 from .transfer_support import (
     TransferPlan,
     TransferProgress,
@@ -315,6 +322,243 @@ class TransferEngine:
                 message=str(e),
             )
 
+    def hf(
+        self,
+        source: str,
+        destination: str,
+        *,
+        storage: Storage,
+        operation: str = "copy",
+        delete: bool = False,
+        dry_run: bool = False,
+        progress: bool = True,
+    ) -> TransferResult:
+        """Transfer files using the hf CLI for Hugging Face buckets."""
+        if not check_hf_available():
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message="hf CLI not found. Install with: brew install hf",
+            )
+
+        args = ["hf", "buckets"]
+        local_source = None if is_hf_bucket_uri(source) else local_path_for_cli(source)
+        local_destination = None if is_hf_bucket_uri(destination) else local_path_for_cli(destination)
+        use_cp = self._should_use_hf_cp(
+            source=local_source or source,
+            destination=local_destination or destination,
+            operation=operation,
+        )
+        if use_cp and dry_run:
+            return TransferResult(
+                success=False,
+                exit_code=2,
+                message="Dry run is not supported for single-file HF bucket copies.",
+            )
+
+        args.append("cp" if use_cp else "sync")
+        args.extend([local_source or source, local_destination or destination])
+        if progress and not use_cp:
+            args.append("--quiet")
+        if delete and not use_cp:
+            args.append("--delete")
+        if dry_run and not use_cp:
+            args.append("--dry-run")
+        for pat in self.rclone_options.get("include", []):
+            if not use_cp:
+                args.extend(["--include", pat])
+        for pat in self.rclone_options.get("exclude", []):
+            if not use_cp:
+                args.extend(["--exclude", pat])
+
+        env = os.environ.copy()
+        env.update(build_hf_env(storage))
+
+        try:
+            process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+
+            output_lines = []
+            stdout = process.stdout
+
+            if stdout is not None:
+                try:
+                    for line in stdout:
+                        line = line.rstrip()
+                        output_lines.append(line)
+                        if line:
+                            print(f"  {line}", flush=True)
+                finally:
+                    close = getattr(stdout, "close", None)
+                    if callable(close):
+                        close()
+
+            process.wait()
+
+            return TransferResult(
+                success=process.returncode == 0,
+                exit_code=process.returncode,
+                message="\n".join(output_lines[-5:]) if process.returncode != 0 else "Transfer complete",
+            )
+        except FileNotFoundError:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message="hf CLI not found. Install with: brew install hf",
+            )
+        except Exception as e:
+            return TransferResult(
+                success=False,
+                exit_code=-1,
+                message=str(e),
+            )
+
+    def _should_use_hf_cp(self, source: str, destination: str, *, operation: str) -> bool:
+        """Pick `hf buckets cp` for likely single-file transfers."""
+        if operation != "copy":
+            return False
+
+        for candidate in (source, destination):
+            text = str(candidate or "").strip()
+            if not text or is_hf_bucket_uri(text):
+                continue
+            expanded = os.path.expanduser(text)
+            if os.path.isfile(expanded):
+                return True
+            if os.path.isdir(expanded):
+                return False
+
+        remote_path = source if is_hf_bucket_uri(source) else destination
+        basename = os.path.basename(str(remote_path or "").rstrip("/"))
+        return bool(basename and "." in basename)
+
+    def _transfer_local_with_hf_storage(
+        self,
+        *,
+        local_path: str,
+        storage: Storage,
+        storage_path: str,
+        upload: bool,
+        delete: bool,
+        dry_run: bool,
+    ) -> TransferResult:
+        """Transfer directly between local filesystem and an HF bucket."""
+        hf_uri = resolve_hf_bucket_uri(storage, storage_path)
+        if upload:
+            return self.hf(
+                source=local_path,
+                destination=hf_uri,
+                storage=storage,
+                operation="sync" if delete else "copy",
+                delete=delete,
+                dry_run=dry_run,
+            )
+        return self.hf(
+            source=hf_uri,
+            destination=local_path,
+            storage=storage,
+            operation="sync" if delete else "copy",
+            delete=delete,
+            dry_run=dry_run,
+        )
+
+    def _transfer_with_hf_storage(
+        self,
+        *,
+        source: TransferEndpoint,
+        destination: TransferEndpoint,
+        hosts: dict[str, Host],
+        storages: dict[str, Storage],
+        delete: bool,
+        exclude: Optional[List[str]],
+        dry_run: bool,
+    ) -> TransferResult:
+        """Handle transfers that involve at least one HF storage via local staging."""
+        src_storage = storages.get(source.storage_id) if source.storage_id else None
+        dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
+        src_uses_hf = bool(src_storage and src_storage.type == StorageType.HF)
+        dst_uses_hf = bool(dst_storage and dst_storage.type == StorageType.HF)
+
+        if src_uses_hf and destination.type == "local":
+            return self._transfer_local_with_hf_storage(
+                local_path=destination.path,
+                storage=src_storage,
+                storage_path=source.path,
+                upload=False,
+                delete=delete,
+                dry_run=dry_run,
+            )
+        if dst_uses_hf and source.type == "local":
+            return self._transfer_local_with_hf_storage(
+                local_path=source.path,
+                storage=dst_storage,
+                storage_path=destination.path,
+                upload=True,
+                delete=delete,
+                dry_run=dry_run,
+            )
+
+        if dry_run:
+            return TransferResult(
+                success=False,
+                exit_code=2,
+                message="Dry run is not supported for relayed HF storage transfers.",
+            )
+
+        with tempfile.TemporaryDirectory(prefix="trainsh-hf-transfer-") as tmpdir:
+            stage_path = os.path.join(tmpdir, "payload")
+            if src_uses_hf:
+                pulled = self._transfer_local_with_hf_storage(
+                    local_path=stage_path,
+                    storage=src_storage,
+                    storage_path=source.path,
+                    upload=False,
+                    delete=False,
+                    dry_run=False,
+                )
+            else:
+                pulled = self.transfer(
+                    source=source,
+                    destination=TransferEndpoint(type="local", path=stage_path),
+                    hosts=hosts,
+                    storages=storages,
+                    delete=False,
+                    exclude=exclude,
+                    dry_run=False,
+                )
+            if not pulled.success:
+                return pulled
+
+            if dst_uses_hf:
+                pushed = self._transfer_local_with_hf_storage(
+                    local_path=stage_path,
+                    storage=dst_storage,
+                    storage_path=destination.path,
+                    upload=True,
+                    delete=delete,
+                    dry_run=False,
+                )
+            else:
+                pushed = self.transfer(
+                    source=TransferEndpoint(type="local", path=stage_path),
+                    destination=destination,
+                    hosts=hosts,
+                    storages=storages,
+                    delete=delete,
+                    exclude=exclude,
+                    dry_run=False,
+                )
+
+            if pushed.bytes_transferred <= 0:
+                pushed.bytes_transferred = pulled.bytes_transferred
+            return pushed
+
     def transfer(
         self,
         source: TransferEndpoint,
@@ -348,12 +592,23 @@ class TransferEngine:
             # Determine transfer method based on endpoint types
             tool = self._select_transfer_tool(source, destination, storages)
 
+            src_storage = storages.get(source.storage_id) if source.storage_id else None
+            dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
+            src_host = hosts.get(source.host_id) if source.host_id else None
+            dst_host = hosts.get(destination.host_id) if destination.host_id else None
+
+            if tool == "hf":
+                return self._transfer_with_hf_storage(
+                    source=source,
+                    destination=destination,
+                    hosts=hosts,
+                    storages=storages,
+                    delete=delete,
+                    exclude=exclude,
+                    dry_run=dry_run,
+                )
+
             if tool == "rclone":
-                # Get storage objects for credentials
-                src_storage = storages.get(source.storage_id) if source.storage_id else None
-                dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
-                src_host = hosts.get(source.host_id) if source.host_id else None
-                dst_host = hosts.get(destination.host_id) if destination.host_id else None
 
                 if src_host and dst_storage is not None:
                     return self._transfer_host_with_cloud_storage(
@@ -462,6 +717,9 @@ class TransferEngine:
         """Select transfer tool: 'rsync' or 'rclone'."""
         src_storage = storages.get(source.storage_id) if source.storage_id else None
         dst_storage = storages.get(destination.storage_id) if destination.storage_id else None
+
+        if (src_storage and src_storage.type == StorageType.HF) or (dst_storage and dst_storage.type == StorageType.HF):
+            return "hf"
 
         # SSH and local storage can be resolved directly for rsync/local copies.
         if src_storage and src_storage.type in {StorageType.SSH, StorageType.LOCAL}:

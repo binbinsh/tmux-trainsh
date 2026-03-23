@@ -45,7 +45,7 @@ def resolve_storage_remote_path(storage: Storage, path: str) -> str:
 
     relative = raw.lstrip("/")
     root = ""
-    if storage.type in {StorageType.R2, StorageType.S3, StorageType.B2, StorageType.GCS}:
+    if storage.type in {StorageType.R2, StorageType.S3, StorageType.B2, StorageType.GCS, StorageType.HF}:
         root = str(storage.config.get("bucket", "")).strip().strip("/")
     elif storage.type == StorageType.SMB:
         root = str(storage.config.get("share", "")).strip().strip("/")
@@ -308,6 +308,7 @@ def analyze_transfer(
             storage = storages.get(endpoint.storage_id)
             if storage:
                 if storage.type in (
+                    StorageType.HF,
                     StorageType.R2,
                     StorageType.B2,
                     StorageType.S3,
@@ -328,7 +329,18 @@ def analyze_transfer(
 
     if src_type == "ssh" and dst_type == "ssh":
         return TransferPlan(method="rsync", via="direct", description="SSH to SSH transfer via rsync")
+    hf_cloud = False
+    for endpoint in (source, destination):
+        if not endpoint.storage_id:
+            continue
+        storage = storages.get(endpoint.storage_id)
+        if storage and storage.type == StorageType.HF:
+            hf_cloud = True
+            break
+
     if src_type == "cloud" or dst_type == "cloud":
+        if hf_cloud:
+            return TransferPlan(method="hf", via="cloud", description="Hugging Face bucket transfer via hf")
         return TransferPlan(method="rclone", via="cloud", description="Cloud storage transfer via rclone")
     if (src_type == "local" and dst_type == "ssh") or (src_type == "ssh" and dst_type == "local"):
         return TransferPlan(method="rsync", via="local", description="Local to/from SSH via rsync")

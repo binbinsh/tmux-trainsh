@@ -110,7 +110,13 @@ class Host:
 
 @dataclass(frozen=True)
 class Storage:
-    """Explicit storage resource used by the Python recipe API."""
+    """Explicit storage resource used by the Python recipe API.
+
+    Typical specs:
+    - ``Storage("hf:team/checkpoints")``
+    - ``Storage("r2:artifacts")``
+    - ``Storage({"type": "hf", "config": {"bucket": "team/checkpoints"}})``
+    """
 
     spec: Any
     name: Optional[str] = None

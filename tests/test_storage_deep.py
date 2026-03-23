@@ -43,6 +43,7 @@ class StorageDeepTests(unittest.TestCase):
                 ("s3box", ["s3box", "6", "bucket-c", "us-west-2", "https://s3.example.com", "n", "n"], StorageType.S3, {"bucket": "bucket-c", "region": "us-west-2", "endpoint": "https://s3.example.com"}),
                 ("gcsbox", ["gcsbox", "7", "bucket-d", "", "n", "n"], StorageType.GCS, {"bucket": "bucket-d"}),
                 ("smbbox", ["smbbox", "8", "server", "share", "alice", "n", "n"], StorageType.SMB, {"server": "server", "share": "share", "username": "alice"}),
+                ("hfbox", ["hfbox", "9", "team/checkpoints", "n", "n"], StorageType.HF, {"bucket": "team/checkpoints"}),
             ]
             for name, inputs, expected_type, expected_config in cases:
                 with patch("trainsh.commands.storage.prompt_input", side_effect=inputs):
@@ -101,6 +102,8 @@ class StorageDeepTests(unittest.TestCase):
                 ["smb-cancel2", "8", "server", None],
                 ["smb-cancel3", "8", "server", "share", None],
                 ["smb-cancel4", "8", "server", "share", "user", None],
+                ["hf-cancel", "9", None],
+                ["hf-cancel2", "9", "team/checkpoints", None],
                 ["local-cancel", "1", "/tmp/local", None],
             ]
             for inputs in cancel_cases:
@@ -142,6 +145,16 @@ class StorageDeepTests(unittest.TestCase):
             self.assertIsNone(code)
             self.assertIn("Stored GCS service account JSON in train secrets.", out)
             store_file.assert_called_once_with("GCSSECRET_SERVICE_ACCOUNT_JSON", "/tmp/gcs.json")
+
+            secrets = SimpleNamespace(set_bundle=unittest.mock.MagicMock(), set=unittest.mock.MagicMock())
+            with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets), patch(
+                "trainsh.commands.storage.prompt_input",
+                side_effect=["hfsecret", "9", "team/checkpoints", "y", "n"],
+            ), patch("trainsh.commands.storage.getpass.getpass", return_value="hf-token"):
+                out, code = capture(storage.cmd_add, [])
+            self.assertIsNone(code)
+            self.assertIn("Stored HF token in train secrets.", out)
+            secrets.set.assert_called_with("HFSECRET_HF_TOKEN", "hf-token")
 
     def test_show_remove_test_and_main_paths(self):
         with patched_storage_store():

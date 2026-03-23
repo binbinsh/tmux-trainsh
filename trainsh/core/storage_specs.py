@@ -15,6 +15,7 @@ _STORAGE_TYPE_ALIASES = {
     "sftp": StorageType.SSH,
     "gdrive": StorageType.GOOGLE_DRIVE,
     "drive": StorageType.GOOGLE_DRIVE,
+    "hf": StorageType.HF,
     "r2": StorageType.R2,
     "b2": StorageType.B2,
     "gcs": StorageType.GCS,
@@ -25,12 +26,14 @@ _BUCKET_STORAGE_TYPES = {
     StorageType.R2,
     StorageType.B2,
     StorageType.GCS,
+    StorageType.HF,
 }
 
 _INLINE_TRANSFER_STORAGE_TYPES = {
     StorageType.R2,
     StorageType.B2,
     StorageType.GCS,
+    StorageType.HF,
     StorageType.GOOGLE_DRIVE,
 }
 
@@ -120,6 +123,9 @@ def build_storage_from_spec(
     elif storage_type == StorageType.GOOGLE_DRIVE:
         if remainder:
             config["remote_name"] = remainder
+    elif storage_type == StorageType.HF:
+        if remainder:
+            config["bucket"] = remainder.strip("/")
     elif storage_type == StorageType.LOCAL:
         if remainder:
             config["path"] = remainder

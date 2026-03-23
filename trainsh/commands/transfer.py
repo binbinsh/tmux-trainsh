@@ -11,6 +11,7 @@ from ..core.storage_specs import unsupported_inline_storage_error
 from ..services.transfer_support import resolve_storage_remote_path
 
 CLOUD_PREFIXES = {
+    "hf:": StorageType.HF,
     "r2:": StorageType.R2,
     "b2:": StorageType.B2,
     "gcs:": StorageType.GCS,
@@ -22,7 +23,7 @@ usage = render_command_help("transfer")
 
 
 def _try_cloud_endpoint(spec: str, position: str) -> Optional[tuple[Storage, str]]:
-    """Try to parse a cloud endpoint prefix (r2:, b2:, gcs:).
+    """Try to parse a cloud endpoint prefix (hf:, r2:, b2:, gcs:).
 
     Supported forms::
 
@@ -49,10 +50,18 @@ def _try_cloud_endpoint(spec: str, position: str) -> Optional[tuple[Storage, str
             print(f"Error: Cloud endpoint '{spec}' requires a bucket name.")
             sys.exit(1)
 
-        provider = prefix.rstrip(":")  # "r2", "b2", etc.
+        provider = prefix.rstrip(":")  # "hf", "r2", "b2", etc.
 
+        # Hugging Face bucket ids contain a slash, so only the colon-separated
+        # form is unambiguous when a path is present.
+        if storage_type == StorageType.HF:
+            if ":" in remainder:
+                bucket, path = remainder.split(":", 1)
+                path = path.strip("/")
+            else:
+                bucket, path = remainder, ""
         # Two formats:  r2:bucket:/path  (colon)  or  r2:bucket/path  (slash)
-        if ":" in remainder:
+        elif ":" in remainder:
             bucket, path = remainder.split(":", 1)
             path = path.strip("/")
         else:
@@ -318,7 +327,21 @@ def main(args: List[str]) -> Optional[str]:
             sys.exit(1)
 
         rsync_storage_types = {StorageType.LOCAL, StorageType.SSH}
-        if (src_storage and src_storage.type in rsync_storage_types) or (
+        if (src_storage and src_storage.type == StorageType.HF) or (dst_storage and dst_storage.type == StorageType.HF):
+            from .host import load_hosts
+
+            if src_type == "host" or dst_type == "host":
+                print("Note: Host <-> cloud storage transfers relay through a local temp directory.")
+            result = engine.transfer(
+                source=src_endpoint,
+                destination=dst_endpoint,
+                hosts=load_hosts() if src_type == "host" or dst_type == "host" else {},
+                storages=storages,
+                delete=delete,
+                exclude=exclude,
+                dry_run=dry_run,
+            )
+        elif (src_storage and src_storage.type in rsync_storage_types) or (
             dst_storage and dst_storage.type in rsync_storage_types
         ):
             from .host import load_hosts
