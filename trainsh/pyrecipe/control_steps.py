@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Iterable, Optional, Dict, Any
 
 from ..core.recipe_models import RecipeStepModel, StepType
+from .models import PythonRecipeError
 
 
 class RecipeControlMixin:
@@ -126,16 +127,16 @@ class RecipeControlMixin:
 
     def vast_start(
         self,
-        instance_id: Optional[str] = None,
+        instance_id: Any,
         *,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Alias for vast provider start."""
-        params: Dict[str, Any] = {}
-        if instance_id is not None:
-            params["instance_id"] = instance_id
+        if instance_id is None or not str(instance_id).strip():
+            raise PythonRecipeError("vast_start requires an explicit Vast host or instance id")
+        params: Dict[str, Any] = {"instance_id": instance_id}
         return self.provider(
             "vast",
             "start",
@@ -147,16 +148,16 @@ class RecipeControlMixin:
 
     def vast_stop(
         self,
-        instance_id: Optional[str] = None,
+        instance_id: Any,
         *,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Alias for vast provider stop."""
-        params: Dict[str, Any] = {}
-        if instance_id is not None:
-            params["instance_id"] = instance_id
+        if instance_id is None or not str(instance_id).strip():
+            raise PythonRecipeError("vast_stop requires an explicit Vast host or instance id")
+        params: Dict[str, Any] = {"instance_id": instance_id}
         return self.provider(
             "vast",
             "stop",
@@ -222,7 +223,7 @@ class RecipeControlMixin:
 
     def vast_wait(
         self,
-        instance_id: Optional[str] = None,
+        instance_id: Any,
         *,
         timeout: Any = "10m",
         poll_interval: Any = "10s",
@@ -232,13 +233,14 @@ class RecipeControlMixin:
         step_options: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Alias for vast provider wait."""
+        if instance_id is None or not str(instance_id).strip():
+            raise PythonRecipeError("vast_wait requires an explicit Vast host or instance id")
         params: Dict[str, Any] = {
+            "instance_id": instance_id,
             "timeout": timeout,
             "poll_interval": poll_interval,
             "stop_on_fail": stop_on_fail,
         }
-        if instance_id is not None:
-            params["instance_id"] = instance_id
         return self.provider(
             "vast",
             "wait",
@@ -250,20 +252,165 @@ class RecipeControlMixin:
 
     def vast_cost(
         self,
-        instance_id: Optional[str] = None,
+        instance_id: Any,
         *,
         id: Optional[str] = None,
         depends_on: Optional[Iterable[str]] = None,
         step_options: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Alias for vast provider cost."""
-        params: Dict[str, Any] = {}
-        if instance_id is not None:
-            params["instance_id"] = instance_id
+        if instance_id is None or not str(instance_id).strip():
+            raise PythonRecipeError("vast_cost requires an explicit Vast host or instance id")
+        params: Dict[str, Any] = {"instance_id": instance_id}
         return self.provider(
             "vast",
             "cost",
             params=params,
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def runpod_start(
+        self,
+        pod_id: Any,
+        *,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Alias for runpod provider start."""
+        if pod_id is None or not str(pod_id).strip():
+            raise PythonRecipeError("runpod_start requires an explicit RunPod host or Pod id")
+        return self.provider(
+            "runpod",
+            "start",
+            params={"pod_id": pod_id},
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def runpod_stop(
+        self,
+        pod_id: Any,
+        *,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Alias for runpod provider stop."""
+        if pod_id is None or not str(pod_id).strip():
+            raise PythonRecipeError("runpod_stop requires an explicit RunPod host or Pod id")
+        return self.provider(
+            "runpod",
+            "stop",
+            params={"pod_id": pod_id},
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def runpod_pick(
+        self,
+        host: str = "gpu",
+        *,
+        gpu_name: Optional[str] = None,
+        num_gpus: Optional[int] = None,
+        min_gpu_ram: Optional[Any] = None,
+        max_dph: Optional[Any] = None,
+        limit: Optional[int] = None,
+        skip_if_set: bool = True,
+        auto_select: bool = False,
+        create_if_missing: bool = False,
+        image: Optional[str] = None,
+        disk_gb: Optional[Any] = None,
+        volume_gb: Optional[Any] = None,
+        label: Optional[str] = None,
+        cloud_type: Optional[str] = None,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Alias for runpod provider pick."""
+        params: Dict[str, Any] = {
+            "host": host,
+            "skip_if_set": bool(skip_if_set),
+        }
+        if gpu_name is not None:
+            params["gpu_name"] = gpu_name
+        if num_gpus is not None:
+            params["num_gpus"] = num_gpus
+        if min_gpu_ram is not None:
+            params["min_gpu_ram"] = min_gpu_ram
+        if max_dph is not None:
+            params["max_dph"] = max_dph
+        if limit is not None:
+            params["limit"] = limit
+        params["auto_select"] = bool(auto_select)
+        params["create_if_missing"] = bool(create_if_missing)
+        if image is not None:
+            params["image"] = image
+        if disk_gb is not None:
+            params["disk_gb"] = disk_gb
+        if volume_gb is not None:
+            params["volume_gb"] = volume_gb
+        if label is not None:
+            params["label"] = label
+        if cloud_type is not None:
+            params["cloud_type"] = cloud_type
+        return self.provider(
+            "runpod",
+            "pick",
+            params=params,
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def runpod_wait(
+        self,
+        pod_id: Any,
+        *,
+        timeout: Any = "10m",
+        poll_interval: Any = "10s",
+        stop_on_fail: bool = True,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Alias for runpod provider wait."""
+        if pod_id is None or not str(pod_id).strip():
+            raise PythonRecipeError("runpod_wait requires an explicit RunPod host or Pod id")
+        return self.provider(
+            "runpod",
+            "wait",
+            params={
+                "pod_id": pod_id,
+                "timeout": timeout,
+                "poll_interval": poll_interval,
+                "stop_on_fail": stop_on_fail,
+            },
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def runpod_cost(
+        self,
+        pod_id: Any,
+        *,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Alias for runpod provider cost."""
+        if pod_id is None or not str(pod_id).strip():
+            raise PythonRecipeError("runpod_cost requires an explicit RunPod host or Pod id")
+        return self.provider(
+            "runpod",
+            "cost",
+            params={"pod_id": pod_id},
             id=id,
             depends_on=depends_on,
             step_options=step_options,

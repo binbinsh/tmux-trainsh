@@ -32,6 +32,7 @@ from .bridge_exec import BridgeExecutionHelper
 from .executor_execute import ExecuteHelper
 from .executor_tmux import TmuxControlHelper
 from .executor_transfer import TransferHelper
+from .executor_runpod import RunpodControlHelper
 from .executor_vast import VastControlHelper
 from .executor_wait import WaitHelper
 from .execution_log import ExecutionLogger
@@ -53,6 +54,7 @@ from .executor_utils import (
     _build_ssh_args,
     _format_duration,
     _host_from_ssh_spec,
+    _resolve_runpod_host,
     _resolve_vast_host,
 )
 from ..utils.notifier import Notifier, normalize_channels, parse_bool
@@ -192,12 +194,13 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
             format_duration=_format_duration,
         )
         self.tmux_control = TmuxControlHelper(self, WindowInfo)
-        self.transfer_helper = TransferHelper(self, _resolve_vast_host, _host_from_ssh_spec)
+        self.transfer_helper = TransferHelper(self, _resolve_vast_host, _resolve_runpod_host, _host_from_ssh_spec)
         self.wait_helper = WaitHelper(self, _build_ssh_args, _host_from_ssh_spec, _format_duration)
         self.local_tmux = LocalTmuxClient()
         self._remote_tmux_clients: Dict[str, RemoteTmuxClient] = {}
         self.execute_helper = ExecuteHelper(self, _build_ssh_args, WindowInfo)
         self.vast_control = VastControlHelper(self, _build_ssh_args, _format_duration)
+        self.runpod_control = RunpodControlHelper(self, _build_ssh_args, _format_duration)
 
         # Notifications
         notify_cfg = config.get("notifications", {})
@@ -266,6 +269,8 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
         # Get vast instance tracking info
         vast_instance_id = self.ctx.variables.get("VAST_ID") or self.ctx.variables.get("_vast_instance_id")
         vast_start_time = self.ctx.variables.get("_vast_start_time")
+        runpod_pod_id = self.ctx.variables.get("RUNPOD_ID") or self.ctx.variables.get("_runpod_pod_id")
+        runpod_start_time = self.ctx.variables.get("_runpod_start_time")
 
         self.job_state = JobState(
             job_id=self.ctx.job_id,
@@ -282,6 +287,8 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
             bridge_session=self.tmux_bridge.get_state_session(),
             vast_instance_id=vast_instance_id,
             vast_start_time=vast_start_time,
+            runpod_pod_id=runpod_pod_id,
+            runpod_start_time=runpod_start_time,
         )
         self.job_state.tmux_session = self.job_state.bridge_session or next(
             (w.remote_session for w in self.ctx.windows.values() if w.remote_session),
@@ -519,6 +526,16 @@ class DSLExecutor(ExecutorSchedulingMixin, ExecutorProviderMixin, ExecutorSuppor
             return self._cmd_vast_wait(args)
         elif cmd == "vast.cost":
             return self._cmd_vast_cost(args)
+        elif cmd == "runpod.start":
+            return self._cmd_runpod_start(args)
+        elif cmd == "runpod.stop":
+            return self._cmd_runpod_stop(args)
+        elif cmd == "runpod.pick":
+            return self._cmd_runpod_pick(args)
+        elif cmd == "runpod.wait":
+            return self._cmd_runpod_wait(args)
+        elif cmd == "runpod.cost":
+            return self._cmd_runpod_cost(args)
         elif cmd == "sleep":
             return self._cmd_sleep(args)
         else:
@@ -612,6 +629,11 @@ def run_recipe(
                 recipe.hosts[name] = f"vast:{instance_id}"
                 if not var_overrides or "VAST_ID" not in var_overrides:
                     recipe.variables["VAST_ID"] = instance_id
+            elif value.startswith("runpod:"):
+                pod_id = value[7:]
+                recipe.hosts[name] = f"runpod:{pod_id}"
+                if not var_overrides or "RUNPOD_ID" not in var_overrides:
+                    recipe.variables["RUNPOD_ID"] = pod_id
             else:
                 recipe.hosts[name] = value
 

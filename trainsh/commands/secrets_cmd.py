@@ -22,6 +22,7 @@ usage = render_command_help("secrets")
 
 LISTED_SECRET_KEYS = (
     "VAST_API_KEY",
+    "RUNPOD_API_KEY",
     "HF_TOKEN",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",

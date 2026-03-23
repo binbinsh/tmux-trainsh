@@ -19,10 +19,14 @@ class TransferHelper:
         self,
         executor: Any,
         resolve_vast_host: Callable[[str], str],
-        host_from_ssh_spec: Callable[[str], Host],
+        resolve_runpod_host: Optional[Callable[[str], str]] = None,
+        host_from_ssh_spec: Optional[Callable[[str], Host]] = None,
     ):
         self.executor = executor
         self.resolve_vast_host = resolve_vast_host
+        self.resolve_runpod_host = resolve_runpod_host or (lambda pod_id: f"runpod-{pod_id}")
+        if host_from_ssh_spec is None:
+            raise TypeError("host_from_ssh_spec is required")
         self.host_from_ssh_spec = host_from_ssh_spec
 
     def exec_transfer(self, step: Any) -> tuple[bool, str]:
@@ -212,6 +216,8 @@ class TransferHelper:
             resolved_spec = spec
             if spec.startswith("vast:"):
                 resolved_spec = self.resolve_vast_host(spec[5:])
+            elif spec.startswith("runpod:"):
+                resolved_spec = self.resolve_runpod_host(spec[7:])
             hosts[name] = self.host_from_ssh_spec(resolved_spec)
             hosts[spec] = hosts[name]
         return hosts

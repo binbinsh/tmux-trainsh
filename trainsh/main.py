@@ -68,6 +68,7 @@ def main(args: list[str]) -> Optional[str]:
         raise SystemExit(0)
 
     from .commands.recipe_cmd import main as recipe_main
+    from .commands.runpod import main as runpod_main
     from .commands.vast import main as vast_main
     from .commands.transfer import main as transfer_main
     from .commands.host import main as host_main
@@ -77,6 +78,7 @@ def main(args: list[str]) -> Optional[str]:
     from .commands.pricing import main as pricing_main
     from .commands.update import main as update_main
     from .commands.config_cmd import main as config_main
+    from .commands.vllm import main as vllm_main
     handlers = {
         "recipe": recipe_main,
         "run": lambda args: recipe_main(["run", *args]),
@@ -87,8 +89,10 @@ def main(args: list[str]) -> Optional[str]:
         "secrets": secrets_main,
         "config": config_main,
         "vast": vast_main,
+        "runpod": runpod_main,
         "colab": colab_main,
         "pricing": pricing_main,
+        "vllm": vllm_main,
         "update": update_main,
     }
 

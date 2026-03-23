@@ -17,6 +17,7 @@ from .control_steps import RecipeControlMixin
 from .models import Host, HostPath, PythonRecipeError, ProviderStep, RecipeStep, Storage, StoragePath
 from .namespaces import (
     NotifyNamespace,
+    RunpodNamespace,
     VastNamespace,
 )
 from .provider_steps import RecipeProviderMixin
@@ -45,8 +46,6 @@ class RecipeSpecCore:
         name: str,
         *,
         schedule: Optional[str] = None,
-        owner: Optional[str] = None,
-        tags: Optional[Iterable[str]] = None,
         paused: Optional[bool] = None,
         catchup: Optional[bool] = None,
         max_active_runs: Optional[int] = None,
@@ -66,6 +65,7 @@ class RecipeSpecCore:
         self.hosts: Dict[str, str] = {}
         self.storages: Dict[str, Any] = {}
         self.vast = VastNamespace(self)
+        self.runpod = RunpodNamespace(self)
         self.notify = NotifyNamespace(self)
         if "".join(ch for ch in str(executor).lower() if ch.isalnum()) in {
             "k8s",
@@ -79,11 +79,14 @@ class RecipeSpecCore:
         self.executor_kwargs = dict(executor_kwargs or {})
         if workers is not None and "max_workers" not in self.executor_kwargs:
             self.executor_kwargs["max_workers"] = workers
+        for forbidden_key in ("owner", "tags"):
+            if forbidden_key in extra_executor_kwargs:
+                raise PythonRecipeError(
+                    f"Recipe(..., {forbidden_key}=...) is not supported; use file comments for metadata instead"
+                )
         self.executor_kwargs.update(extra_executor_kwargs)
         self.callbacks = list(callbacks) if callbacks is not None else ["console", "jsonl"]
         self.schedule = schedule
-        self.owner = owner or "trainsh"
-        self.tags = list(tags or [])
         self.is_paused = bool(paused) if paused is not None else False
         self.catchup = bool(catchup) if catchup is not None else False
         self.max_active_runs = max_active_runs

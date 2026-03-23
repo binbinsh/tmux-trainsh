@@ -38,23 +38,30 @@ curl -LsSf https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.
 
 - `train recipe` for recipe files, execution, status, logs, jobs, and schedules
 - `train host` for named SSH or Colab hosts
+- `train vllm` for managed remote vLLM servers and local batch clients
 - `train storage` for named storage backends
 - `train transfer` for local, host, and storage copies
 - `train secrets` for credentials
 - `train config` for config and tmux settings
 - `train vast` for Vast.ai instances
+- `train runpod` for RunPod Pods
 - `train colab` for one-off Colab tunnels
 - `train pricing` for exchange rates and cost estimates
 
 ## Quick Start
 
 ```bash
+train secrets set GITHUB_TOKEN
 train secrets set VAST_API_KEY
+train secrets set RUNPOD_API_KEY
 train host add
+train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8
 train storage add
 
 train recipe show nanochat
+train recipe new demo --template remote-train
 train exec nanochat
+train host clone gpu-box https://github.com/org/private-repo.git /srv/private-repo
 train recipe status --last
 ```
 
@@ -67,16 +74,18 @@ Current bundled examples: `aptup, brewup, hello, nanochat`
 Public imports:
 
 ```python
-from trainsh import Recipe, Host, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local
+from trainsh import Recipe, Host, RunpodHost, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local
 ```
 
 Main authoring model:
 
 - `Recipe`
-- `Host` / `VastHost` / `HostPath`
+- `Host` / `VastHost` / `RunpodHost` / `HostPath`
 - `Storage` / `StoragePath`
 - `host.tmux(...)`
 - `local.tmux(...)`
+- `tmux.script(...)`
+- `recipe.storage_wait_count(...)`
 
 ## Runtime Guarantees
 

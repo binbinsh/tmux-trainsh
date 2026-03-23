@@ -139,14 +139,20 @@ class ExecutorProviderDispatchMixin:
                 return self._exec_provider_storage_list(storage_params)
             if operation in {"exists", "check", "test"}:
                 return self._exec_provider_storage_exists(storage_params)
+            if operation in {"count", "count_entries"}:
+                return self._exec_provider_storage_count(storage_params)
             if operation in {"read", "read_text", "cat"}:
                 return self._exec_provider_storage_read_text(storage_params)
             if operation in {"info", "stat"}:
                 return self._exec_provider_storage_info(storage_params)
             if operation in {"wait", "wait_for", "wait_for_key"}:
                 return self._exec_provider_storage_wait(storage_params)
+            if operation in {"wait_count", "wait_for_count"}:
+                return self._exec_provider_storage_wait_count(storage_params)
             if operation == "mkdir":
                 return self._exec_provider_storage_mkdir(storage_params)
+            if operation in {"ensure_bucket", "ensure_container"}:
+                return self._exec_provider_storage_ensure_bucket(storage_params)
             if operation in {"delete", "remove", "rm"}:
                 return self._exec_provider_storage_delete(storage_params)
             if operation in {"rename", "move", "mv"}:
@@ -208,14 +214,20 @@ class ExecutorProviderDispatchMixin:
             return self._exec_provider_storage_list(params)
         if provider == "storage" and operation in {"exists", "check", "test"}:
             return self._exec_provider_storage_exists(params)
+        if provider == "storage" and operation in {"count", "count_entries"}:
+            return self._exec_provider_storage_count(params)
         if provider == "storage" and operation in {"info", "stat"}:
             return self._exec_provider_storage_info(params)
         if provider == "storage" and operation in {"read_text", "read", "cat"}:
             return self._exec_provider_storage_read_text(params)
         if provider == "storage" and operation == "wait":
             return self._exec_provider_storage_wait(params)
+        if provider == "storage" and operation in {"wait_count", "wait_for_count"}:
+            return self._exec_provider_storage_wait_count(params)
         if provider == "storage" and operation == "mkdir":
             return self._exec_provider_storage_mkdir(params)
+        if provider == "storage" and operation in {"ensure_bucket", "ensure_container"}:
+            return self._exec_provider_storage_ensure_bucket(params)
         if provider == "storage" and operation == "delete":
             return self._exec_provider_storage_delete(params)
         if provider == "storage" and operation == "rename":
@@ -269,6 +281,8 @@ class ExecutorProviderDispatchMixin:
             return self._exec_provider_empty(params)
         if provider in {"vast", "vasts"} and operation in {"start", "stop", "pick", "wait", "cost"}:
             return self._exec_provider_vast(operation, params)
+        if provider in {"runpod", "runpods"} and operation in {"start", "stop", "pick", "wait", "cost"}:
+            return self._exec_provider_runpod(operation, params)
         if provider == "git" and operation == "clone":
             return self._exec_provider_git_clone(params)
         if provider == "git" and operation == "pull":

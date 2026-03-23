@@ -63,6 +63,50 @@ class Host:
             kwargs["close"] = True
         return recipe._tmux_ref(name, host=self, **kwargs)
 
+    def _active_recipe(self):
+        from .base import get_active_recipe
+
+        recipe = get_active_recipe()
+        if recipe is None:
+            raise PythonRecipeError("no active Recipe is available for host lifecycle helpers")
+        return recipe
+
+    def _provider_namespace(self):
+        recipe = self._active_recipe()
+        spec = str(self.spec).strip().lower()
+        if spec.startswith("runpod:"):
+            return recipe.runpod
+        alias_key = str(self.name or self.spec).strip()
+        resolved = str(recipe.hosts.get(alias_key, "")).strip().lower()
+        if resolved.startswith("runpod:"):
+            return recipe.runpod
+        return recipe.vast
+
+    def _vast_target(self) -> str:
+        if self.name:
+            return str(self.name).strip()
+        return self.spec
+
+    def pick(self, **kwargs: Any) -> str:
+        """Pick or create a provider-managed instance for this host alias."""
+        return self._provider_namespace().pick(host=self, **kwargs)
+
+    def start(self, **kwargs: Any) -> str:
+        """Start the provider-managed instance bound to this host."""
+        return self._provider_namespace().start(self, **kwargs)
+
+    def stop(self, **kwargs: Any) -> str:
+        """Stop the provider-managed instance bound to this host."""
+        return self._provider_namespace().stop(self, **kwargs)
+
+    def wait_ready(self, **kwargs: Any) -> str:
+        """Wait for the provider-managed instance bound to this host to become ready."""
+        return self._provider_namespace().wait_ready(self, **kwargs)
+
+    def cost(self, **kwargs: Any) -> str:
+        """Report cost for the provider-managed instance bound to this host."""
+        return self._provider_namespace().cost(self, **kwargs)
+
 
 @dataclass(frozen=True)
 class Storage:
@@ -99,6 +143,21 @@ class VastHost(Host):
             raise PythonRecipeError("vast instance id cannot be empty")
         object.__setattr__(self, "instance_id", resolved)
         object.__setattr__(self, "spec", f"vast:{resolved}")
+        object.__setattr__(self, "name", name)
+
+
+@dataclass(frozen=True)
+class RunpodHost(Host):
+    """Typed RunPod host resource."""
+
+    pod_id: str = field(default="")
+
+    def __init__(self, pod_id: Any, *, name: Optional[str] = None):
+        resolved = str(pod_id).strip()
+        if not resolved:
+            raise PythonRecipeError("runpod pod id cannot be empty")
+        object.__setattr__(self, "pod_id", resolved)
+        object.__setattr__(self, "spec", f"runpod:{resolved}")
         object.__setattr__(self, "name", name)
 
 
@@ -156,6 +215,14 @@ class RecipeStep:
     @property
     def timeout(self) -> int:
         return self.step_model.timeout
+
+    @property
+    def capture_var(self) -> str:
+        return self.step_model.capture_var
+
+    @property
+    def capture_path(self) -> str:
+        return self.step_model.capture_path
 
     @property
     def source(self) -> str:

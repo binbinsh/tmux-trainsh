@@ -29,16 +29,22 @@ KEYRING_SERVICE = "tmux-trainsh"
 
 # Vast.ai API
 VAST_API_BASE = "https://console.vast.ai/api/v0"
+RUNPOD_REST_API_BASE = "https://rest.runpod.io/v1"
+RUNPOD_GRAPHQL_API_BASE = "https://api.runpod.io/graphql"
 
 # Default settings
 DEFAULT_SSH_KEY_PATH = "~/.ssh/id_rsa"
 DEFAULT_TRANSFER_METHOD = "rsync"
 DEFAULT_VAST_IMAGE = "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime"
 DEFAULT_VAST_DISK_GB = 50
+DEFAULT_RUNPOD_IMAGE = "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"
+DEFAULT_RUNPOD_CONTAINER_DISK_GB = 50
+DEFAULT_RUNPOD_VOLUME_GB = 20
 
 # Predefined secret keys
 class SecretKeys:
     VAST_API_KEY = "VAST_API_KEY"
+    RUNPOD_API_KEY = "RUNPOD_API_KEY"
     HF_TOKEN = "HF_TOKEN"
     OPENAI_API_KEY = "OPENAI_API_KEY"
     OPENROUTER_API_KEY = "OPENROUTER_API_KEY"

@@ -506,6 +506,10 @@ class TransferEngine:
             from .host_resolver import prepare_vast_host
 
             host = prepare_vast_host(host)
+        if host.type == HostType.RUNPOD and host.runpod_pod_id:
+            from .host_resolver import prepare_runpod_host
+
+            host = prepare_runpod_host(host)
 
         key_secret = str((host.env_vars or {}).get("ssh_key_secret", "")).strip()
         if key_secret:

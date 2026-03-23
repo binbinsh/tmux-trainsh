@@ -9,7 +9,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from .executor_runtime import WindowInfo
-from .executor_utils import _resolve_vast_host
+from .executor_utils import _resolve_runpod_host, _resolve_vast_host
 from .models import Host
 from .runtime_store import to_jsonable
 
@@ -113,6 +113,26 @@ class ExecutorSupportMixin:
         """Handle vast.cost via helper."""
         return self.vast_control.cmd_vast_cost(args)
 
+    def _cmd_runpod_start(self, args: List[str]) -> tuple[bool, str]:
+        """Handle runpod.start via helper."""
+        return self.runpod_control.cmd_runpod_start(args)
+
+    def _cmd_runpod_stop(self, args: List[str]) -> tuple[bool, str]:
+        """Handle runpod.stop via helper."""
+        return self.runpod_control.cmd_runpod_stop(args)
+
+    def _cmd_runpod_pick(self, args: List[str]) -> tuple[bool, str]:
+        """Handle runpod.pick via helper."""
+        return self.runpod_control.cmd_runpod_pick(args)
+
+    def _cmd_runpod_wait(self, args: List[str]) -> tuple[bool, str]:
+        """Handle runpod.wait via helper."""
+        return self.runpod_control.cmd_runpod_wait(args)
+
+    def _cmd_runpod_cost(self, args: List[str]) -> tuple[bool, str]:
+        """Handle runpod.cost via helper."""
+        return self.runpod_control.cmd_runpod_cost(args)
+
     def _cmd_sleep(self, args: List[str]) -> tuple[bool, str]:
         """Handle: sleep duration"""
         if not args:
@@ -174,6 +194,8 @@ class ExecutorSupportMixin:
 
         if host.startswith("vast:"):
             return _resolve_vast_host(host[5:])
+        if host.startswith("runpod:"):
+            return _resolve_runpod_host(host[7:])
         return host
 
     def _resolve_window(self, name: str) -> Optional[WindowInfo]:

@@ -67,16 +67,22 @@ def _joined(values: Iterable[str], *, sep: str = " | ", default: str = "-") -> s
     return sep.join(items) if items else default
 
 
+def _template_usage_fragment() -> str:
+    return _joined(_template_names(), sep="|", default="minimal")
+
+
 TOP_LEVEL_ENTRIES: tuple[HelpEntry, ...] = (
     HelpEntry("Workflow", "recipe", "Single namespace for recipe files, execution, status, logs, jobs, and schedules.", "train recipe <subcommand>"),
     HelpEntry("Workflow", "run", "Top-level file-oriented alias for immediate recipe execution.", "train run <recipe> [options]"),
     HelpEntry("Workflow", "exec", "Immediate execution from recipe name, path, inline code, or stdin.", "train exec <recipe-or-path> [options]"),
     HelpEntry("Infrastructure", "host", "Manage named SSH or Colab host definitions.", "train host <subcommand>"),
+    HelpEntry("Infrastructure", "vllm", "Manage remote vLLM services, tunnels, and local batch clients.", "train vllm <subcommand>"),
     HelpEntry("Infrastructure", "storage", "Manage named storage backends.", "train storage <subcommand>"),
     HelpEntry("Infrastructure", "transfer", "Copy files between local paths, hosts, and storage.", "train transfer <source> <destination>"),
     HelpEntry("Infrastructure", "secrets", "Manage API keys and other credentials.", "train secrets <subcommand>"),
     HelpEntry("Infrastructure", "config", "Inspect and update config.yaml and tmux settings.", "train config <subcommand>"),
     HelpEntry("Cloud", "vast", "Inspect and manage Vast.ai instances.", "train vast <subcommand>"),
+    HelpEntry("Cloud", "runpod", "Inspect and manage RunPod Pods.", "train runpod <subcommand>"),
     HelpEntry("Cloud", "colab", "Manage one-off Google Colab SSH tunnels.", "train colab <subcommand>"),
     HelpEntry("Cloud", "pricing", "Inspect exchange rates and cost estimates.", "train pricing <subcommand>"),
     HelpEntry("Utility", "update", "Check for or install newer tmux-trainsh releases.", "train update [--check]"),
@@ -103,8 +109,8 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         summary="Single entry point for recipe files, run/exec aliases, resume, status, logs, jobs, and schedules.",
         usage_lines=(
             "train recipe list",
-            "train recipe show <name>",
-            "train recipe new <name> [--template minimal]",
+            "train recipe show <name> [--source|--compiled]",
+            f"train recipe new <name> [--template {_template_usage_fragment()}]",
             "train recipe edit <name>",
             "train recipe remove <name>",
             "train recipe run <name> [options]",
@@ -120,7 +126,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                 "File Commands",
                 (
                     "list                List user recipes and bundled examples.",
-                    "show <name>         Load one recipe and print variables, hosts, and steps.",
+                    "show <name>         Print raw .pyrecipe source by default; use --compiled for normalized steps.",
                     "new <name>          Create a recipe file from a bundled template.",
                     "edit <name>         Open a recipe file in $EDITOR.",
                     "remove <name>       Delete a recipe file after confirmation.",
@@ -148,6 +154,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         examples=(
             "train recipe list",
             "train recipe show nanochat",
+            "train recipe show nanochat --compiled",
             "train recipe run nanochat",
             "train exec nanochat",
             "train recipe status --last",
@@ -182,6 +189,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train recipe run nanochat",
             "train run nanochat",
             "train recipe run nanochat --host gpu=vast:12345",
+            "train recipe run nanochat --host gpu=runpod:abc123xyz",
             "train recipe run nanochat --executor thread_pool --executor-workers 4 --callback console",
         ),
         see_also=("train exec", "train recipe resume", "train help"),
@@ -365,6 +373,8 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train host edit <name>",
             "train host ssh <name>",
             "train host run <name> -- <command>",
+            "train host tunnel <name> --local-port <port> --remote-port <port>",
+            "train host clone <name> <repo-url> [destination] [options]",
             "train host files <name> [path]",
             "train host check <name>",
             "train host remove <name>",
@@ -379,6 +389,8 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                     "show                Inspect one host definition.",
                     "ssh                 Open an SSH session using stored connection settings.",
                     "run                 Run one remote shell command with stored connection settings.",
+                    "tunnel              Open one local SSH port-forward tunnel to a host.",
+                    "clone               Clone one git repository on a host.",
                     "files               Browse remote files over SFTP.",
                     "check               Check whether a host is reachable.",
                     "remove              Delete a stored host definition or destroy a Vast.ai instance.",
@@ -388,8 +400,11 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         notes=(
             "Hosts are stored in ~/.config/tmux-trainsh/hosts.yaml.",
             "When VAST_API_KEY is configured, Vast.ai instances are auto-discovered here, including stopped or exited ones.",
+            "When RUNPOD_API_KEY is configured, RunPod Pods are auto-discovered here.",
             "Use `train vast` for provider-side instance lifecycle operations.",
+            "Use `train runpod` for RunPod Pod lifecycle operations.",
             "Use `train colab` for quick one-off Colab tunnel helpers; prefer `train host add` for reusable configs.",
+            "For GitHub private repos, `train host clone` can use `GITHUB_TOKEN` from `train secrets` without rewriting the URL.",
         ),
         examples=(
             "train host list",
@@ -397,9 +412,59 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train host show gpu-box",
             "train host ssh gpu-box",
             "train host run gpu-box -- nvidia-smi",
+            "train host tunnel gpu-box --local-port 18000 --remote-port 8000",
+            "train host clone gpu-box https://github.com/org/private-repo.git /srv/private-repo",
             "train host check gpu-box",
         ),
-        see_also=("train vast", "train colab", "train transfer"),
+        see_also=("train vast", "train runpod", "train colab", "train transfer"),
+    ),
+    CommandDoc(
+        key="vllm",
+        label="Manage vLLM Services",
+        group="Infrastructure",
+        command="train vllm",
+        summary="Start and inspect remote vLLM servers in tmux, then run local batch clients through an SSH tunnel.",
+        usage_lines=(
+            "train vllm list",
+            "train vllm serve <host> --model <model> [options]",
+            "train vllm status <name>",
+            "train vllm logs <name> [--lines N]",
+            "train vllm stop <name>",
+            "train vllm batch <service-or-base-url> --input <jsonl> --output <jsonl> [options]",
+        ),
+        blocks=(
+            DocBlock(
+                "Subcommands",
+                (
+                    "list                List managed vLLM services.",
+                    "serve               Start one vLLM OpenAI-compatible server in remote tmux.",
+                    "status              Inspect one managed service.",
+                    "logs                Read recent tmux pane output for one service.",
+                    "stop                Stop one managed service and remove its record.",
+                    "batch               Run local high-concurrency JSONL requests against a service or base URL.",
+                ),
+            ),
+        ),
+        options=(
+            "serve: --name NAME --port PORT --bind-host HOST --workdir DIR --session NAME",
+            "serve: --env KEY=VALUE (repeatable) --arg VALUE (repeatable) --ready-timeout 10m --no-wait --replace",
+            "batch: --endpoint chat|completions|embeddings --concurrency N --retries N --timeout S",
+            "batch: --resume --overwrite --direct --local-port N --api-key KEY",
+        ),
+        notes=(
+            "Managed service metadata lives under ~/.local/state/tmux-trainsh/vllm/.",
+            "By default, `train vllm batch <service>` opens a temporary SSH tunnel to the managed remote service.",
+            "Input JSONL accepts either full request objects or OpenAI-style `{custom_id, method, url, body}` objects.",
+            "For interactive local clients, use `train host tunnel <host> --local-port <p> --remote-port <p>` and point your SDK at http://127.0.0.1:<p>/v1.",
+        ),
+        examples=(
+            "train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8",
+            "train vllm status qwen2.5-32b-instruct",
+            "train vllm logs qwen2.5-32b-instruct --lines 120",
+            "train vllm batch qwen2.5-32b-instruct --input requests.jsonl --output results.jsonl --concurrency 256 --resume",
+            "train vllm batch http://127.0.0.1:18000/v1 --input requests.jsonl --output results.jsonl",
+        ),
+        see_also=("train host", "train host tunnel", "train recipe"),
     ),
     CommandDoc(
         key="storage",
@@ -504,6 +569,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                 "Common Keys",
                 (
                     "VAST_API_KEY",
+                    "RUNPOD_API_KEY",
                     "HF_TOKEN",
                     "OPENAI_API_KEY",
                     "OPENROUTER_API_KEY",
@@ -518,14 +584,17 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         notes=(
             "Secret values are prompted securely for `train secrets set`.",
             "Cloud bundle secrets are supported for providers such as R2 and B2.",
+            "`GITHUB_TOKEN` is used automatically for GitHub HTTPS clones from `train host clone`, `train vast clone`, `train runpod clone`, and `recipe.git_clone(..., auth='github_token')`.",
         ),
         examples=(
             "train secrets list",
             "train secrets set VAST_API_KEY",
+            "train secrets set RUNPOD_API_KEY",
+            "train secrets set GITHUB_TOKEN",
             "train secrets get OPENAI_API_KEY",
             "train secrets backend",
         ),
-        see_also=("train host", "train storage", "train vast"),
+        see_also=("train host", "train storage", "train vast", "train runpod"),
     ),
     CommandDoc(
         key="config",
@@ -599,6 +668,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train vast show <id>",
             "train vast ssh <id>",
             "train vast run <id> -- <command>",
+            "train vast clone <id> <repo-url> [destination] [options]",
             "train vast start <id>",
             "train vast stop <id>",
             "train vast reboot <id>",
@@ -615,6 +685,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                     "show                Inspect one instance in detail.",
                     "ssh                 Open SSH to a running instance.",
                     "run                 Run one remote shell command on an instance.",
+                    "clone               Clone one git repository on an instance.",
                     "start               Start an instance.",
                     "stop                Stop an instance.",
                     "reboot              Reboot an instance.",
@@ -631,9 +702,56 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train vast search",
             "train vast ssh 12345",
             "train vast run 12345 -- nvidia-smi",
+            "train vast clone 12345 https://github.com/org/private-repo.git /workspace/repo",
             "train vast remove 12345",
         ),
         see_also=("train host", "train pricing vast"),
+    ),
+    CommandDoc(
+        key="runpod",
+        label="Manage RunPod Pods",
+        group="Cloud",
+        command="train runpod",
+        summary="Manage RunPod Pods and current GPU type price hints.",
+        usage_lines=(
+            "train runpod list",
+            "train runpod show <id>",
+            "train runpod ssh <id>",
+            "train runpod run <id> -- <command>",
+            "train runpod clone <id> <repo-url> [destination] [options]",
+            "train runpod start <id>",
+            "train runpod stop <id>",
+            "train runpod reboot <id>",
+            "train runpod remove <id>",
+            "train runpod search [gpu_name=A100] [num_gpus=1] [min_gpu_ram=16] [max_dph=1.0]",
+        ),
+        blocks=(
+            DocBlock(
+                "Subcommands",
+                (
+                    "list                List your current RunPod Pods.",
+                    "show                Inspect one Pod in detail.",
+                    "ssh                 Open SSH to a running Pod.",
+                    "run                 Run one remote shell command on a Pod.",
+                    "clone               Clone one git repository on a Pod.",
+                    "start               Start or resume a Pod.",
+                    "stop                Stop a Pod.",
+                    "reboot              Restart a Pod.",
+                    "remove              Delete a Pod.",
+                    "search              Show current GPU type price hints and stock.",
+                ),
+            ),
+        ),
+        notes=("Requires RUNPOD_API_KEY. Configure it with `train secrets set RUNPOD_API_KEY`.",),
+        examples=(
+            "train runpod list",
+            "train runpod search gpu_name=A100 max_dph=2.0",
+            "train runpod ssh abc123xyz",
+            "train runpod run abc123xyz -- nvidia-smi",
+            "train runpod clone abc123xyz https://github.com/org/private-repo.git /workspace/repo",
+            "train runpod remove abc123xyz",
+        ),
+        see_also=("train host", "train run", "train exec"),
     ),
     CommandDoc(
         key="colab",
@@ -817,17 +935,27 @@ def render_top_level_help() -> str:
         "  recipe    Recipe lifecycle, authoring, execution, and scheduling.",
         "  run       Immediate execution from stored recipe files.",
         "  exec      Direct execution from name, path, inline code, or stdin.",
+        "  host      Named SSH or Colab host operations, including one-off remote clone.",
+        "  vllm      Managed vLLM servers, tunnels, and JSONL batch clients.",
+        "  vast      Vast.ai host lifecycle and one-off remote clone.",
+        "  runpod    RunPod Pod lifecycle and one-off remote clone.",
+        "  secrets   Stored credentials such as VAST_API_KEY, RUNPOD_API_KEY, and GITHUB_TOKEN.",
         "  resume    Resume the latest failed or interrupted run.",
         "  status    Choose between status, logs, jobs, and scheduler history.",
         "  schedule  Scheduled recipe execution and scheduler inspection.",
         "",
         "Start Here",
+        "  train secrets set GITHUB_TOKEN",
         "  train recipe show nanochat",
+        "  train recipe new demo --template remote-train",
         "  train exec nanochat",
         "  train recipe run nanochat",
         "  train recipe status --last",
         "  train host run gpu-box -- nvidia-smi",
+        "  train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8",
+        "  train host clone gpu-box https://github.com/org/private-repo.git /srv/private-repo",
         "  train vast run 12345 -- nvidia-smi",
+        "  train vast clone 12345 https://github.com/org/private-repo.git /workspace/repo",
         "",
         "Config Files",
         "  ~/.config/tmux-trainsh/",
@@ -861,52 +989,65 @@ def render_top_level_help() -> str:
             f"  Recipe files live under project-local paths such as ./recipes/*{RECIPE_FILE_EXTENSION}.",
             "",
             "Public import contract",
-            "  from trainsh import Recipe, Host, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local",
+            "  from trainsh import Recipe, Host, RunpodHost, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local",
             "",
             "Main authoring model",
             "  Recipe",
-            "  Host / VastHost / HostPath",
+            "  Host / VastHost / RunpodHost / HostPath",
             "  Storage / StoragePath",
             "  host.tmux(...)",
             "  local.tmux(...)",
             "",
-            "Minimal example",
+            "Recipe-first example",
             "```python",
-            "from trainsh import Host, Recipe",
+            "from trainsh import Host, Recipe, Storage",
             "",
-            "recipe = Recipe('nanochat', callbacks=['console', 'jsonl'])",
+            "recipe = Recipe('remote-train', callbacks=['console', 'jsonl'])",
             "gpu = Host('placeholder', name='gpu')",
+            "dataset = Storage('r2:dataset-bucket', name='dataset')",
+            "artifacts = Storage('r2:artifact-bucket', name='artifacts')",
             "",
-            "pick = recipe.vast.pick(",
-            "    host='gpu',",
-            "    gpu_name='H200',",
-            "    num_gpus=8,",
+            "gpu.pick(",
+            "    gpu_name='H100',",
+            "    num_gpus=1,",
             "    min_gpu_ram=80,",
             "    auto_select=True,",
             "    create_if_missing=True,",
             ")",
-            "recipe.vast.start()",
-            "recipe.vast.wait_ready(timeout='30m')",
+            "gpu.start()",
+            "gpu.wait_ready(timeout='30m')",
+            "recipe.storage_ensure_bucket(artifacts)",
+            "recipe.storage_wait_count(dataset, path='/train', min_count=364, timeout='30m')",
             "",
-            "with gpu.tmux('main', cwd='/workspace/nanochat') as tmux:",
+            "with gpu.tmux('train', cwd='/workspace/app', env={'PYTHONUNBUFFERED': '1'}) as tmux:",
             "    tmux.install_uv()",
-            "    tmux.run('bash runs/trainsh_nanochat.sh', background=True)",
-            "    tmux.file('/workspace/nanochat-data/trainsh_success.txt', timeout='10h')",
+            "    tmux.script('uv sync\\nuv run python -m app.train', background=True, tee='/workspace/app/output/train.log', done_file='/workspace/app/output/success.txt')",
+            "    tmux.file('/workspace/app/output/success.txt', timeout='10h')",
             "```",
             "",
             "Recipe-first workflow",
             "  Prefer Python recipe authoring over ad-hoc ssh, bash, or manual polling when the task is repeatable.",
-            "  For one-off remote commands, prefer `train host run <name> -- <command>` or `train vast run <id> -- <command>`.",
+            "  For one-off remote commands, prefer `train host run <name> -- <command>`, `train vast run <id> -- <command>`, or `train runpod run <id> -- <command>`.",
+            "  For one-off remote repository clones, prefer `train host clone <name> <repo-url>`, `train vast clone <id> <repo-url>`, or `train runpod clone <id> <repo-url>`.",
             "  Prefer `train run <recipe>` or `train exec <recipe>` for immediate execution.",
             "  Prefer `with local.tmux(...) as tmux:` or `with gpu.tmux(...) as tmux:` for straightforward tmux-backed flows.",
+            "  Skip explicit `id=` unless you need a stable external name; recipe calls already return StepHandle values for wiring.",
+            "  Reach for `tmux.script(...)` before creating ad-hoc remote runner files.",
+            "  Use `tee=` and `done_file=` on tmux execute steps when you need durable logs or background completion markers.",
+            "  Use `recipe.storage_ensure_bucket(...)` and `recipe.storage_wait_count(...)` for cloud setup and shard-count gates.",
             "  Let tmux blocks chain by file order by default.",
             "  Use explicit `depends_on` only for branch fallback, fan-in/join, or cross-block edges.",
             "  `depends_on=` may be a single handle or a list of handles.",
             "  Reuse a tmux context later by name with `gpu.tmux('work')` instead of carrying one Python variable across the whole file.",
-            "  Use `recipe.vast.pick(...)`, `recipe.vast.start(...)`, and `recipe.vast.wait_ready(...)` over manually assembling SSH endpoints.",
+            "  Use `gpu.pick(...)`, `gpu.start()`, `gpu.wait_ready()`, and `gpu.stop()` for provider-managed Vast or RunPod hosts.",
+            "  Provider lifecycle helpers require an explicit host or instance target; implicit current-instance behavior is unsupported.",
+            "  For GitHub private repositories, configure `GITHUB_TOKEN` in `train secrets` and keep using plain `https://github.com/...` URLs.",
+            "  In Python recipes, use `recipe.git_clone(..., auth='github_token')` when the clone should require token-backed GitHub HTTPS auth.",
             "",
             "Scheduling metadata",
-            "  recipe = Recipe('nightly', schedule='@every 15m', owner='ml', tags=['nightly', 'train'])",
+            "  recipe = Recipe('nightly', schedule='@every 15m')",
+            "  # owner: ml",
+            "  # tags: nightly, train",
             "",
             "Runtime Guarantees",
             f"  `{RECIPE_FILE_EXTENSION}` recipes run as: load -> dependency graph from `depends_on` -> executor run.",
@@ -977,20 +1118,27 @@ def render_readme_overview() -> str:
         "## Main Command Groups\n\n"
         "- `train recipe` for recipe files, execution, status, logs, jobs, and schedules\n"
         "- `train host` for named SSH or Colab hosts\n"
+        "- `train vllm` for managed remote vLLM servers and local batch clients\n"
         "- `train storage` for named storage backends\n"
         "- `train transfer` for local, host, and storage copies\n"
         "- `train secrets` for credentials\n"
         "- `train config` for config and tmux settings\n"
         "- `train vast` for Vast.ai instances\n"
+        "- `train runpod` for RunPod Pods\n"
         "- `train colab` for one-off Colab tunnels\n"
         "- `train pricing` for exchange rates and cost estimates\n\n"
         "## Quick Start\n\n"
         "```bash\n"
+        "train secrets set GITHUB_TOKEN\n"
         "train secrets set VAST_API_KEY\n"
+        "train secrets set RUNPOD_API_KEY\n"
         "train host add\n"
+        "train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8\n"
         "train storage add\n\n"
         "train recipe show nanochat\n"
+        "train recipe new demo --template remote-train\n"
         "train exec nanochat\n"
+        "train host clone gpu-box https://github.com/org/private-repo.git /srv/private-repo\n"
         "train recipe status --last\n"
         "```\n\n"
         "## Bundled Examples\n\n"
@@ -998,14 +1146,16 @@ def render_readme_overview() -> str:
         "## Recipe Authoring\n\n"
         "Public imports:\n\n"
         "```python\n"
-        "from trainsh import Recipe, Host, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local\n"
+        "from trainsh import Recipe, Host, RunpodHost, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local\n"
         "```\n\n"
         "Main authoring model:\n\n"
         "- `Recipe`\n"
-        "- `Host` / `VastHost` / `HostPath`\n"
+        "- `Host` / `VastHost` / `RunpodHost` / `HostPath`\n"
         "- `Storage` / `StoragePath`\n"
         "- `host.tmux(...)`\n"
-        "- `local.tmux(...)`\n\n"
+        "- `local.tmux(...)`\n"
+        "- `tmux.script(...)`\n"
+        "- `recipe.storage_wait_count(...)`\n\n"
         "## Runtime Guarantees\n\n"
         f"- `{RECIPE_FILE_EXTENSION}` recipes run as: load -> dependency graph from `depends_on` -> executor run\n"
         "- Airflow-like retry / timeout / callback / trigger-rule semantics remain supported\n"

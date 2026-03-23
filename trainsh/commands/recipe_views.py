@@ -297,6 +297,10 @@ def _show_job_details(job) -> None:
         print(f"\nVast.ai Instance: {job.vast_instance_id}")
         if job.vast_start_time:
             print(f"  Started: {job.vast_start_time}")
+    if getattr(job, "runpod_pod_id", None):
+        print(f"\nRunPod Pod: {job.runpod_pod_id}")
+        if getattr(job, "runpod_start_time", ""):
+            print(f"  Started: {job.runpod_start_time}")
 
     with ExecutionLogReader() as reader:
         recent_events = reader.list_recent_events(job.job_id, limit=6)

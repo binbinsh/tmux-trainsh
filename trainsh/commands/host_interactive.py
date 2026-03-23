@@ -731,6 +731,19 @@ def cmd_edit(args: List[str]) -> None:
         print(f"Updated Vast.ai label: {new_name}")
         print(f"Host alias: {new_alias}")
         return
+    elif host.type == HostType.RUNPOD and host.runpod_pod_id:
+        from ..services.runpod_api import get_runpod_client
+
+        new_alias = host_cmd._sanitize_runpod_host_name(new_name) or f"runpod-{host.runpod_pod_id}"
+        if new_alias != name and new_alias in hosts:
+            print(f"Host already exists: {new_alias}")
+            sys.exit(1)
+
+        client = get_runpod_client()
+        client.update_pod_name(str(host.runpod_pod_id), new_name)
+        print(f"Updated RunPod name: {new_name}")
+        print(f"Host alias: {new_alias}")
+        return
     else:
         print(f"Edit is not supported for host type: {host.type.value}")
         sys.exit(1)

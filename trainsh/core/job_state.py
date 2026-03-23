@@ -30,6 +30,8 @@ class JobState:
     bridge_session: str = ""
     vast_instance_id: Optional[str] = None
     vast_start_time: Optional[str] = None
+    runpod_pod_id: Optional[str] = None
+    runpod_start_time: Optional[str] = None
     created_at: str = ""
     updated_at: str = ""
     error: str = ""
@@ -67,6 +69,8 @@ class JobStateManager:
                 "bridge_session": state.bridge_session,
                 "vast_instance_id": state.vast_instance_id,
                 "vast_start_time": state.vast_start_time,
+                "runpod_pod_id": state.runpod_pod_id,
+                "runpod_start_time": state.runpod_start_time,
                 "error": state.error,
                 "created_at": state.created_at,
                 "updated_at": state.updated_at,
@@ -93,6 +97,8 @@ class JobStateManager:
             bridge_session=str(row.get("bridge_session", "") or ""),
             vast_instance_id=row.get("vast_instance_id"),
             vast_start_time=row.get("vast_start_time"),
+            runpod_pod_id=row.get("runpod_pod_id"),
+            runpod_start_time=row.get("runpod_start_time"),
             created_at=str(row.get("created_at", "")),
             updated_at=str(row.get("updated_at", "")),
             error=str(row.get("error", "") or ""),

@@ -90,6 +90,10 @@ class SSHClient:
             from .host_resolver import prepare_vast_host
 
             host = prepare_vast_host(host)
+        if host.type == HostType.RUNPOD and host.runpod_pod_id:
+            from .host_resolver import prepare_runpod_host
+
+            host = prepare_runpod_host(host)
 
         env_vars = host.env_vars or {}
         key_path = host.ssh_key_path
@@ -399,6 +403,21 @@ class SSHClient:
         Returns:
             SSHResult with exit code and output
         """
+        return self.run_with_input(
+            command,
+            "",
+            timeout=timeout,
+            capture_output=capture_output,
+        )
+
+    def run_with_input(
+        self,
+        command: str,
+        stdin_text: str,
+        timeout: Optional[int] = None,
+        capture_output: bool = True,
+    ) -> SSHResult:
+        """Execute a command on the remote host with optional stdin content."""
         if self._requires_sshpass() and not self._can_use_sshpass():
             return SSHResult(exit_code=-1, stdout="", stderr=self._sshpass_error())
         last_result: Optional[SSHResult] = None
@@ -408,6 +427,7 @@ class SSHClient:
             try:
                 result = subprocess.run(
                     args,
+                    input=stdin_text if stdin_text else None,
                     capture_output=capture_output,
                     text=True,
                     timeout=timeout,

@@ -189,3 +189,79 @@ class ExecutorProviderNotifyMixin:
         if op == "wait":
             return self._cmd_vast_wait(args)
         return self._cmd_vast_cost(args)
+
+    def _exec_provider_runpod(self, operation: str, params: Dict[str, Any]) -> tuple[bool, str]:
+        """Execute runpod provider operations."""
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            return False, "Provider runpod params must be an object"
+
+        args: List[str] = []
+        op = operation.strip().lower()
+
+        if "args" in params and isinstance(params.get("args"), (list, tuple)):
+            args.extend([str(item).strip() for item in params["args"] if str(item).strip()])
+        else:
+            direct_id = self._interpolate(str(params.get("pod_id", params.get("id", "")))).strip()
+            if direct_id:
+                args.append(direct_id)
+
+        if op == "pick":
+            host_name = self._interpolate(str(params.get("host", params.get("host_name", "")))).strip()
+            if host_name.startswith("@"):
+                host_name = host_name[1:]
+            if host_name:
+                args.append(host_name)
+
+        if op == "wait":
+            if direct_timeout := str(params.get("timeout", "")).strip():
+                args.append(f"timeout={self._interpolate(direct_timeout)}")
+            if direct_poll := str(params.get("poll", params.get("poll_interval", ""))).strip():
+                args.append(f"poll={self._interpolate(direct_poll)}")
+            if "stop_on_fail" in params:
+                stop_on_fail = self._interpolate(str(params.get("stop_on_fail")))
+                args.append(f"stop_on_fail={stop_on_fail}")
+
+        if op == "pick":
+            mapping = {
+                "gpu_name": "gpu_name",
+                "gpu": "gpu_name",
+                "num_gpus": "num_gpus",
+                "gpus": "num_gpus",
+                "min_gpu_ram": "min_gpu_ram",
+                "min_vram_gb": "min_gpu_ram",
+                "max_dph": "max_dph",
+                "max_price": "max_dph",
+                "limit": "limit",
+                "skip_if_set": "skip_if_set",
+                "auto_select": "auto_select",
+                "create_if_missing": "create_if_missing",
+                "image": "image",
+                "disk_gb": "disk_gb",
+                "disk": "disk_gb",
+                "volume_gb": "volume_gb",
+                "label": "label",
+                "cloud_type": "cloud_type",
+            }
+            for key, param_key in mapping.items():
+                value = params.get(key)
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if not text:
+                    continue
+                args.append(f"{param_key}={self._interpolate(text)}")
+
+        if op not in {"start", "stop", "pick", "wait", "cost"}:
+            return False, f"Unsupported runpod operation: {operation!r}"
+
+        if op == "start":
+            return self._cmd_runpod_start(args)
+        if op == "stop":
+            return self._cmd_runpod_stop(args)
+        if op == "pick":
+            return self._cmd_runpod_pick(args)
+        if op == "wait":
+            return self._cmd_runpod_wait(args)
+        return self._cmd_runpod_cost(args)

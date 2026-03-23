@@ -1,5 +1,5 @@
 # tmux-trainsh executor utility functions
-# Shared parsing, SSH args, and Vast host resolution helpers.
+# Shared parsing, SSH args, and managed host resolution helpers.
 
 import shlex
 import subprocess
@@ -261,3 +261,22 @@ def _resolve_vast_host(instance_id: str) -> str:
         return f"vast-{instance_id}"
     except Exception:
         return f"vast-{instance_id}"
+
+
+def _resolve_runpod_host(pod_id: str) -> str:
+    """Resolve RunPod Pod ID to SSH host spec."""
+    from ..services.runpod_api import get_runpod_client
+    from ..services.runpod_connection import runpod_ssh_targets, ssh_target_to_spec
+
+    try:
+        client = get_runpod_client()
+        pod = client.get_pod(str(pod_id))
+        targets = runpod_ssh_targets(pod)
+        for target in targets:
+            if _test_ssh_connection(target["hostname"], int(target["port"])):
+                return ssh_target_to_spec(target)
+        if targets:
+            return ssh_target_to_spec(targets[0])
+        return f"runpod-{pod_id}"
+    except Exception:
+        return f"runpod-{pod_id}"

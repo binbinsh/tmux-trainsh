@@ -16,6 +16,7 @@ class HostType(Enum):
     """Type of host connection."""
     SSH = "ssh"
     VASTAI = "vastai"
+    RUNPOD = "runpod"
     COLAB = "colab"
     LOCAL = "local"
 
@@ -91,6 +92,12 @@ class Host:
     vast_template_id: Optional[str] = None
     vast_template_name: Optional[str] = None
     vast_status: Optional[str] = None
+
+    # RunPod specific fields
+    runpod_pod_id: Optional[str] = None
+    runpod_template_id: Optional[str] = None
+    runpod_status: Optional[str] = None
+
     gpu_count: Optional[int] = None
     disk_gb: Optional[int] = None
     hourly_rate: Optional[float] = None
@@ -104,6 +111,8 @@ class Host:
         """Get display name for the host."""
         if self.type == HostType.VASTAI and self.vast_instance_id:
             return f"Vast.ai #{self.vast_instance_id}"
+        if self.type == HostType.RUNPOD and self.runpod_pod_id:
+            return f"RunPod #{self.runpod_pod_id}"
         if self.name:
             return self.name
         return f"{self.username}@{self.hostname}" if self.username else self.hostname
@@ -135,6 +144,9 @@ class Host:
             "vast_template_id": self.vast_template_id,
             "vast_template_name": self.vast_template_name,
             "vast_status": self.vast_status,
+            "runpod_pod_id": self.runpod_pod_id,
+            "runpod_template_id": self.runpod_template_id,
+            "runpod_status": self.runpod_status,
             "gpu_count": self.gpu_count,
             "disk_gb": self.disk_gb,
             "hourly_rate": self.hourly_rate,
@@ -161,6 +173,9 @@ class Host:
             vast_template_id=data.get("vast_template_id"),
             vast_template_name=data.get("vast_template_name"),
             vast_status=data.get("vast_status"),
+            runpod_pod_id=data.get("runpod_pod_id"),
+            runpod_template_id=data.get("runpod_template_id"),
+            runpod_status=data.get("runpod_status"),
             gpu_count=data.get("gpu_count"),
             disk_gb=data.get("disk_gb"),
             hourly_rate=data.get("hourly_rate"),
@@ -675,3 +690,74 @@ class VastOffer:
         if self.dph_total:
             return f"${self.dph_total:.3f}/hr"
         return "N/A"
+
+
+@dataclass
+class RunpodPod:
+    """Represents one RunPod Pod."""
+
+    id: str
+    desired_status: Optional[str] = None
+    name: Optional[str] = None
+    image_name: Optional[str] = None
+    public_ip: Optional[str] = None
+    port_mappings: Optional[Dict[str, Any]] = None
+    ports: Optional[List[str]] = None
+    gpu_type_id: Optional[str] = None
+    gpu_display_name: Optional[str] = None
+    gpu_count: Optional[int] = None
+    gpu_memory_gb: Optional[float] = None
+    cost_per_hr: Optional[float] = None
+    cloud_type: Optional[str] = None
+    container_disk_in_gb: Optional[int] = None
+    volume_in_gb: Optional[int] = None
+    template_id: Optional[str] = None
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the Pod is running."""
+        return (self.desired_status or "").upper() == "RUNNING"
+
+    @property
+    def display_name(self) -> str:
+        """Get display name for the Pod."""
+        return f"RunPod #{self.id}"
+
+    @property
+    def hourly_rate(self) -> float:
+        """Get hourly rate."""
+        return float(self.cost_per_hr or 0.0)
+
+
+@dataclass
+class RunpodGPUType:
+    """Represents one RunPod GPU type and current price hints."""
+
+    id: str
+    display_name: Optional[str] = None
+    memory_gb: Optional[float] = None
+    secure_price: Optional[float] = None
+    community_price: Optional[float] = None
+    secure_spot_price: Optional[float] = None
+    min_bid_price: Optional[float] = None
+    uninterruptable_price: Optional[float] = None
+    min_vcpu: Optional[int] = None
+    min_memory_gb: Optional[float] = None
+    stock_status: Optional[str] = None
+    available_gpu_counts: Optional[List[int]] = None
+
+    @property
+    def best_hourly_price(self) -> float:
+        """Best known hourly price hint."""
+        candidates = [
+            value
+            for value in (
+                self.uninterruptable_price,
+                self.community_price,
+                self.secure_price,
+            )
+            if value not in (None, "")
+        ]
+        if not candidates:
+            return 0.0
+        return float(min(candidates))

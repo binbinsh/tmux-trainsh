@@ -520,6 +520,7 @@ class KeyringBackend(SecretsBackend):
         from ..constants import SecretKeys
         predefined = [
             SecretKeys.VAST_API_KEY,
+            SecretKeys.RUNPOD_API_KEY,
             SecretKeys.HF_TOKEN,
             SecretKeys.OPENAI_API_KEY,
             SecretKeys.OPENROUTER_API_KEY,
@@ -882,6 +883,7 @@ class SecretsManager:
     def list_keys(self) -> List[str]:
         predefined = [
             SecretKeys.VAST_API_KEY,
+            SecretKeys.RUNPOD_API_KEY,
             SecretKeys.HF_TOKEN,
             SecretKeys.OPENAI_API_KEY,
             SecretKeys.OPENROUTER_API_KEY,
@@ -945,6 +947,12 @@ class SecretsManager:
 
     def set_vast_api_key(self, key: str) -> None:
         self.set(SecretKeys.VAST_API_KEY, key)
+
+    def get_runpod_api_key(self) -> Optional[str]:
+        return self.get(SecretKeys.RUNPOD_API_KEY)
+
+    def set_runpod_api_key(self, key: str) -> None:
+        self.set(SecretKeys.RUNPOD_API_KEY, key)
 
     def get_hf_token(self) -> Optional[str]:
         return self.get(SecretKeys.HF_TOKEN)
