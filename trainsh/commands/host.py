@@ -16,6 +16,7 @@ from .remote_run import (
     run_remote_command,
     run_remote_git_clone,
 )
+from .host_flash_attn import parse_host_flash_attn_args, run_host_flash_attn
 from ..services.tunnel import TunnelSpec, build_local_tunnel_args, start_local_tunnel
 from .host_interactive import (
     _normalize_connection_candidates,
@@ -38,6 +39,7 @@ SUBCOMMAND_SPECS = (
     SubcommandSpec("clone", "Clone one git repository on a host using stored connection settings."),
     SubcommandSpec("files", "Browse remote files over SFTP."),
     SubcommandSpec("check", "Check whether a host is reachable."),
+    SubcommandSpec("flash-attn", "Probe flash-attn compatibility and optionally install it on one host."),
     SubcommandSpec("remove", "Delete a stored host definition or destroy a Vast.ai instance."),
 )
 
@@ -543,6 +545,21 @@ def cmd_clone(args: List[str]) -> None:
     run_remote_git_clone(hosts[name], request, label=name)
 
 
+def cmd_flash_attn(args: List[str]) -> None:
+    """Probe or install FlashAttention on a stored host."""
+    name, options = parse_host_flash_attn_args(args)
+    if options.show_matrix:
+        run_host_flash_attn(None, label="", options=options)
+        return
+    hosts = load_hosts()
+
+    if name not in hosts:
+        print(f"Host not found: {name}")
+        sys.exit(1)
+
+    run_host_flash_attn(hosts[name], label=name, options=options)
+
+
 def cmd_rm(args: List[str]) -> None:
     """Remove a host."""
     if not args:
@@ -614,6 +631,7 @@ def main(args: List[str]) -> Optional[str]:
         "clone": cmd_clone,
         "files": cmd_browse,
         "check": cmd_test,
+        "flash-attn": cmd_flash_attn,
         "remove": cmd_rm,
     }
 

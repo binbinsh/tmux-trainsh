@@ -2,9 +2,9 @@
 
 ## Versioning
 
-- Project versions use packaging-normalized date-based versions.
+- Project versions use `1.yyyy.commit_count`.
 - Keep `pyproject.toml`, CLI output, and docs aligned to the same normalized string.
-- Example: `26.313.2342`
+- Example: `1.2026.114`
 
 ## Pyrecipe Rules
 

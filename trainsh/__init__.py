@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .pyrecipe import Host, HostPath, Recipe, RunpodHost, Storage, StoragePath, VastHost, load_python_recipe, local, official_uv_install_command
+from .services.flash_attn_support import flash_attn_install_script
 
 
 def _read_local_version() -> str:
@@ -84,6 +85,7 @@ __all__ = [
     "__build_number__",
     "__display_version__",
     "__version__",
+    "flash_attn_install_script",
     "load_python_recipe",
     "local",
     "main",
