@@ -2,9 +2,10 @@
 
 ## Versioning
 
-- Project versions use `1.yyyy.commit_count`.
+- Project versions use `major.yyyy.commit-count`.
 - Keep `pyproject.toml`, CLI output, and docs aligned to the same normalized string.
-- Example: `1.2026.114`
+- When preparing a commit, set the version to the next git commit count so the committed tree matches `git rev-list --count HEAD`.
+- Example: `1.2026.115`
 
 ## Pyrecipe Rules
 

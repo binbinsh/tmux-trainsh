@@ -19,6 +19,7 @@ from .namespaces import (
     NotifyNamespace,
     RunpodNamespace,
     VastNamespace,
+    VllmNamespace,
 )
 from .provider_steps import RecipeProviderMixin
 from .provider_misc_steps import RecipeProviderMiscMixin
@@ -66,6 +67,7 @@ class RecipeSpecCore:
         self.storages: Dict[str, Any] = {}
         self.vast = VastNamespace(self)
         self.runpod = RunpodNamespace(self)
+        self.vllm = VllmNamespace(self)
         self.notify = NotifyNamespace(self)
         if "".join(ch for ch in str(executor).lower() if ch.isalnum()) in {
             "k8s",

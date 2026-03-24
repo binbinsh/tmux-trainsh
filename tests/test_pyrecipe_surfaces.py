@@ -1,8 +1,8 @@
 import unittest
 
 from trainsh import Recipe, VastHost
-from trainsh.pyrecipe.models import Host, Storage
-from trainsh.pyrecipe.namespaces import NotifyNamespace, VastNamespace
+from trainsh.pyrecipe.models import Host, Storage, PythonRecipeError
+from trainsh.pyrecipe.namespaces import NotifyNamespace, VastNamespace, VllmNamespace
 from trainsh.pyrecipe.references import AliasRef, StepHandle, wrap_step_handle
 
 
@@ -77,6 +77,9 @@ class PyrecipeMoreSurfacesTests(unittest.TestCase):
         recipe.storage_exists(artifacts, path="/exists", id="exists")
         recipe.storage_test(artifacts, path="/test", id="test")
         recipe.storage_wait(artifacts, path="/wait", exists=False, timeout="10s", poll_interval="2s", id="wait")
+        recipe.storage_count(artifacts, path="/count", recursive=False, include_dirs=True, capture_var="COUNT", id="count")
+        recipe.storage_wait_count(artifacts, path="/wait-count", min_count=3, timeout="10s", poll_interval="2s", capture_var="COUNT_NOW", id="wait_count")
+        recipe.storage_ensure_bucket(artifacts, id="ensure_bucket")
         recipe.storage_info(artifacts, path="/info", id="info")
         recipe.storage_read_text(artifacts, path="/readme", max_chars=99, id="read")
         recipe.storage_list(artifacts, path="/list", recursive=True, id="list")
@@ -94,6 +97,11 @@ class PyrecipeMoreSurfacesTests(unittest.TestCase):
         self.assertEqual(steps["exists"].params["path"], "/exists")
         self.assertEqual(steps["test"].operation, "exists")
         self.assertFalse(steps["wait"].params["exists"])
+        self.assertEqual(steps["count"].params["capture_var"], "COUNT")
+        self.assertTrue(steps["count"].params["include_dirs"])
+        self.assertEqual(steps["wait_count"].params["min_count"], 3)
+        self.assertEqual(steps["wait_count"].params["capture_var"], "COUNT_NOW")
+        self.assertEqual(steps["ensure_bucket"].operation, "ensure_bucket")
         self.assertEqual(steps["read"].params["max_chars"], 99)
         self.assertTrue(steps["list"].params["recursive"])
         self.assertTrue(steps["delete"].params["recursive"])
@@ -106,7 +114,9 @@ class PyrecipeMoreSurfacesTests(unittest.TestCase):
         recipe = Recipe("namespace-surface")
         vast = VastNamespace(recipe)
         notify = NotifyNamespace(recipe)
+        vllm = VllmNamespace(recipe)
         gpu = VastHost("7")
+        alias_gpu = Host("placeholder", name="gpu_alias")
         plain_host = Host("vast:9", name="gpu")
 
         self.assertEqual(vast.start(gpu, id="start"), "start")
@@ -114,6 +124,11 @@ class PyrecipeMoreSurfacesTests(unittest.TestCase):
         self.assertEqual(vast.wait_ready("11", id="wait"), "wait")
         self.assertEqual(vast.pick(host=Host("ssh://gpu", name="gpu"), id="pick"), "pick")
         self.assertEqual(vast.cost("7", id="cost"), "cost")
+        self.assertEqual(alias_gpu.pick(gpu_name="A100", num_gpus=1, id="pick_alias"), "pick_alias")
+        self.assertEqual(alias_gpu.start(id="start_alias"), "start_alias")
+        self.assertEqual(alias_gpu.wait_ready(id="wait_alias"), "wait_alias")
+        self.assertEqual(alias_gpu.cost(id="cost_alias"), "cost_alias")
+        self.assertEqual(alias_gpu.stop(id="stop_alias"), "stop_alias")
 
         self.assertEqual(notify("hello", id="notice"), "notice")
         self.assertEqual(notify.notice("notice-2", id="notice2"), "notice2")
@@ -122,10 +137,70 @@ class PyrecipeMoreSurfacesTests(unittest.TestCase):
         self.assertEqual(notify.telegram("tg", webhook="https://tg", id="telegram"), "telegram")
         self.assertEqual(notify.discord("dc", webhook="https://dc", id="discord"), "discord")
         self.assertEqual(notify.webhook("hook", webhook="https://hook", id="webhook"), "webhook")
+        session = vllm.serve(
+            alias_gpu,
+            "Qwen/Test",
+            name="qwen",
+            tp=8,
+            gpu_memory_utilization=0.92,
+            id="open_vllm",
+            wait_id="wait_vllm",
+        )
+        session2 = alias_gpu.vllm(
+            "Qwen/Test",
+            name="q1",
+            port=8001,
+            gpus=1,
+            wait=False,
+            id="open_vllm_2",
+        )
+        session3 = alias_gpu.vllm(
+            "Qwen/Test",
+            name="q2",
+            port=8002,
+            gpus=[2, 3],
+            wait=False,
+            id="open_vllm_3",
+        )
 
         alias = AliasRef(" gpu ", kind="host")
         self.assertEqual(str(alias), "gpu")
         self.assertEqual(alias.kind, "host")
+
+        steps = {step.id: step for step in recipe.steps}
+        self.assertEqual(steps["pick_alias"].params["host"], "gpu_alias")
+        self.assertEqual(steps["start_alias"].params["instance_id"], "gpu_alias")
+        self.assertEqual(steps["wait_alias"].params["instance_id"], "gpu_alias")
+        self.assertEqual(steps["cost_alias"].params["instance_id"], "gpu_alias")
+        self.assertEqual(steps["stop_alias"].params["instance_id"], "gpu_alias")
+        self.assertEqual(steps["open_vllm"].command, "tmux.open")
+        self.assertTrue(any("--tensor-parallel-size=8" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertTrue(any("--gpu-memory-utilization=0.92" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertTrue(any("--gpu-memory-utilization=0.95" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertTrue(any("--max-num-batched-tokens=16384" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertTrue(any("--max-num-seqs=64" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertEqual(steps["wait_vllm"].params["host_name"], "127.0.0.1")
+        self.assertEqual(session.name, "qwen")
+        self.assertIn("wait_vllm", session.default_depends_on)
+        self.assertEqual(steps["open_vllm_2"].command, "tmux.open")
+        self.assertTrue(any("CUDA_VISIBLE_DEVICES='1'" in getattr(step, "commands", "") or "CUDA_VISIBLE_DEVICES=1" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertEqual(session2.name, "q1")
+        self.assertTrue(any("CUDA_VISIBLE_DEVICES='2,3'" in getattr(step, "commands", "") or "CUDA_VISIBLE_DEVICES=2,3" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertTrue(any("--tensor-parallel-size=2" in getattr(step, "commands", "") for step in recipe.steps))
+        self.assertEqual(session3.name, "q2")
+
+        with self.assertRaises(PythonRecipeError):
+            vast.start()
+        with self.assertRaises(PythonRecipeError):
+            vast.stop()
+        with self.assertRaises(PythonRecipeError):
+            vast.wait_ready()
+        with self.assertRaises(PythonRecipeError):
+            vast.cost()
+        with self.assertRaises(PythonRecipeError):
+            vllm.serve(alias_gpu, "")
+        with self.assertRaises(PythonRecipeError):
+            alias_gpu.vllm("Qwen/Test", gpus=-1)
 
         first = recipe.empty(id="first")
         next_step = recipe.empty(id="next")

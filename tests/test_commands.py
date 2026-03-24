@@ -57,7 +57,8 @@ COMMANDS = [
     ("recipe --help", "Use `train help` or `train --help`."),
     ("recipe list", "Bundled examples"),
     ("recipe show", "Usage"),
-    ("recipe show hello", "hello-world"),
+    ("recipe show hello", "from trainsh import Recipe, local"),
+    ("recipe show hello --compiled", "Steps ("),
     ("recipe new", "Usage"),
     ("recipe edit", "Usage"),
     ("recipe remove", "Usage"),
@@ -77,8 +78,12 @@ COMMANDS = [
     ("host show", "Usage"),
     ("host ssh", "Usage"),
     ("host run", "Usage"),
+    ("host tunnel", "Usage"),
+    ("host clone", "Usage"),
     ("host files", "Usage"),
     ("host check", "Usage"),
+    ("host flash-attn", "Usage"),
+    ("host flash-attn --matrix", "Compatibility Matrix"),
     ("host remove", "Usage"),
     ("host connect", "Unknown subcommand"),
     ("host browse", "Unknown subcommand"),
@@ -134,6 +139,7 @@ COMMANDS = [
     ("vast show", "Usage"),
     ("vast ssh", "Usage"),
     ("vast run", "Usage"),
+    ("vast clone", "Usage"),
     ("vast start", "Usage"),
     ("vast stop", "Usage"),
     ("vast remove", "Usage"),
@@ -152,6 +158,15 @@ COMMANDS = [
     ("pricing colab", "Colab Subscription"),
     ("pricing vast", "Vast.ai"),
     ("pricing convert 10 USD CNY", "="),
+
+    # vLLM
+    ("vllm --help", "Use `train help` or `train --help`."),
+    ("vllm list", "vllM services"),
+    ("vllm serve", "Usage"),
+    ("vllm status", "vllm services"),
+    ("vllm logs", "Usage"),
+    ("vllm stop", "Usage"),
+    ("vllm batch", "Usage"),
 ]
 
 

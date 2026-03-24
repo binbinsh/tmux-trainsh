@@ -297,6 +297,22 @@ class HostCommandDeepTests(unittest.TestCase):
                     out, code = capture_output(host.cmd_add, [])
                 self.assertIsNone(code)
 
+    def test_cmd_tunnel_supports_background_mode(self):
+        target = self._ssh_host()
+        fake_process = SimpleNamespace(pid=12345)
+        with patch("trainsh.commands.host.load_hosts", return_value={"gpu-box": target}), patch(
+            "trainsh.commands.host.start_local_tunnel",
+            return_value=fake_process,
+        ) as mocked_start:
+            out, code = capture_output(
+                host.cmd_tunnel,
+                ["gpu-box", "--local-port", "18000", "--remote-port", "8000", "--background"],
+            )
+
+        self.assertIsNone(code)
+        self.assertIn("Tunnel ready in background", out)
+        mocked_start.assert_called_once()
+
     def test_cmd_edit_ssh_branch_updates_and_reconfigures_candidates(self):
         with patched_host_store():
             host.save_hosts({"gpu-box": self._ssh_host()})

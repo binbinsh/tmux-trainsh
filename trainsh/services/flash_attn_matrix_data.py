@@ -38,7 +38,7 @@ FLASH_ATTN_COMPAT_RULES: tuple[FlashAttnCompatRule, ...] = (
         package_name="flash-attn-4",
         strategy="fa4",
         target="flash-attn-4",
-        default_install_spec="flash-attn-4",
+        default_install_spec="flash-attn-4==4.0.0b5",
     ),
     FlashAttnCompatRule(
         rule_id="cuda_default_fa2",

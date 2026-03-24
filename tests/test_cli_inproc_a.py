@@ -74,6 +74,13 @@ class MainRoutingTests(CaptureMixin, unittest.TestCase):
         recipe_main.assert_called_once_with(["exec", "demo", "--help"])
         self.assertEqual(out, "")
 
+    def test_main_routes_vllm_command_group(self):
+        with patch("trainsh.commands.vllm.main") as vllm_main:
+            out, _err, code = self.capture(train_main, ["train", "vllm", "list"])
+        self.assertIsNone(code)
+        vllm_main.assert_called_once_with(["list"])
+        self.assertEqual(out, "")
+
 
 class HelpCatalogTests(unittest.TestCase):
     def test_rendered_help_includes_groups_and_topics(self):

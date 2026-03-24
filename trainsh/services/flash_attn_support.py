@@ -63,6 +63,9 @@ class FlashAttnProbe:
     torch_cxx11_abi: str = ""
     torch_error: str = ""
     flash_attn_version: str = ""
+    flash_attn_package_name: str = ""
+    vllm_version: str = ""
+    vllm_flash_attn_api: str = ""
     gpu_names: tuple[str, ...] = field(default_factory=tuple)
     gpu_capabilities: tuple[str, ...] = field(default_factory=tuple)
     gpu_families: tuple[str, ...] = field(default_factory=tuple)
@@ -124,6 +127,9 @@ class FlashAttnProbe:
             torch_cxx11_abi=str(data.get("torch_cxx11_abi", "")).strip(),
             torch_error=str(data.get("torch_error", "")).strip(),
             flash_attn_version=str(data.get("flash_attn_version", "")).strip(),
+            flash_attn_package_name=str(data.get("flash_attn_package_name", "")).strip(),
+            vllm_version=str(data.get("vllm_version", "")).strip(),
+            vllm_flash_attn_api=str(data.get("vllm_flash_attn_api", "")).strip(),
             gpu_names=gpu_names,
             gpu_capabilities=gpu_capabilities,
             gpu_families=_string_list(data.get("gpu_families")) or infer_gpu_families(gpu_capabilities, gpu_names),
@@ -179,11 +185,13 @@ def build_flash_attn_probe_command(python_bin: str = "") -> str:
           FOUND=1
           TRAINSH_FLASH_ATTN_PY="$CANDIDATE" "$CANDIDATE" - <<'PY'
         import json
+        import importlib.metadata
         import os
         import platform
         import re
         import subprocess
         import sys
+        from pathlib import Path
 
         MARKER = {json.dumps(_PROBE_MARKER)}
 
@@ -230,6 +238,9 @@ def build_flash_attn_probe_command(python_bin: str = "") -> str:
         torch_cxx11_abi = ""
         torch_error = ""
         flash_attn_version = ""
+        flash_attn_package_name = ""
+        vllm_version = ""
+        vllm_flash_attn_api = ""
 
         try:
             import torch  # type: ignore
@@ -272,11 +283,44 @@ def build_flash_attn_probe_command(python_bin: str = "") -> str:
                 )
 
         try:
-            import flash_attn  # type: ignore
-
-            flash_attn_version = str(getattr(flash_attn, "__version__", "") or "")
+            flash_attn_version = str(importlib.metadata.version("flash-attn-4"))
+            flash_attn_package_name = "flash-attn-4"
         except Exception:
-            flash_attn_version = ""
+            try:
+                flash_attn_version = str(importlib.metadata.version("flash-attn"))
+                flash_attn_package_name = "flash-attn"
+            except Exception:
+                try:
+                    import flash_attn  # type: ignore
+
+                    flash_attn_version = str(getattr(flash_attn, "__version__", "") or "")
+                    flash_attn_package_name = "flash-attn"
+                except Exception:
+                    flash_attn_version = ""
+                    flash_attn_package_name = ""
+
+        try:
+            vllm_version = str(importlib.metadata.version("vllm"))
+        except Exception:
+            vllm_version = ""
+
+        try:
+            import vllm  # type: ignore
+
+            vllm_root = Path(getattr(vllm, "__file__", "")).resolve().parent
+            rotary_path = vllm_root / "model_executor" / "layers" / "rotary_embedding" / "common.py"
+            if rotary_path.exists():
+                rotary_text = rotary_path.read_text(encoding="utf-8", errors="replace")
+                if "flash_attn.ops" in rotary_text:
+                    vllm_flash_attn_api = "fa2"
+                elif "flash_attn_interface" in rotary_text:
+                    vllm_flash_attn_api = "fa4"
+            if not vllm_flash_attn_api:
+                fa4_dist = bool(flash_attn_package_name == "flash-attn-4")
+                if fa4_dist:
+                    vllm_flash_attn_api = "unknown"
+        except Exception:
+            vllm_flash_attn_api = ""
 
         payload = {{
             "python_executable": requested_python or sys.executable,
@@ -298,6 +342,9 @@ def build_flash_attn_probe_command(python_bin: str = "") -> str:
             "torch_cxx11_abi": torch_cxx11_abi,
             "torch_error": torch_error,
             "flash_attn_version": flash_attn_version,
+            "flash_attn_package_name": flash_attn_package_name,
+            "vllm_version": vllm_version,
+            "vllm_flash_attn_api": vllm_flash_attn_api,
             "gpu_names": gpu_names,
             "gpu_capabilities": gpu_capabilities,
             "nvcc_version": parse_nvcc(run_text(["nvcc", "--version"])),
@@ -403,6 +450,7 @@ def plan_flash_attn_install(
     """Analyze one probe and produce an install plan."""
     normalized = probe if isinstance(probe, FlashAttnProbe) else FlashAttnProbe.from_dict(probe)
     requested_package = str(package_name or "").strip().lower()
+    effective_version = str(version or "")
     reasons: list[str] = []
     warnings: list[str] = []
     install_env: dict[str, str] = {}
@@ -422,8 +470,26 @@ def plan_flash_attn_install(
         backend=normalized.backend,
         family=normalized.primary_gpu_family,
         requested_package=requested_package,
-        version_spec=version,
+        version_spec=effective_version,
     )
+    auto_requested = requested_package in {"", "auto"} and not package_hint_from_version_spec(version)
+    if (
+        auto_requested
+        and decision.package_name == "flash-attn-4"
+        and normalized.vllm_version
+        and normalized.vllm_flash_attn_api == "fa2"
+    ):
+        effective_version = effective_version or "2.8.3"
+        decision = select_compat_rule(
+            backend=normalized.backend,
+            family="ampere",
+            requested_package="flash-attn",
+            version_spec=effective_version,
+        )
+        warnings.append(
+            f"Detected vLLM {normalized.vllm_version} using a flash-attn 2.x style API; "
+            "auto-selection is falling back to flash-attn 2.x for compatibility."
+        )
     if decision.unsupported_reason:
         reasons.append(decision.unsupported_reason)
 
@@ -462,7 +528,7 @@ def plan_flash_attn_install(
 
     install_spec = compose_install_spec(
         decision.package_name,
-        version,
+        effective_version,
         default=decision.default_install_spec or decision.package_name,
     )
     pinned = exact_version_from_spec(decision.package_name, install_spec)
@@ -577,6 +643,27 @@ def flash_attn_install_script(
         if package == "flash-attn-4"
         else f'"$PY_BIN" -m pip install --no-build-isolation {shlex.quote(resolved_spec)}'
     )
+    verify_code = (
+        "from importlib import metadata\n"
+        f"package_name = {package!r}\n"
+        "resolved = ''\n"
+        "for candidate in (package_name, 'flash-attn-4', 'flash-attn'):\n"
+        "    if not candidate:\n"
+        "        continue\n"
+        "    try:\n"
+        "        resolved = f\"{candidate}={metadata.version(candidate)}\"\n"
+        "        break\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "if not resolved:\n"
+        "    try:\n"
+        "        import flash_attn\n"
+        "        resolved = f\"flash_attn={getattr(flash_attn, '__version__', 'unknown')}\"\n"
+        "    except Exception as exc:\n"
+        "        raise SystemExit(f'flash-attn verification failed: {exc}')\n"
+        "import sys\n"
+        "print(f\"{resolved} python={sys.version.split()[0]}\")\n"
+    )
     script = dedent(
         f"""\
         set -euo pipefail
@@ -599,11 +686,7 @@ def flash_attn_install_script(
         {force_build_line}
         {pip_install_line}
 
-        "$PY_BIN" - <<'PY'
-        import flash_attn
-        import sys
-        print(f"flash_attn={{getattr(flash_attn, '__version__', 'unknown')}} python={{sys.version.split()[0]}}")
-        PY
+        "$PY_BIN" -c {shlex.quote(verify_code)}
         """
     ).strip()
     return "\n".join(line for line in script.splitlines() if line.strip())

@@ -63,6 +63,10 @@ class Host:
             kwargs["close"] = True
         return recipe._tmux_ref(name, host=self, **kwargs)
 
+    def vllm(self, model: str, **kwargs: Any):
+        """Start or describe one vLLM service bound to this host."""
+        return self._active_recipe().vllm.serve(self, model, **kwargs)
+
     def _active_recipe(self):
         from .base import get_active_recipe
 

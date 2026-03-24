@@ -69,8 +69,32 @@ class FlashAttnSupportTests(unittest.TestCase):
 
         self.assertTrue(plan.ok)
         self.assertEqual(plan.package_name, "flash-attn-4")
-        self.assertEqual(plan.install_spec, "flash-attn-4")
+        self.assertEqual(plan.install_spec, "flash-attn-4==4.0.0b5")
         self.assertEqual(plan.target, "flash-attn-4")
+
+    def test_plan_falls_back_to_fa2_when_vllm_still_uses_fa2_api(self):
+        probe = FlashAttnProbe.from_dict(
+            {
+                "python_version": "3.12.3",
+                "platform_system": "Linux",
+                "platform_machine": "x86_64",
+                "torch_available": True,
+                "torch_version": "2.10.0+cu128",
+                "torch_cuda_version": "12.8",
+                "gpu_names": ["NVIDIA GeForce RTX 5090"],
+                "gpu_capabilities": ["12.0"],
+                "nvcc_version": "12.8",
+                "vllm_version": "0.18.0",
+                "vllm_flash_attn_api": "fa2",
+            }
+        )
+
+        plan = plan_flash_attn_install(probe)
+
+        self.assertTrue(plan.ok)
+        self.assertEqual(plan.package_name, "flash-attn")
+        self.assertEqual(plan.install_spec, "flash-attn==2.8.3")
+        self.assertTrue(any("falling back to flash-attn 2.x" in warning for warning in plan.warnings))
 
     def test_plan_blocks_turing_entirely(self):
         probe = FlashAttnProbe.from_dict(

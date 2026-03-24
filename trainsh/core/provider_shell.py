@@ -10,6 +10,14 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List
 
+from ..services.git_auth import (
+    build_git_clone_command,
+    build_remote_git_auth_command,
+    is_plain_github_repo_url,
+    materialize_git_askpass_script,
+    normalize_git_auth_mode,
+)
+from ..services.secret_materialize import materialize_secret_file
 from ..utils.notifier import normalize_channels, parse_bool
 from .executor_utils import _build_ssh_args, _host_from_ssh_spec, _resolve_vast_host
 
@@ -223,25 +231,151 @@ class ExecutorProviderShellOpsMixin:
         if not repo_url:
             return False, "Provider git.clone requires 'repo_url' (or 'repo')"
 
-        command = "git clone"
         branch = str(params.get("branch", "")).strip()
-        if branch:
-            command += f" -b {shlex.quote(branch)}"
         depth = params.get("depth")
-        if depth is not None and str(depth).strip():
-            command += f" --depth {shlex.quote(str(depth).strip())}"
-        command += f" {shlex.quote(repo_url)}"
-        if destination:
-            command += f" {shlex.quote(destination)}"
-
         host = self._provider_host(params.get("host", "local"))
-        return self._exec_provider_shell(
-            {
-                "command": command,
-                "host": host,
-                "timeout": self._positive_provider_timeout(params.get("timeout", params.get("timeout_secs", 0)), default=300),
-            }
+        timeout = self._positive_provider_timeout(
+            params.get("timeout", params.get("timeout_secs", 0)),
+            default=300,
         )
+        depth_text = "" if depth is None else str(depth).strip()
+        try:
+            auth_mode = normalize_git_auth_mode(params.get("auth"))
+        except ValueError as exc:
+            return False, str(exc)
+        token_secret = self._interpolate(str(params.get("token_secret", "GITHUB_TOKEN"))).strip() or "GITHUB_TOKEN"
+        command = build_git_clone_command(
+            repo_url,
+            destination,
+            branch=branch,
+            depth=depth_text,
+        )
+
+        token_auth_error = self._validate_github_clone_auth(repo_url, auth_mode)
+        if token_auth_error:
+            return False, token_auth_error
+
+        token_state = self._load_git_clone_token(
+            repo_url=repo_url,
+            auth_mode=auth_mode,
+            token_secret=token_secret,
+        )
+        if token_state["error"]:
+            return False, str(token_state["error"])
+        if token_state["token_file"] and token_state["token_text"]:
+            return self._exec_provider_github_clone_with_token(
+                command=command,
+                host=host,
+                timeout=timeout,
+                token_file=str(token_state["token_file"]),
+                token_text=str(token_state["token_text"]),
+            )
+
+        return self._exec_provider_shell({"command": command, "host": host, "timeout": timeout})
+
+    def _validate_github_clone_auth(self, repo_url: str, auth_mode: str) -> str:
+        """Validate explicit git clone auth requirements."""
+        if auth_mode != "github_token":
+            return ""
+        if not is_plain_github_repo_url(repo_url):
+            return (
+                "Provider git.clone auth=github_token currently supports "
+                "plain https://github.com/OWNER/REPO(.git) URLs only"
+            )
+        return ""
+
+    def _load_git_clone_token(
+        self,
+        *,
+        repo_url: str,
+        auth_mode: str,
+        token_secret: str,
+    ) -> Dict[str, str]:
+        """Resolve one token file/text pair for git clone auth."""
+        state = {"token_file": "", "token_text": "", "error": ""}
+        if auth_mode == "plain":
+            return state
+        if not is_plain_github_repo_url(repo_url):
+            return state
+
+        token_file = materialize_secret_file(token_secret, suffix=".token")
+        if not token_file or not os.path.exists(token_file):
+            if auth_mode == "github_token":
+                state["error"] = f"Provider git.clone requires secret {token_secret} for auth=github_token"
+            return state
+
+        try:
+            with open(token_file, "r", encoding="utf-8", errors="replace") as handle:
+                token_text = handle.read().strip()
+        except OSError as exc:
+            if auth_mode == "github_token":
+                state["error"] = str(exc)
+            return state
+
+        if not token_text:
+            if auth_mode == "github_token":
+                state["error"] = f"Provider git.clone secret {token_secret} is empty"
+            return state
+
+        state["token_file"] = token_file
+        state["token_text"] = token_text
+        return state
+
+    def _exec_provider_github_clone_with_token(
+        self,
+        *,
+        command: str,
+        host: str,
+        timeout: int,
+        token_file: str,
+        token_text: str,
+    ) -> tuple[bool, str]:
+        """Run one authenticated GitHub clone without mutating URLs or git config."""
+        run_timeout = None if timeout in (None, 0) else timeout
+        start = datetime.now()
+        try:
+            if host == "local":
+                env = dict(os.environ)
+                env["GIT_ASKPASS"] = materialize_git_askpass_script()
+                env["GIT_TERMINAL_PROMPT"] = "0"
+                env["TRAINSH_GIT_PASSWORD_FILE"] = token_file
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=run_timeout,
+                )
+            else:
+                remote_command = build_remote_git_auth_command(command)
+                ssh_args = _build_ssh_args(host, command=remote_command, tty=False)
+                token_input = token_text if token_text.endswith("\n") else f"{token_text}\n"
+                result = subprocess.run(
+                    ssh_args,
+                    input=token_input,
+                    capture_output=True,
+                    text=True,
+                    timeout=run_timeout,
+                )
+            duration_ms = int((datetime.now() - start).total_seconds() * 1000)
+            output = result.stdout or result.stderr
+            if self.logger:
+                self.logger.log_ssh(
+                    host,
+                    command,
+                    result.returncode,
+                    result.stdout,
+                    result.stderr,
+                    duration_ms,
+                )
+            return result.returncode == 0, output or (
+                f"Shell command completed ({duration_ms}ms)" if result.returncode == 0 else ""
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"Shell command timed out after {timeout}s"
+        except Exception as exc:
+            return False, str(exc)
 
     def _exec_provider_git_pull(self, params: Dict[str, Any]) -> tuple[bool, str]:
         """Pull git repository changes via provider."""
@@ -450,7 +584,8 @@ class ExecutorProviderShellOpsMixin:
             return False, "Provider util.wait_for_port port must be positive"
 
         host = self._provider_host(params.get("host", "local"))
-        check_host = self._interpolate(str(params.get("host_name", "localhost"))).strip() or "localhost"
+        explicit_host_name = self._interpolate(str(params.get("host_name", ""))).strip()
+        check_host = explicit_host_name or "localhost"
         timeout = self._positive_provider_timeout(
             params.get("timeout", params.get("timeout_secs", 300)),
             default=300,
@@ -471,7 +606,7 @@ class ExecutorProviderShellOpsMixin:
             else:
                 # Check from remote host context using target's shell.
                 remote_host = _host_from_ssh_spec(host)
-                host_to_check = remote_host.hostname or check_host
+                host_to_check = explicit_host_name or remote_host.hostname or check_host
                 ok, output = self._exec_provider_shell(
                     {
                         "command": f"nc -z {shlex.quote(host_to_check)} {int(port)} 2>/dev/null && echo open || true",

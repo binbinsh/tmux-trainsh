@@ -381,6 +381,22 @@ class ProviderValidationEdgeTests(unittest.TestCase):
                 self.assertFalse(ok)
                 ok, msg = executor._exec_provider_storage_wait({"storage": "artifacts", "path": "/x", "timeout": "bad"})
                 self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_count("bad")
+                self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_count({})
+                self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_wait_count("bad")
+                self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_wait_count({})
+                self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_wait_count({"storage": "artifacts", "path": "/x", "min_count": "bad"})
+                self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_wait_count({"storage": "artifacts", "path": "/x"})
+                self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_ensure_bucket("bad")
+                self.assertFalse(ok)
+                ok, msg = executor._exec_provider_storage_ensure_bucket({})
+                self.assertFalse(ok)
                 with patch.object(executor, "_exec_provider_storage_exists", return_value=(False, "missing")), patch(
                     "trainsh.core.provider_storage.time.time", side_effect=[0, 10]
                 ), patch("trainsh.core.provider_storage.time.sleep"):
@@ -446,11 +462,17 @@ class ProviderValidationEdgeTests(unittest.TestCase):
                 with patch.object(executor, "_exec_storage_rclone", return_value=(True, "ok")) as mocked_rclone:
                     ok, msg = executor._exec_provider_storage_test({"storage": "remote", "path": "/x"})
                     self.assertTrue(ok)
+                    ok, msg = executor._exec_provider_storage_count({"storage": "remote", "path": "/x"})
+                    self.assertTrue(ok)
                     ok, msg = executor._exec_provider_storage_info({"storage": "remote", "path": "/x"})
                     self.assertTrue(ok)
                     ok, msg = executor._exec_provider_storage_list({"storage": "remote", "path": "/x", "recursive": True})
                     self.assertTrue(ok)
+                    ok, msg = executor._exec_provider_storage_wait_count({"storage": "remote", "path": "/x", "min_count": 0, "timeout": 1})
+                    self.assertTrue(ok)
                     ok, msg = executor._exec_provider_storage_mkdir({"storage": "remote", "path": "/x"})
+                    self.assertTrue(ok)
+                    ok, msg = executor._exec_provider_storage_ensure_bucket({"storage": "remote"})
                     self.assertTrue(ok)
                     ok, msg = executor._exec_provider_storage_delete({"storage": "remote", "path": "/x", "recursive": True})
                     self.assertTrue(ok)
@@ -631,6 +653,8 @@ class ProviderValidationEdgeTests(unittest.TestCase):
             self.assertFalse(ok)
             ok, msg = executor._exec_provider_git_clone("bad")
             self.assertFalse(ok)
+            ok, msg = executor._exec_provider_git_clone({"repo_url": "https://github.com/example/repo.git", "auth": "mystery"})
+            self.assertFalse(ok)
             ok, msg = executor._exec_provider_git_pull("bad")
             self.assertFalse(ok)
             ok, msg = executor._exec_provider_host_test("bad")
@@ -665,6 +689,13 @@ class ProviderValidationEdgeTests(unittest.TestCase):
             with patch.object(executor, "_exec_provider_shell", return_value=(True, "open")):
                 ok, msg = executor._exec_provider_wait_for_port({"port": 8080, "host": "gpu", "timeout": 1, "poll_interval": 1})
             self.assertTrue(ok)
+
+            with patch.object(executor, "_exec_provider_shell", return_value=(True, "open")) as mocked_shell:
+                ok, msg = executor._exec_provider_wait_for_port(
+                    {"port": 8080, "host": "gpu", "host_name": "127.0.0.1", "timeout": 1, "poll_interval": 1}
+                )
+            self.assertTrue(ok)
+            self.assertIn("127.0.0.1", mocked_shell.call_args.args[0]["command"])
 
 
 if __name__ == "__main__":

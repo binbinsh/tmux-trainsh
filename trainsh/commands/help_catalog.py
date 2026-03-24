@@ -377,6 +377,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train host clone <name> <repo-url> [destination] [options]",
             "train host files <name> [path]",
             "train host check <name>",
+            "train host flash-attn <name> [options]",
             "train host remove <name>",
         ),
         blocks=(
@@ -393,6 +394,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                     "clone               Clone one git repository on a host.",
                     "files               Browse remote files over SFTP.",
                     "check               Check whether a host is reachable.",
+                    "flash-attn          Probe flash-attn compatibility and optionally install it on one host.",
                     "remove              Delete a stored host definition or destroy a Vast.ai instance.",
                 ),
             ),
@@ -405,6 +407,10 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "Use `train runpod` for RunPod Pod lifecycle operations.",
             "Use `train colab` for quick one-off Colab tunnel helpers; prefer `train host add` for reusable configs.",
             "For GitHub private repos, `train host clone` can use `GITHUB_TOKEN` from `train secrets` without rewriting the URL.",
+            "Use `train host flash-attn --matrix` to print the built-in compatibility matrix directly from the CLI.",
+            "Built-in flash-attn matrix: CUDA Ampere/Ada -> flash-attn 2.x; CUDA Hopper/Blackwell -> auto flash-attn-4; ROCm CDNA -> flash-attn 2.x; Turing -> unsupported.",
+            "Use `train host flash-attn <name>` to auto-select a Python env with torch, then choose `flash-attn` 2.x or `flash-attn-4` based on the detected GPU family.",
+            "Use `train host flash-attn <name> --apply --background --status` for long source builds; tmux-trainsh intentionally does not support Turing GPUs here.",
         ),
         examples=(
             "train host list",
@@ -415,6 +421,10 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train host tunnel gpu-box --local-port 18000 --remote-port 8000",
             "train host clone gpu-box https://github.com/org/private-repo.git /srv/private-repo",
             "train host check gpu-box",
+            "train host flash-attn --matrix",
+            "train host flash-attn gpu-box",
+            "train host flash-attn gpu-box --version 2.8.3 --apply --background",
+            "train host flash-attn gpu-box --status",
         ),
         see_also=("train vast", "train runpod", "train colab", "train transfer"),
     ),
@@ -426,11 +436,12 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         summary="Start and inspect remote vLLM servers in tmux, then run local batch clients through an SSH tunnel.",
         usage_lines=(
             "train vllm list",
+            "train vllm serve <host> <model> [options]",
             "train vllm serve <host> --model <model> [options]",
             "train vllm status <name>",
             "train vllm logs <name> [--lines N]",
             "train vllm stop <name>",
-            "train vllm batch <service-or-base-url> --input <jsonl> --output <jsonl> [options]",
+            "train vllm batch <service-or-base-url> [<service-or-base-url> ...] --input <jsonl> --output <jsonl> [options]",
         ),
         blocks=(
             DocBlock(
@@ -446,22 +457,29 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             ),
         ),
         options=(
-            "serve: --name NAME --port PORT --bind-host HOST --workdir DIR --session NAME",
+            "serve: --name NAME --port PORT --gpus IDS --tp N --bind-host HOST --workdir DIR --session NAME",
             "serve: --env KEY=VALUE (repeatable) --arg VALUE (repeatable) --ready-timeout 10m --no-wait --replace",
-            "batch: --endpoint chat|completions|embeddings --concurrency N --retries N --timeout S",
+            "batch: --endpoint chat|completions|embeddings --concurrency N-per-target --retries N --timeout S",
             "batch: --resume --overwrite --direct --local-port N --api-key KEY",
         ),
         notes=(
             "Managed service metadata lives under ~/.local/state/tmux-trainsh/vllm/.",
+            "By default, `train vllm serve` adds throughput-oriented tuning flags: `--gpu-memory-utilization=0.95`, `--max-num-batched-tokens=16384`, and `--max-num-seqs=64` unless you override them explicitly.",
             "By default, `train vllm batch <service>` opens a temporary SSH tunnel to the managed remote service.",
+            "You can pass multiple explicit services or base URLs to `train vllm batch`; each target gets its own worker pool and `--concurrency` applies per target.",
+            "For throughput on multi-GPU hosts, prefer one single-GPU vLLM service per card and batch across them. Use tensor parallelism when a model does not fit on one GPU.",
             "Input JSONL accepts either full request objects or OpenAI-style `{custom_id, method, url, body}` objects.",
             "For interactive local clients, use `train host tunnel <host> --local-port <p> --remote-port <p>` and point your SDK at http://127.0.0.1:<p>/v1.",
         ),
         examples=(
-            "train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8",
+            "train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 0",
+            "train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 1",
+            "train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 0,1,2,3 --tp 4",
+            "train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg=--gpu-memory-utilization=0.90",
             "train vllm status qwen2.5-32b-instruct",
             "train vllm logs qwen2.5-32b-instruct --lines 120",
-            "train vllm batch qwen2.5-32b-instruct --input requests.jsonl --output results.jsonl --concurrency 256 --resume",
+            "train vllm batch qwen2.5-32b-instruct --input requests.jsonl --output results.jsonl --concurrency 96 --resume",
+            "train vllm batch q0 q1 --input requests.jsonl --output results.jsonl --concurrency 96",
             "train vllm batch http://127.0.0.1:18000/v1 --input requests.jsonl --output results.jsonl",
         ),
         see_also=("train host", "train host tunnel", "train recipe"),
@@ -956,7 +974,7 @@ def render_top_level_help() -> str:
         "  train recipe run nanochat",
         "  train recipe status --last",
         "  train host run gpu-box -- nvidia-smi",
-        "  train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8",
+        "  train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 0",
         "  train host clone gpu-box https://github.com/org/private-repo.git /srv/private-repo",
         "  train vast run 12345 -- nvidia-smi",
         "  train vast clone 12345 https://github.com/org/private-repo.git /workspace/repo",
@@ -994,6 +1012,7 @@ def render_top_level_help() -> str:
             "",
             "Public import contract",
             "  from trainsh import Recipe, Host, RunpodHost, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local",
+            "  from trainsh import flash_attn_install_script",
             "",
             "Main authoring model",
             "  Recipe",
@@ -1001,6 +1020,7 @@ def render_top_level_help() -> str:
             "  Storage / StoragePath",
             "  host.tmux(...)",
             "  local.tmux(...)",
+            "  tmux.install_flash_attn(...)",
             "",
             "Recipe-first example",
             "```python",
@@ -1033,6 +1053,8 @@ def render_top_level_help() -> str:
             "  Prefer Python recipe authoring over ad-hoc ssh, bash, or manual polling when the task is repeatable.",
             "  For one-off remote commands, prefer `train host run <name> -- <command>`, `train vast run <id> -- <command>`, or `train runpod run <id> -- <command>`.",
             "  For one-off remote repository clones, prefer `train host clone <name> <repo-url>`, `train vast clone <id> <repo-url>`, or `train runpod clone <id> <repo-url>`.",
+            "  For repeatable flash-attn bootstraps, prefer probing with `train host flash-attn <name>` first, then reuse `tmux.install_flash_attn(...)` or `flash_attn_install_script(...)` inside recipe steps.",
+            "  The built-in flash-attn installer intentionally drops Turing support; it targets newer CUDA and ROCm environments only.",
             "  Prefer `train run <recipe>` or `train exec <recipe>` for immediate execution.",
             "  Prefer `with local.tmux(...) as tmux:` or `with gpu.tmux(...) as tmux:` for straightforward tmux-backed flows.",
             "  Skip explicit `id=` unless you need a stable external name; recipe calls already return StepHandle values for wiring.",
@@ -1137,7 +1159,7 @@ def render_readme_overview() -> str:
         "train secrets set VAST_API_KEY\n"
         "train secrets set RUNPOD_API_KEY\n"
         "train host add\n"
-        "train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8\n"
+        "train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 0\n"
         "train storage add\n\n"
         "train recipe show nanochat\n"
         "train recipe new demo --template remote-train\n"
@@ -1151,6 +1173,7 @@ def render_readme_overview() -> str:
         "Public imports:\n\n"
         "```python\n"
         "from trainsh import Recipe, Host, RunpodHost, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local\n"
+        "from trainsh import flash_attn_install_script\n"
         "```\n\n"
         "Main authoring model:\n\n"
         "- `Recipe`\n"
@@ -1158,6 +1181,7 @@ def render_readme_overview() -> str:
         "- `Storage` / `StoragePath`\n"
         "- `host.tmux(...)`\n"
         "- `local.tmux(...)`\n"
+        "- `tmux.install_flash_attn(...)`\n"
         "- `tmux.script(...)`\n"
         "- `recipe.storage_wait_count(...)`\n\n"
         "## Runtime Guarantees\n\n"

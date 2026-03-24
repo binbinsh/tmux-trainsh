@@ -55,7 +55,7 @@ train secrets set GITHUB_TOKEN
 train secrets set VAST_API_KEY
 train secrets set RUNPOD_API_KEY
 train host add
-train vllm serve gpu-box --model Qwen/Qwen2.5-32B-Instruct --arg --tensor-parallel-size=8
+train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 0
 train storage add
 
 train recipe show nanochat
@@ -75,6 +75,7 @@ Public imports:
 
 ```python
 from trainsh import Recipe, Host, RunpodHost, VastHost, HostPath, Storage, StoragePath, load_python_recipe, local
+from trainsh import flash_attn_install_script
 ```
 
 Main authoring model:
@@ -84,6 +85,7 @@ Main authoring model:
 - `Storage` / `StoragePath`
 - `host.tmux(...)`
 - `local.tmux(...)`
+- `tmux.install_flash_attn(...)`
 - `tmux.script(...)`
 - `recipe.storage_wait_count(...)`
 

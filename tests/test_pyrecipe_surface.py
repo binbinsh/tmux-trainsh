@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trainsh import Recipe, local, official_uv_install_command
+from trainsh import Recipe, flash_attn_install_script, local, official_uv_install_command
 from trainsh.core.models import Storage as RuntimeStorage, StorageType
 from trainsh.pyrecipe.control_steps import RecipeControlMixin
 from trainsh.pyrecipe.models import Host, PythonRecipeError, Storage
@@ -47,7 +47,16 @@ class PyrecipeSurfaceTests(unittest.TestCase):
 
     def test_workflow_helpers_cover_git_host_assert_wait_and_env(self):
         recipe = Recipe("workflow-demo")
-        clone = recipe.git_clone("https://github.com/example/repo.git", "/tmp/repo", branch="main", depth=1, host="gpu", id="clone")
+        clone = recipe.git_clone(
+            "https://github.com/example/repo.git",
+            "/tmp/repo",
+            branch="main",
+            depth=1,
+            auth="github_token",
+            token_secret="PRIVATE_GITHUB_TOKEN",
+            host="gpu",
+            id="clone",
+        )
         pull = recipe.git_pull("/tmp/repo", remote="upstream", branch="dev", host="gpu", id="pull", depends_on=[clone])
         test = recipe.host_test("gpu", capture_var="PING", id="test")
         assertion = recipe.assert_("var:READY==1", message="not ready", host="gpu", timeout="10s", id="assert", depends_on=[test])
@@ -63,6 +72,8 @@ class PyrecipeSurfaceTests(unittest.TestCase):
         self.assertEqual(pull, "pull")
         self.assertEqual(steps["clone"].provider, "git")
         self.assertEqual(steps["clone"].params["branch"], "main")
+        self.assertEqual(steps["clone"].params["auth"], "github_token")
+        self.assertEqual(steps["clone"].params["token_secret"], "PRIVATE_GITHUB_TOKEN")
         self.assertEqual(steps["pull"].params["remote"], "upstream")
         self.assertEqual(steps["test"].provider, "host")
         self.assertEqual(steps["assert"].provider, "util")
@@ -77,9 +88,19 @@ class PyrecipeSurfaceTests(unittest.TestCase):
 
         session = Host("gpu", name="gpu").tmux("main", id="open_main")
         install_uv = session.install_uv(id="install_uv")
+        install_flash_attn = session.install_flash_attn(
+            version="2.8.3",
+            python_bin="/venv/main/bin/python",
+            max_jobs=4,
+            extra_env={"FLASH_ATTN_CUDA_ARCHS": "120"},
+            id="install_flash_attn",
+        )
         steps = {step.id: step for step in recipe.steps}
         self.assertIn("astral.sh/uv/install.sh", steps["install_uv"].raw)
         self.assertEqual(install_uv, "install_uv")
+        self.assertIn("flash-attn==2.8.3", steps["install_flash_attn"].commands)
+        self.assertIn("FLASH_ATTN_CUDA_ARCHS=120", steps["install_flash_attn"].commands)
+        self.assertEqual(install_flash_attn, "install_flash_attn")
 
     def test_official_uv_install_command_variants(self):
         default = official_uv_install_command()
@@ -87,6 +108,11 @@ class PyrecipeSurfaceTests(unittest.TestCase):
         self.assertIn("astral.sh/uv/install.sh", default)
         self.assertIn("export PATH=\"$HOME/.local/bin:$PATH\"", default)
         self.assertIn("curl -LsSf https://astral.sh/uv/install.sh | sh", forced)
+
+        flash_default = flash_attn_install_script(version="2.8.3")
+        flash_auto = flash_attn_install_script(package_name="flash-attn-4", install_spec="flash-attn-4==4.0.0b5")
+        self.assertIn("flash-attn==2.8.3", flash_default)
+        self.assertIn("flash-attn-4==4.0.0b5", flash_auto)
 
     def test_vast_and_notice_helpers_from_control_surface(self):
         recipe = Recipe("vast-demo")
@@ -192,6 +218,11 @@ class PyrecipeSurfaceTests(unittest.TestCase):
         with recipe as same:
             self.assertIs(same, recipe)
         self.assertFalse(recipe.__exit__(None, None, None))
+
+        with self.assertRaises(PythonRecipeError):
+            Recipe("bad-owner", owner="ml")
+        with self.assertRaises(PythonRecipeError):
+            Recipe("bad-tags", tags=["nightly"])
 
         recipe.set_executor("thread_pool", max_workers=3)
         self.assertEqual(recipe.executor, "thread_pool")
@@ -338,6 +369,13 @@ class PyrecipeSurfaceTests(unittest.TestCase):
                 """,
                 id="script_train",
             )
+            work.script(
+                "echo three",
+                tee="/tmp/train.log",
+                done_file="/tmp/train.done",
+                id="script_with_markers",
+            )
+            work.run("printf '42\\n'", capture_var="VALUE", id="capture_value")
 
         steps = {step.id: step for step in recipe.steps}
         self.assertIn("cd /workspace/app", steps["run_train"].commands)
@@ -346,6 +384,15 @@ class PyrecipeSurfaceTests(unittest.TestCase):
         self.assertIn("bash -lc", steps["script_train"].commands)
         self.assertIn("set -euo pipefail", steps["script_train"].commands)
         self.assertIn("echo one", steps["script_train"].commands)
+        self.assertIn("tee -a /tmp/train.log", steps["script_with_markers"].commands)
+        self.assertIn("/tmp/train.done", steps["script_with_markers"].commands)
+        self.assertEqual(steps["capture_value"].capture_var, "VALUE")
+        self.assertIn("trainsh_capture_", steps["capture_value"].capture_path)
+
+        with self.assertRaises(PythonRecipeError):
+            local.tmux("main").run("echo bad", stdout="/tmp/out", tee="/tmp/log")
+        with self.assertRaises(PythonRecipeError):
+            local.tmux("main").run("echo bad", background=True, capture_var="OUT")
 
     def test_tmux_object_preserves_tmux_first_authoring(self):
         recipe = Recipe("session-demo")
