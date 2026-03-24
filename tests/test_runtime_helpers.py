@@ -259,13 +259,14 @@ class ExecuteHelperTests(unittest.TestCase):
             get_tmux_client=lambda host: tmux,
             is_resuming=False,
             _wait_for_idle=lambda window, timeout: (True, "idle"),
+            ctx=SimpleNamespace(variables={}),
         )
         helper = ExecuteHelper(executor, build_ssh_args=lambda host, command=None, tty=False: ["ssh", host, command or ""], window_cls=SimpleNamespace)
         return helper, executor, tmux
 
     def test_execute_paths(self):
         helper, executor, tmux = self.make_helper()
-        step = SimpleNamespace(host="main", commands="echo $NAME", background=False, timeout=5)
+        step = SimpleNamespace(host="main", commands="echo $NAME", background=False, timeout=5, capture_var="", capture_path="")
         ok_run, msg = helper.exec_execute(step)
         self.assertFalse(ok_run)
         self.assertIn("Unknown window", msg)
@@ -319,7 +320,7 @@ class ExecuteHelperTests(unittest.TestCase):
 
     def test_execute_zero_timeout_disables_runtime_timeout(self):
         helper, executor, tmux = self.make_helper()
-        step = SimpleNamespace(host="main", commands="echo $NAME", background=False, timeout=0)
+        step = SimpleNamespace(host="main", commands="echo $NAME", background=False, timeout=0, capture_var="", capture_path="")
 
         bridge_calls = []
         executor._resolve_window = lambda name: SimpleNamespace(host="gpu", remote_session="sess")
@@ -345,10 +346,48 @@ class ExecuteHelperTests(unittest.TestCase):
             self.assertEqual(helper.exec_execute(step), (True, "ok"))
         self.assertIsNone(mocked_run.call_args.kwargs["timeout"])
 
+    def test_execute_capture_var_paths(self):
+        helper, executor, tmux = self.make_helper()
+        step = SimpleNamespace(
+            host="main",
+            commands="echo hi",
+            background=False,
+            timeout=5,
+            capture_var="OUT",
+            capture_path="/tmp/capture.txt",
+        )
+
+        executor._resolve_window = lambda name: SimpleNamespace(host="local", remote_session="")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            capture_path = Path(tmpdir) / "capture.txt"
+            capture_path.write_text("hello\n", encoding="utf-8")
+            step.capture_path = str(capture_path)
+            with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="hello\n", stderr="")):
+                ok_run, msg = helper.exec_execute(step)
+        self.assertTrue(ok_run)
+        self.assertEqual(executor.ctx.variables["OUT"], "hello")
+
+        executor._resolve_window = lambda name: SimpleNamespace(host="gpu", remote_session="sess")
+        tmux.wait = ok("")
+        with patch.object(helper, "_read_captured_output", return_value="remote\n") as mocked_read, patch.object(
+            helper,
+            "_cleanup_captured_output",
+        ) as mocked_cleanup:
+            ok_run, msg = helper.exec_execute(step)
+        self.assertTrue(ok_run)
+        self.assertEqual(executor.ctx.variables["OUT"], "remote")
+        mocked_read.assert_called_once_with("gpu", str(step.capture_path))
+        mocked_cleanup.assert_called_once_with("gpu", str(step.capture_path))
+
         executor._resolve_window = lambda name: SimpleNamespace(host="gpu", remote_session="")
-        with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="ok", stderr="")) as mocked_run:
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="ok", stderr="")), patch.object(
+            helper,
+            "_read_captured_output",
+            return_value="ssh\n",
+        ) as mocked_read, patch.object(helper, "_cleanup_captured_output") as mocked_cleanup:
             self.assertEqual(helper.exec_execute(step), (True, "ok"))
-        self.assertIsNone(mocked_run.call_args.kwargs["timeout"])
+        mocked_read.assert_called_once_with("gpu", str(step.capture_path))
+        mocked_cleanup.assert_called_once_with("gpu", str(step.capture_path))
 
 
 class WaitHelperTests(unittest.TestCase):

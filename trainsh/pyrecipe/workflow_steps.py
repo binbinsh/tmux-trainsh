@@ -15,6 +15,8 @@ class RecipeProviderWorkflowMixin:
         *,
         branch: Optional[str] = None,
         depth: Optional[int] = None,
+        auth: Optional[str] = None,
+        token_secret: Optional[str] = None,
         timeout: Any = 0,
         host: Optional[str] = None,
         id: Optional[str] = None,
@@ -32,6 +34,10 @@ class RecipeProviderWorkflowMixin:
             params["branch"] = branch
         if depth is not None:
             params["depth"] = depth
+        if auth is not None:
+            params["auth"] = auth
+        if token_secret is not None:
+            params["token_secret"] = token_secret
         if host is not None:
             params["host"] = host
         return self.provider(

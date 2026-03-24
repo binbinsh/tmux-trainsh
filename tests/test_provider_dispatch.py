@@ -37,7 +37,15 @@ class ProviderDispatchAliasTests(unittest.TestCase):
                 executor,
                 "_exec_provider_storage_delete",
                 return_value=(True, "delete"),
-            ) as delete_mock:
+            ) as delete_mock, patch.object(
+                executor,
+                "_exec_provider_storage_count",
+                return_value=(True, "count"),
+            ) as count_mock, patch.object(
+                executor,
+                "_exec_provider_storage_ensure_bucket",
+                return_value=(True, "bucket"),
+            ) as bucket_mock:
                 upload_result = executor._exec_provider(
                     ProviderStep(
                         "cloud",
@@ -49,11 +57,21 @@ class ProviderDispatchAliasTests(unittest.TestCase):
                 delete_result = executor._exec_provider(
                     ProviderStep("cloud", "rm", {"storage": "@artifacts", "path": "/gone"}, id="rm")
                 )
+                count_result = executor._exec_provider(
+                    ProviderStep("cloud", "count", {"storage": "@artifacts", "path": "/ready"}, id="count")
+                )
+                bucket_result = executor._exec_provider(
+                    ProviderStep("cloud", "ensure_bucket", {"storage": "@artifacts"}, id="bucket")
+                )
 
         self.assertEqual(upload_result, (True, "upload"))
         self.assertEqual(delete_result, (True, "delete"))
+        self.assertEqual(count_result, (True, "count"))
+        self.assertEqual(bucket_result, (True, "bucket"))
         self.assertEqual(upload_mock.call_args.args[0]["storage"], "artifacts")
         self.assertEqual(delete_mock.call_args.args[0]["storage"], "artifacts")
+        self.assertEqual(count_mock.call_args.args[0]["storage"], "artifacts")
+        self.assertEqual(bucket_mock.call_args.args[0]["storage"], "artifacts")
 
     def test_http_provider_normalizes_json_and_wait_operations(self):
         with isolated_executor(RecipeModel(name="dispatch")) as (executor, _config_dir):
@@ -174,7 +192,11 @@ class ProviderDispatchAliasTests(unittest.TestCase):
                 executor,
                 "_exec_provider_storage_download",
                 return_value=(True, "download"),
-            ) as download_mock:
+            ) as download_mock, patch.object(
+                executor,
+                "_exec_provider_storage_wait_count",
+                return_value=(True, "wait_count"),
+            ) as wait_count_mock:
                 transfer_result = executor._exec_provider(
                     ProviderStep("storage", "copy", {"source": "/a", "destination": "/b"}, id="cp")
                 )
@@ -189,13 +211,18 @@ class ProviderDispatchAliasTests(unittest.TestCase):
                         id="get",
                     )
                 )
+                wait_count_result = executor._exec_provider(
+                    ProviderStep("storage", "wait_count", {"storage": "artifacts", "min_count": 2}, id="wait_count")
+                )
 
         self.assertEqual(transfer_result, (True, "transfer"))
         self.assertEqual(upload_result, (True, "upload"))
         self.assertEqual(download_result, (True, "download"))
+        self.assertEqual(wait_count_result, (True, "wait_count"))
         self.assertEqual(transfer_mock.call_args.args[0]["source"], "/a")
         self.assertEqual(upload_mock.call_args.args[0]["storage"], "artifacts")
         self.assertEqual(download_mock.call_args.args[0]["destination"], "/tmp/out")
+        self.assertEqual(wait_count_mock.call_args.args[0]["min_count"], 2)
 
     def test_wait_file_and_wait_port_route(self):
         with isolated_executor(RecipeModel(name="dispatch")) as (executor, _config_dir):

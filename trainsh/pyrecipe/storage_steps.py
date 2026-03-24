@@ -9,7 +9,11 @@ from .models import StoragePath
 
 
 class RecipeStorageMixin:
-    """Storage operations as provider-style recipe steps."""
+    """Storage operations as provider-style recipe steps.
+
+    These helpers work with named storages and inline/object specs such as
+    ``Storage("hf:team/checkpoints")`` or ``Storage("r2:artifacts")``.
+    """
 
     def _storage_target(
         self,
@@ -141,6 +145,100 @@ class RecipeStorageMixin:
             "storage",
             "wait",
             params=params,
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def storage_count(
+        self,
+        storage: Any,
+        *,
+        path: Any = "/",
+        recursive: bool = True,
+        include_dirs: bool = False,
+        capture_var: Optional[str] = None,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Count entries under a storage path."""
+        cleaned_storage, target_path = self._storage_target(storage, path=path, default_path="/")
+        params: Dict[str, Any] = {
+            "storage": cleaned_storage,
+            "path": target_path,
+            "recursive": self._normalize_bool(recursive, default=True),
+            "include_dirs": self._normalize_bool(include_dirs, default=False),
+        }
+        if capture_var is not None:
+            params["capture_var"] = capture_var
+        return self.provider(
+            "storage",
+            "count",
+            params=params,
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def storage_wait_count(
+        self,
+        storage: Any,
+        *,
+        path: Any = "/",
+        min_count: Optional[int] = None,
+        max_count: Optional[int] = None,
+        exact_count: Optional[int] = None,
+        recursive: bool = True,
+        include_dirs: bool = False,
+        timeout: Any = "5m",
+        poll_interval: Any = "5s",
+        capture_var: Optional[str] = None,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Wait until a storage entry count reaches the requested threshold."""
+        cleaned_storage, target_path = self._storage_target(storage, path=path, default_path="/")
+        params: Dict[str, Any] = {
+            "storage": cleaned_storage,
+            "path": target_path,
+            "timeout": timeout,
+            "poll_interval": poll_interval,
+            "recursive": self._normalize_bool(recursive, default=True),
+            "include_dirs": self._normalize_bool(include_dirs, default=False),
+        }
+        if min_count is not None:
+            params["min_count"] = min_count
+        if max_count is not None:
+            params["max_count"] = max_count
+        if exact_count is not None:
+            params["exact_count"] = exact_count
+        if capture_var is not None:
+            params["capture_var"] = capture_var
+        return self.provider(
+            "storage",
+            "wait_count",
+            params=params,
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+        )
+
+    def storage_ensure_bucket(
+        self,
+        storage: Any,
+        *,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Create a cloud bucket/container when the storage backend supports it."""
+        cleaned_storage, _ = self._storage_target(storage, path="/", default_path="/")
+        return self.provider(
+            "storage",
+            "ensure_bucket",
+            params={"storage": cleaned_storage},
             id=id,
             depends_on=depends_on,
             step_options=step_options,

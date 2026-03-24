@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from textwrap import dedent
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 
 from ..core.recipe_models import RecipeStepModel, StepType
+from ..services.flash_attn_support import flash_attn_install_script
 from .authoring_support import normalize_after, split_step_call
 from .models import PythonRecipeError
 
@@ -164,6 +167,10 @@ class RecipeSessionRef:
         timeout: Any = 0,
         background: bool = False,
         stdout: Any = None,
+        tee: Any = None,
+        done_file: Optional[str] = None,
+        done_text: str = "ok\n",
+        capture_var: Optional[str] = None,
         cwd: Optional[str] = None,
         env: Optional[Dict[str, Any]] = None,
         id: Optional[str] = None,
@@ -186,6 +193,10 @@ class RecipeSessionRef:
             timeout=timeout,
             background=background,
             stdout=stdout,
+            tee=tee,
+            done_file=done_file,
+            done_text=done_text,
+            capture_var=capture_var,
             cwd=cwd or self.default_cwd,
             env={**dict(self.default_env or {}), **dict(env or {})} if (self.default_env or env) else None,
             id=resolved_id,
@@ -204,6 +215,10 @@ class RecipeSessionRef:
         strict: bool = True,
         background: bool = False,
         timeout: Any = 0,
+        tee: Any = None,
+        done_file: Optional[str] = None,
+        done_text: str = "ok\n",
+        capture_var: Optional[str] = None,
         cwd: Optional[str] = None,
         env: Optional[Dict[str, Any]] = None,
         id: Optional[str] = None,
@@ -221,6 +236,10 @@ class RecipeSessionRef:
             command,
             timeout=timeout,
             background=background,
+            tee=tee,
+            done_file=done_file,
+            done_text=done_text,
+            capture_var=capture_var,
             cwd=cwd,
             env=env,
             id=id,
@@ -363,6 +382,58 @@ class RecipeSessionRef:
         """Install uv in this tmux session using the official Astral install script."""
         return self.run(
             official_uv_install_command(force=force),
+            id=id,
+            depends_on=depends_on,
+            step_options=step_options,
+            after=after,
+            **kwargs,
+        )
+
+    def install_flash_attn(
+        self,
+        *,
+        version: str = "",
+        package_name: str = "flash-attn",
+        install_spec: str = "",
+        python_bin: str = "",
+        max_jobs: Optional[int] = None,
+        extra_env: Optional[Dict[str, Any]] = None,
+        force_build: bool = False,
+        background: bool = False,
+        timeout: Any = 0,
+        tee: Any = None,
+        done_file: Optional[str] = None,
+        done_text: str = "ok\n",
+        capture_var: Optional[str] = None,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, Any]] = None,
+        id: Optional[str] = None,
+        depends_on: Optional[Iterable[str]] = None,
+        step_options: Optional[Dict[str, Any]] = None,
+        after: Any = None,
+        **kwargs: Any,
+    ) -> str:
+        """Install FlashAttention in this tmux session using the generated shell script."""
+        script_env = dict(extra_env or {})
+        return self.script(
+            flash_attn_install_script(
+                version=version,
+                python_bin=python_bin,
+                package_name=package_name,
+                install_spec=install_spec,
+                extra_env=script_env,
+                force_build=force_build,
+                max_jobs=max_jobs,
+            ),
+            strict=False,
+            background=background,
+            timeout=timeout,
+            tee=tee,
+            done_file=done_file,
+            done_text=done_text,
+            capture_var=capture_var,
+            cwd=cwd,
+            env=env,
             id=id,
             depends_on=depends_on,
             step_options=step_options,
@@ -615,6 +686,10 @@ class RecipeSessionMixin:
         timeout: Any = 0,
         background: bool = False,
         stdout: Any = None,
+        tee: Any = None,
+        done_file: Optional[str] = None,
+        done_text: str = "ok\n",
+        capture_var: Optional[str] = None,
         cwd: Optional[str] = None,
         env: Optional[Dict[str, Any]] = None,
         id: Optional[str] = None,
@@ -642,8 +717,50 @@ class RecipeSessionMixin:
                 shell_lines.append(f"cd {shlex.quote(cwd_text)}")
             shell_lines.append(command_text)
             command_text = f"bash -lc {shlex.quote('; '.join(shell_lines))}"
-        if stdout is not None:
+        capture_var_name = str(capture_var or "").strip()
+        capture_path = ""
+        if capture_var_name and self._normalize_bool(background, default=False):
+            raise PythonRecipeError("session_run capture_var is not supported for background commands")
+        if stdout is not None and tee is not None:
+            raise PythonRecipeError("session_run accepts only one of stdout or tee")
+        if capture_var_name:
+            capture_path = f"/tmp/trainsh_capture_{uuid.uuid4().hex}.txt"
+            capture_path_quoted = shlex.quote(capture_path)
+            delivery_command = f"cat {capture_path_quoted}"
+            if stdout is not None:
+                delivery_command = f"{delivery_command} > {shlex.quote(self.resolve_endpoint(stdout))}"
+            elif tee is not None:
+                delivery_command = f"{delivery_command} | tee -a {shlex.quote(self.resolve_endpoint(tee))}"
+            wrapped_capture = [
+                f"rm -f {capture_path_quoted}",
+                f"( {command_text} ) > {capture_path_quoted} 2>&1",
+                "status=$?",
+                delivery_command,
+                'exit "$status"',
+            ]
+            command_text = f"bash -lc {shlex.quote('; '.join(wrapped_capture))}"
+        elif stdout is not None:
             command_text = f"{command_text} > {shlex.quote(self.resolve_endpoint(stdout))}"
+        elif tee is not None:
+            tee_path = shlex.quote(self.resolve_endpoint(tee))
+            command_text = f"bash -lc {shlex.quote(f'set -o pipefail; {command_text} 2>&1 | tee -a {tee_path}')}"
+        if done_file is not None:
+            done_path = str(done_file).strip()
+            if not done_path:
+                raise PythonRecipeError("session_run done_file must be non-empty")
+            done_target = shlex.quote(self.resolve_endpoint(done_path))
+            done_dir = os.path.dirname(self.resolve_endpoint(done_path)) or "."
+            done_dir = shlex.quote(done_dir)
+            done_text_quoted = shlex.quote("" if done_text is None else str(done_text))
+            wrapped_lines = [
+                f"mkdir -p {done_dir}",
+                f"rm -f {done_target}",
+                command_text,
+                "status=$?",
+                f'if [ "$status" -eq 0 ]; then printf %s {done_text_quoted} > {done_target}; fi',
+                'exit "$status"',
+            ]
+            command_text = f"bash -lc {shlex.quote('; '.join(wrapped_lines))}"
 
         raw = f"@{session_name}"
         if timeout_secs > 0:
@@ -660,6 +777,8 @@ class RecipeSessionMixin:
             commands=command_text,
             background=self._normalize_bool(background, default=False),
             timeout=max(0, int(timeout_secs)),
+            capture_var=capture_var_name,
+            capture_path=capture_path,
         )
         return self._add_step(
             step,

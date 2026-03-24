@@ -32,6 +32,8 @@ _METADATA_KEYS = {
     "callbacks",
 }
 
+_RECIPE_CALL_METADATA_KEYS = _METADATA_KEYS - {"owner", "tags"}
+
 _INTERVAL_PRESETS = {
     "@hourly": 3600,
     "@daily": 24 * 3600,
@@ -343,7 +345,7 @@ class DagProcessor:
     def _parse_recipe_call_keywords(self, node: ast.Call) -> Dict[str, Any]:
         parsed: Dict[str, Any] = {}
         for keyword in node.keywords:
-            if keyword.arg not in _METADATA_KEYS:
+            if keyword.arg not in _RECIPE_CALL_METADATA_KEYS:
                 continue
             value = self._safe_literal(keyword.value)
             if value is not None:

@@ -21,20 +21,36 @@ class VastControlHelper:
         self.build_ssh_args = build_ssh_args
         self.format_duration = format_duration
 
+    def _resolve_instance_id(self, value: Any) -> Optional[str]:
+        """Resolve a Vast instance id from a direct id or a recipe host alias."""
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.startswith("@"):
+            text = text[1:].strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return text
+
+        alias_var = self.executor.ctx.variables.get(f"VAST_ID_{text}")
+        if alias_var:
+            return str(alias_var).strip()
+
+        host_value = str(self.executor.recipe.hosts.get(text, "")).strip()
+        if host_value.startswith("vast:"):
+            return host_value.split(":", 1)[1].strip()
+        return None
+
     def cmd_vast_start(self, args: List[str]) -> tuple[bool, str]:
         """Handle: vast.start [instance_id]"""
         from ..services.vast_api import VastAPIError, get_vast_client
 
         try:
+            if not args:
+                return False, "No instance ID provided for vast.start"
             client = get_vast_client()
-
-            instance_id = None
-            if args:
-                instance_id = self.executor._interpolate(args[0])
-            if not instance_id:
-                instance_id = self.executor.ctx.variables.get("_vast_instance_id")
-            if not instance_id:
-                instance_id = self.executor.ctx.variables.get("VAST_ID")
+            instance_id = self._resolve_instance_id(self.executor._interpolate(args[0])) or self.executor._interpolate(args[0])
 
             if instance_id:
                 try:
@@ -93,21 +109,6 @@ class VastControlHelper:
                         msg += f"; failed to stop instance: {stop_err}"
                     return False, msg
 
-            offers = client.search_offers(limit=1)
-            if not offers:
-                return False, "No GPU offers available"
-
-            new_id = client.create_instance(
-                offer_id=offers[0].id,
-                image="pytorch/pytorch:latest",
-                disk=50,
-            )
-
-            self.executor.ctx.variables["_vast_instance_id"] = str(new_id)
-            if self.executor.logger:
-                self.executor.logger.log_vast("create_instance", new_id, {"offer_id": offers[0].id}, {"created": True}, True)
-            return True, f"Created instance: {new_id}"
-
         except (VastAPIError, RuntimeError) as e:
             if self.executor.logger:
                 self.executor.logger.log_vast("vast_start", None, {"args": args}, {"error": str(e)}, False)
@@ -118,15 +119,12 @@ class VastControlHelper:
         from ..services.vast_api import VastAPIError, get_vast_client
 
         try:
+            if not args:
+                return False, "No instance ID provided for vast.stop"
             client = get_vast_client()
-
-            instance_id = None
-            if args:
-                instance_id = self.executor._interpolate(args[0])
+            instance_id = self._resolve_instance_id(self.executor._interpolate(args[0])) or self.executor._interpolate(args[0])
             if not instance_id:
-                instance_id = self.executor.ctx.variables.get("_vast_instance_id")
-            if not instance_id:
-                return False, "No instance to stop"
+                return False, "No instance ID provided for vast.stop"
 
             if self.executor.logger:
                 self.executor.logger.log_detail("vast_stop", f"Stopping instance {instance_id}", {"instance_id": instance_id})
@@ -246,6 +244,7 @@ class VastControlHelper:
             self.executor.recipe.hosts[host_name] = f"vast:{existing_id}"
             self.executor.ctx.variables["_vast_instance_id"] = str(existing_id)
             self.executor.ctx.variables["VAST_ID"] = str(existing_id)
+            self.executor.ctx.variables[f"VAST_ID_{host_name}"] = str(existing_id)
             if self.executor.logger:
                 self.executor.logger.log_vast("pick_existing", existing_id, pick_filters, {"using_existing": True}, True)
                 self.executor.logger.log_variable("VAST_ID", str(existing_id), "vast.pick")
@@ -320,6 +319,7 @@ class VastControlHelper:
                 )
                 self.executor.ctx.variables["_vast_instance_id"] = str(new_id)
                 self.executor.ctx.variables["VAST_ID"] = str(new_id)
+                self.executor.ctx.variables[f"VAST_ID_{host_name}"] = str(new_id)
                 self.executor.recipe.hosts[host_name] = f"vast:{new_id}"
 
                 if self.executor.logger:
@@ -363,6 +363,7 @@ class VastControlHelper:
                 selected = instances[0]
                 self.executor.ctx.variables["_vast_instance_id"] = str(selected.id)
                 self.executor.ctx.variables["VAST_ID"] = str(selected.id)
+                self.executor.ctx.variables[f"VAST_ID_{host_name}"] = str(selected.id)
                 self.executor.recipe.hosts[host_name] = f"vast:{selected.id}"
                 if self.executor.logger:
                     self.executor.logger.log_vast(
@@ -415,6 +416,7 @@ class VastControlHelper:
 
             self.executor.ctx.variables["_vast_instance_id"] = str(selected.id)
             self.executor.ctx.variables["VAST_ID"] = str(selected.id)
+            self.executor.ctx.variables[f"VAST_ID_{host_name}"] = str(selected.id)
             self.executor.recipe.hosts[host_name] = f"vast:{selected.id}"
 
             if self.executor.logger:
@@ -455,12 +457,9 @@ class VastControlHelper:
                     stop_on_fail = value.lower() in ("1", "true", "yes", "y")
                 continue
             if instance_id is None:
-                instance_id = self.executor._interpolate(arg)
+                interpolated = self.executor._interpolate(arg)
+                instance_id = self._resolve_instance_id(interpolated) or interpolated
 
-        if not instance_id:
-            instance_id = self.executor.ctx.variables.get("_vast_instance_id")
-        if not instance_id:
-            instance_id = self.executor.ctx.variables.get("VAST_ID")
         if not instance_id:
             return False, "No instance ID provided for vast.wait"
 
@@ -730,39 +729,27 @@ class VastControlHelper:
         from ..services.pricing import format_currency, load_pricing_settings
         from ..services.vast_api import VastAPIError, get_vast_client
 
-        instance_id = None
-        if args:
-            instance_id = self.executor._interpolate(args[0])
+        if not args:
+            return False, "No instance ID provided for vast.cost"
+        instance_id = self._resolve_instance_id(self.executor._interpolate(args[0])) or self.executor._interpolate(args[0])
         if not instance_id:
-            instance_id = self.executor.ctx.variables.get("_vast_instance_id")
-        if not instance_id:
-            instance_id = self.executor.ctx.variables.get("VAST_ID")
-        if not instance_id:
-            msg = "Vast cost skipped: no instance ID provided"
-            self.executor.log(msg)
-            return True, msg
+            return False, "No instance ID provided for vast.cost"
 
         try:
             inst_id = int(instance_id)
         except ValueError:
-            msg = f"Vast cost skipped: invalid instance ID '{instance_id}'"
-            self.executor.log(msg)
-            return True, msg
+            return False, f"Invalid instance ID: {instance_id}"
 
         vast_start_time = self.executor.ctx.variables.get("_vast_start_time")
         if not vast_start_time:
-            msg = "Vast cost skipped: no start time recorded in job state"
-            self.executor.log(msg)
-            return True, msg
+            return False, "Vast cost failed: no start time recorded in job state"
 
         try:
             client = get_vast_client()
             inst = client.get_instance(inst_id)
             hourly_usd = inst.dph_total or 0.0
             if hourly_usd <= 0:
-                msg = f"Vast cost skipped: no pricing for instance {inst_id}"
-                self.executor.log(msg)
-                return True, msg
+                return False, f"Vast cost failed: no pricing for instance {inst_id}"
 
             saved_start = datetime.fromisoformat(vast_start_time)
             duration_secs = (datetime.now() - saved_start).total_seconds()
@@ -789,6 +776,6 @@ class VastControlHelper:
             return True, msg
 
         except (VastAPIError, RuntimeError) as e:
-            msg = f"Vast cost skipped: {e}"
+            msg = f"Vast cost failed: {e}"
             self.executor.log(msg)
-            return True, msg
+            return False, msg

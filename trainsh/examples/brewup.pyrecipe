@@ -2,8 +2,6 @@ from trainsh import Recipe, local
 
 recipe = Recipe(
     "brewup",
-    owner="ops",
-    tags=["bundle", "local", "maintenance"],
     callbacks=["console", "jsonl"],
 )
 

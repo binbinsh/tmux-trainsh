@@ -403,7 +403,7 @@ class VastControlHelperTests(unittest.TestCase):
             key_path.write_text("ssh-ed25519 AAA demo\n", encoding="utf-8")
             helper.ensure_ssh_key_attached(client, str(key_path))
 
-        helper.executor.ctx.variables.update({"_vast_instance_id": "1", "_vast_start_time": (datetime.now() - timedelta(hours=1)).isoformat()})
+        helper.executor.ctx.variables.update({"_vast_start_time": (datetime.now() - timedelta(hours=1)).isoformat()})
         with patch("trainsh.services.vast_api.get_vast_client", return_value=client), patch(
             "trainsh.services.pricing.load_pricing_settings",
             return_value=SimpleNamespace(exchange_rates=SimpleNamespace(convert=lambda amount, _from, _to: amount)),
@@ -411,14 +411,14 @@ class VastControlHelperTests(unittest.TestCase):
             "trainsh.utils.vast_formatter.get_currency_settings",
             return_value=SimpleNamespace(display_currency="USD", rates=SimpleNamespace(convert=lambda amount, _from, _to: amount)),
         ), patch("trainsh.services.pricing.format_currency", side_effect=lambda amount, currency: f"{currency}{amount:.2f}"):
-            ok, msg = helper.cmd_vast_cost([])
+            ok, msg = helper.cmd_vast_cost(["1"])
         self.assertTrue(ok)
         self.assertIn("total cost", msg)
 
         helper.executor.ctx.variables.clear()
         ok, msg = helper.cmd_vast_cost([])
-        self.assertTrue(ok)
-        self.assertIn("skipped", msg)
+        self.assertFalse(ok)
+        self.assertIn("No instance ID provided for vast.cost", msg)
 
 
 if __name__ == "__main__":

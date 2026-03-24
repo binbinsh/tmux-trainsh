@@ -78,7 +78,7 @@ class ExecutorVastMoreTests(unittest.TestCase):
         with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(stop_instance=lambda inst_id: None)):
             ok, msg = helper.cmd_vast_stop([])
         self.assertFalse(ok)
-        self.assertIn("No instance to stop", msg)
+        self.assertIn("No instance ID provided for vast.stop", msg)
 
         helper.executor.recipe.hosts = {"gpu": "vast:1"}
         instance_bad = SimpleNamespace(id=4, actual_status="stopped", gpu_name="T4", num_gpus=1, gpu_memory_gb=8, dph_total=2.0)
@@ -183,20 +183,38 @@ class ExecutorVastMoreTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("Started instance: 8", msg)
 
+        helper.executor.recipe.hosts = {"gpu": "vast:8"}
+        with patch("trainsh.services.vast_api.get_vast_client", return_value=client):
+            ok, msg = helper.cmd_vast_start(["gpu"])
+        self.assertTrue(ok)
+        self.assertIn("Started instance: 8", msg)
+
         helper.executor.ctx.variables.clear()
-        offers = [SimpleNamespace(id=11)]
-        client = SimpleNamespace(search_offers=lambda limit=1: offers, create_instance=lambda **kwargs: 99)
+        client = SimpleNamespace(search_offers=lambda limit=1: [])
         with patch("trainsh.services.vast_api.get_vast_client", return_value=client):
             ok, msg = helper.cmd_vast_start([])
-        self.assertTrue(ok)
-        self.assertIn("Created instance: 99", msg)
+        self.assertFalse(ok)
+        self.assertIn("No instance ID provided for vast.start", msg)
 
         helper.executor.ctx.variables["_vast_instance_id"] = "9"
         client = SimpleNamespace(stop_instance=lambda inst_id: None)
         with patch("trainsh.services.vast_api.get_vast_client", return_value=client):
             ok, msg = helper.cmd_vast_stop([])
+        self.assertFalse(ok)
+        self.assertIn("No instance ID provided for vast.stop", msg)
+
+        helper.executor.recipe.hosts = {"gpu": "vast:12"}
+        with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(stop_instance=lambda inst_id: None)):
+            ok, msg = helper.cmd_vast_stop(["gpu"])
         self.assertTrue(ok)
-        self.assertIn("Stopped instance: 9", msg)
+        self.assertIn("Stopped instance: 12", msg)
+
+        helper.executor.recipe.hosts = {"gpu": "root@proxy -p 22"}
+        helper.executor.ctx.variables["VAST_ID_gpu"] = "13"
+        with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(stop_instance=lambda inst_id: None)):
+            ok, msg = helper.cmd_vast_stop(["gpu"])
+        self.assertTrue(ok)
+        self.assertIn("Stopped instance: 13", msg)
 
         helper.executor.recipe.hosts = {"gpu": "vast:1"}
         helper.executor.ctx.variables.clear()
@@ -291,12 +309,12 @@ class ExecutorVastMoreTests(unittest.TestCase):
         with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(search_offers=lambda limit=1: [])):
             ok, msg = helper.cmd_vast_start([])
         self.assertFalse(ok)
-        self.assertIn("No GPU offers available", msg)
+        self.assertIn("No instance ID provided for vast.start", msg)
 
         with patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("boom")):
             ok, msg = helper.cmd_vast_start([])
         self.assertFalse(ok)
-        self.assertIn("boom", msg)
+        self.assertIn("No instance ID provided for vast.start", msg)
 
         with patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("boom")):
             ok, msg = helper.cmd_vast_stop(["1"])
@@ -382,6 +400,30 @@ class ExecutorVastMoreTests(unittest.TestCase):
             ok, msg = helper.cmd_vast_wait(["7"])
         self.assertFalse(ok)
         self.assertIn("Vast wait failed", msg)
+
+        helper.executor.recipe.hosts = {"gpu": "vast:7"}
+        ready = SimpleNamespace(
+            id=7,
+            actual_status="running",
+            is_running=True,
+            ssh_host="proxy",
+            ssh_port=22,
+            ssh_proxy_command="ssh proxy",
+            ssh_direct_command=None,
+            public_ipaddr=None,
+            direct_port_start=None,
+            direct_port_end=None,
+            gpu_name="A100",
+            num_gpus=1,
+        )
+        with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(get_instance=lambda instance_id: ready)), patch(
+            "trainsh.config.load_config", return_value={"vast": {"auto_attach_ssh_key": False}, "defaults": {"ssh_key_path": "~/.ssh/id_rsa"}}
+        ), patch.object(helper, "verify_ssh_connection", return_value=True), patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")), patch(
+            "time.time", side_effect=[0, 0, 1, 1]
+        ):
+            ok, msg = helper.cmd_vast_wait(["gpu"])
+        self.assertTrue(ok)
+        self.assertIn("ready", msg)
 
     def test_wait_more_timeout_and_unreachable_paths(self):
         logger = SimpleNamespace(
@@ -496,22 +538,22 @@ class ExecutorVastMoreTests(unittest.TestCase):
 
         helper.executor.ctx.variables.clear()
         ok, msg = helper.cmd_vast_cost([])
-        self.assertTrue(ok)
-        self.assertIn("no instance ID provided", msg)
+        self.assertFalse(ok)
+        self.assertIn("No instance ID provided for vast.cost", msg)
         helper.executor.ctx.variables["VAST_ID"] = "bad"
-        ok, msg = helper.cmd_vast_cost([])
-        self.assertTrue(ok)
-        self.assertIn("invalid instance ID", msg)
+        ok, msg = helper.cmd_vast_cost(["bad"])
+        self.assertFalse(ok)
+        self.assertIn("Invalid instance ID", msg)
         helper.executor.ctx.variables["VAST_ID"] = "7"
-        ok, msg = helper.cmd_vast_cost([])
-        self.assertTrue(ok)
+        ok, msg = helper.cmd_vast_cost(["7"])
+        self.assertFalse(ok)
         self.assertIn("no start time recorded", msg)
 
         helper.executor.ctx.variables["_vast_start_time"] = "2026-03-12T00:00:00"
         zero_instance = SimpleNamespace(dph_total=0.0, gpu_name="A100")
         with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(get_instance=lambda inst_id: zero_instance)):
-            ok, msg = helper.cmd_vast_cost([])
-        self.assertTrue(ok)
+            ok, msg = helper.cmd_vast_cost(["7"])
+        self.assertFalse(ok)
         self.assertIn("no pricing", msg)
 
         priced_instance = SimpleNamespace(dph_total=1.0, gpu_name="A100")
@@ -522,21 +564,29 @@ class ExecutorVastMoreTests(unittest.TestCase):
         ), patch("trainsh.core.executor_vast.datetime") as mocked_datetime:
             mocked_datetime.fromisoformat.return_value = __import__("datetime").datetime(2026, 3, 12, 0, 0, 0)
             mocked_datetime.now.return_value = __import__("datetime").datetime(2026, 3, 12, 1, 0, 0)
-            ok, msg = helper.cmd_vast_cost([])
+            ok, msg = helper.cmd_vast_cost(["7"])
         self.assertTrue(ok)
         self.assertIn("CNY7.00", msg)
 
         with patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("boom")):
-            ok, msg = helper.cmd_vast_cost([])
-        self.assertTrue(ok)
+            ok, msg = helper.cmd_vast_cost(["7"])
+        self.assertFalse(ok)
         self.assertIn("boom", msg)
 
         helper.executor.ctx.variables.clear()
         helper.executor.ctx.variables["_vast_start_time"] = "2026-03-12T00:00:00"
         with patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("boom arg")):
             ok, msg = helper.cmd_vast_cost(["7"])
-        self.assertTrue(ok)
+        self.assertFalse(ok)
         self.assertIn("boom arg", msg)
+
+        helper.executor.recipe.hosts = {"gpu": "root@proxy -p 22"}
+        helper.executor.ctx.variables["VAST_ID_gpu"] = "14"
+        helper.executor.ctx.variables["_vast_start_time"] = "2026-03-12T00:00:00"
+        with patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("boom alias")):
+            ok, msg = helper.cmd_vast_cost(["gpu"])
+        self.assertFalse(ok)
+        self.assertIn("boom alias", msg)
 
 
 if __name__ == "__main__":

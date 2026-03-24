@@ -301,10 +301,10 @@ class DagProcessorPythonRecipeTests(unittest.TestCase):
                     """
                     from trainsh import Recipe, Storage
 
+                    # tags: gpu, nightly
                     recipe = Recipe(
                         "scheduled-demo",
                         schedule="@every 5m",
-                        tags=["gpu", "nightly"],
                         paused=True,
                         callbacks=["console"],
                         executor="airflow",
@@ -344,11 +344,11 @@ class DagProcessorPythonRecipeTests(unittest.TestCase):
                     """
                     from trainsh import Recipe
 
+                    # owner: ml
+                    # tags: nightly
                     with Recipe(
                         "context-demo",
                         schedule="@every 15m",
-                        owner="ml",
-                        tags=["nightly"],
                         executor="thread_pool",
                         executor_kwargs={"max_workers": 3},
                         callbacks=["console"],

@@ -88,6 +88,14 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 ok, msg = executor._exec_provider_storage_list({"storage": "artifacts", "path": "/", "recursive": False})
                 self.assertTrue(ok)
                 self.assertIn("hello.txt", msg)
+                ok, msg = executor._exec_provider_storage_count({"storage": "artifacts", "path": "/", "capture_var": "COUNT"})
+                self.assertTrue(ok)
+                self.assertEqual(msg, "1")
+                self.assertEqual(executor.ctx.variables["COUNT"], "1")
+                ok, msg = executor._exec_provider_storage_wait_count(
+                    {"storage": "artifacts", "path": "/", "exact_count": 1, "timeout": "1s", "poll_interval": "1s"}
+                )
+                self.assertTrue(ok)
                 ok, msg = executor._exec_provider_storage_mkdir({"storage": "artifacts", "path": "/nested"})
                 self.assertTrue(ok)
                 ok, msg = executor._exec_provider_storage_rename({"storage": "artifacts", "source": "/hello.txt", "destination": "/renamed.txt"})
@@ -132,6 +140,11 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 ok, msg = executor._exec_provider_branch({"condition": "var:READY==1", "variable": "BRANCH", "true_value": "go", "false_value": "stop"})
                 self.assertTrue(ok)
                 self.assertEqual(executor.ctx.variables["BRANCH"], "go")
+                ok, msg = executor._exec_provider_branch(
+                    {"condition": "var:READY==1", "variable": "BRANCH_ARG", "true_value": "--resume-from-step=${READY}", "false_value": ""}
+                )
+                self.assertTrue(ok)
+                self.assertEqual(executor.ctx.variables["BRANCH_ARG"], "--resume-from-step=1")
                 ok, msg = executor._exec_provider_short_circuit({"condition": "var:READY==1"})
                 self.assertTrue(ok)
                 ok, msg = executor._exec_provider_short_circuit({"condition": "var:MISSING", "message": "blocked"})
@@ -279,6 +292,120 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 ok, msg = executor._exec_provider_get_value({"target": "BAD", "source": "other:bad"})
                 self.assertFalse(ok)
 
+    def test_github_clone_uses_token_without_mutating_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_file = Path(tmpdir) / "github.token"
+            token_file.write_text("ghs_demo\n", encoding="utf-8")
+            with isolated_executor(RecipeModel(name="providers")) as (executor, _config_dir):
+                with patch(
+                    "trainsh.core.provider_shell.materialize_secret_file",
+                    return_value=str(token_file),
+                ), patch(
+                    "trainsh.core.provider_shell.materialize_git_askpass_script",
+                    return_value="/tmp/trainsh-askpass.sh",
+                ), patch.object(
+                    executor,
+                    "_exec_provider_shell",
+                    return_value=(True, "fallback"),
+                ) as shell_mock, patch(
+                    "subprocess.run",
+                    return_value=SimpleNamespace(returncode=0, stdout="cloned", stderr=""),
+                ) as run_mock:
+                    ok, msg = executor._exec_provider_git_clone(
+                        {
+                            "repo_url": "https://github.com/example/private-repo.git",
+                            "destination": "/tmp/repo",
+                            "branch": "main",
+                            "depth": 1,
+                        }
+                    )
+                self.assertTrue(ok)
+                self.assertEqual(msg, "cloned")
+                shell_mock.assert_not_called()
+                command = run_mock.call_args.args[0]
+                env = run_mock.call_args.kwargs["env"]
+                self.assertIn("git clone", command)
+                self.assertIn("https://github.com/example/private-repo.git", command)
+                self.assertEqual(env["GIT_ASKPASS"], "/tmp/trainsh-askpass.sh")
+                self.assertEqual(env["TRAINSH_GIT_PASSWORD_FILE"], str(token_file))
+                self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+                self.assertTrue(run_mock.call_args.kwargs["shell"])
+
+    def test_github_clone_plain_auth_skips_token_lookup(self):
+        with isolated_executor(RecipeModel(name="providers")) as (executor, _config_dir):
+            with patch(
+                "trainsh.core.provider_shell.materialize_secret_file",
+                return_value="/tmp/github.token",
+            ) as secret_mock, patch.object(
+                executor,
+                "_exec_provider_shell",
+                return_value=(True, "plain ok"),
+            ) as shell_mock:
+                ok, msg = executor._exec_provider_git_clone(
+                    {
+                        "repo_url": "https://github.com/example/private-repo.git",
+                        "destination": "/tmp/repo",
+                        "auth": "plain",
+                    }
+                )
+            self.assertTrue(ok)
+            self.assertEqual(msg, "plain ok")
+            secret_mock.assert_not_called()
+            shell_mock.assert_called_once()
+
+    def test_github_clone_explicit_token_auth_requires_secret(self):
+        with isolated_executor(RecipeModel(name="providers")) as (executor, _config_dir):
+            with patch(
+                "trainsh.core.provider_shell.materialize_secret_file",
+                return_value=None,
+            ):
+                ok, msg = executor._exec_provider_git_clone(
+                    {
+                        "repo_url": "https://github.com/example/private-repo.git",
+                        "auth": "github_token",
+                        "token_secret": "PRIVATE_GITHUB_TOKEN",
+                    }
+                )
+            self.assertFalse(ok)
+            self.assertIn("PRIVATE_GITHUB_TOKEN", msg)
+
+    def test_github_clone_uses_token_over_ssh_without_logging_secret(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_file = Path(tmpdir) / "github.token"
+            token_file.write_text("ghs_demo\n", encoding="utf-8")
+            with isolated_executor(RecipeModel(name="providers")) as (executor, _config_dir):
+                with patch(
+                    "trainsh.core.provider_shell.materialize_secret_file",
+                    return_value=str(token_file),
+                ), patch(
+                    "trainsh.core.provider_shell.build_remote_git_auth_command",
+                    return_value="REMOTE_AUTH_CMD",
+                ) as remote_cmd_mock, patch(
+                    "trainsh.core.provider_shell._build_ssh_args",
+                    return_value=["ssh", "gpu", "REMOTE_AUTH_CMD"],
+                ) as ssh_args_mock, patch.object(
+                    executor,
+                    "_exec_provider_shell",
+                    return_value=(True, "fallback"),
+                ) as shell_mock, patch(
+                    "subprocess.run",
+                    return_value=SimpleNamespace(returncode=0, stdout="", stderr="remote ok"),
+                ) as run_mock:
+                    ok, msg = executor._exec_provider_git_clone(
+                        {
+                            "repo_url": "https://github.com/example/private-repo.git",
+                            "destination": "/tmp/repo",
+                            "host": "gpu",
+                        }
+                    )
+                self.assertTrue(ok)
+                self.assertEqual(msg, "remote ok")
+                shell_mock.assert_not_called()
+                remote_cmd_mock.assert_called_once()
+                ssh_args_mock.assert_called_once_with("gpu", command="REMOTE_AUTH_CMD", tty=False)
+                self.assertEqual(run_mock.call_args.args[0], ["ssh", "gpu", "REMOTE_AUTH_CMD"])
+                self.assertEqual(run_mock.call_args.kwargs["input"], "ghs_demo\n")
+
                 ok, msg = executor._exec_provider_set_env({"name": "TRAINSH_TEST_ENV", "value": "1"})
                 self.assertTrue(ok)
                 self.assertEqual(os.environ["TRAINSH_TEST_ENV"], "1")
@@ -321,10 +448,13 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 mocked_download = stack.enter_context(patch.object(executor, "_exec_provider_storage_download", return_value=(True, "download")))
                 mocked_storage_list = stack.enter_context(patch.object(executor, "_exec_provider_storage_list", return_value=(True, "list")))
                 mocked_storage_exists = stack.enter_context(patch.object(executor, "_exec_provider_storage_exists", return_value=(True, "exists")))
+                mocked_storage_count = stack.enter_context(patch.object(executor, "_exec_provider_storage_count", return_value=(True, "count")))
                 mocked_storage_read = stack.enter_context(patch.object(executor, "_exec_provider_storage_read_text", return_value=(True, "read")))
                 mocked_storage_info = stack.enter_context(patch.object(executor, "_exec_provider_storage_info", return_value=(True, "info")))
                 mocked_storage_wait = stack.enter_context(patch.object(executor, "_exec_provider_storage_wait", return_value=(True, "wait")))
+                mocked_storage_wait_count = stack.enter_context(patch.object(executor, "_exec_provider_storage_wait_count", return_value=(True, "wait_count")))
                 mocked_storage_mkdir = stack.enter_context(patch.object(executor, "_exec_provider_storage_mkdir", return_value=(True, "mkdir")))
+                mocked_storage_bucket = stack.enter_context(patch.object(executor, "_exec_provider_storage_ensure_bucket", return_value=(True, "bucket")))
                 mocked_storage_delete = stack.enter_context(patch.object(executor, "_exec_provider_storage_delete", return_value=(True, "delete")))
                 mocked_storage_rename = stack.enter_context(patch.object(executor, "_exec_provider_storage_rename", return_value=(True, "rename")))
                 mocked_transfer = stack.enter_context(patch.object(executor, "_exec_provider_transfer", return_value=(True, "transfer")))
@@ -364,10 +494,13 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 self.assertEqual(executor._exec_provider(step("cloud", "get", {"storage": "artifacts"})), (True, "download"))
                 self.assertEqual(executor._exec_provider(step("cloud", "ls", {"storage": "artifacts"})), (True, "list"))
                 self.assertEqual(executor._exec_provider(step("cloud", "check", {"storage": "artifacts"})), (True, "exists"))
+                self.assertEqual(executor._exec_provider(step("cloud", "count", {"storage": "artifacts"})), (True, "count"))
                 self.assertEqual(executor._exec_provider(step("cloud", "cat", {"storage": "artifacts"})), (True, "read"))
                 self.assertEqual(executor._exec_provider(step("cloud", "stat", {"storage": "artifacts"})), (True, "info"))
                 self.assertEqual(executor._exec_provider(step("cloud", "wait_for", {"storage": "artifacts"})), (True, "wait"))
+                self.assertEqual(executor._exec_provider(step("cloud", "wait_count", {"storage": "artifacts"})), (True, "wait_count"))
                 self.assertEqual(executor._exec_provider(step("cloud", "mkdir", {"storage": "artifacts"})), (True, "mkdir"))
+                self.assertEqual(executor._exec_provider(step("cloud", "ensure_bucket", {"storage": "artifacts"})), (True, "bucket"))
                 self.assertEqual(executor._exec_provider(step("cloud", "rm", {"storage": "artifacts"})), (True, "delete"))
                 self.assertEqual(executor._exec_provider(step("cloud", "mv", {"storage": "artifacts"})), (True, "rename"))
                 self.assertEqual(executor._exec_provider(step("cloud", "transfer", {"storage": "artifacts"})), (True, "transfer"))
@@ -383,10 +516,13 @@ class ExecutorMainProviderTests(unittest.TestCase):
                 self.assertEqual(executor._exec_provider(step("storage", "download")), (True, "download"))
                 self.assertEqual(executor._exec_provider(step("storage", "ls")), (True, "list"))
                 self.assertEqual(executor._exec_provider(step("storage", "check")), (True, "exists"))
+                self.assertEqual(executor._exec_provider(step("storage", "count")), (True, "count"))
                 self.assertEqual(executor._exec_provider(step("storage", "cat")), (True, "read"))
                 self.assertEqual(executor._exec_provider(step("storage", "stat")), (True, "info"))
                 self.assertEqual(executor._exec_provider(step("storage", "wait")), (True, "wait"))
+                self.assertEqual(executor._exec_provider(step("storage", "wait_count")), (True, "wait_count"))
                 self.assertEqual(executor._exec_provider(step("storage", "mkdir")), (True, "mkdir"))
+                self.assertEqual(executor._exec_provider(step("storage", "ensure_bucket")), (True, "bucket"))
                 self.assertEqual(executor._exec_provider(step("storage", "delete")), (True, "delete"))
                 self.assertEqual(executor._exec_provider(step("storage", "rename")), (True, "rename"))
                 self.assertEqual(executor._exec_provider(step("storage", "copy")), (True, "transfer"))

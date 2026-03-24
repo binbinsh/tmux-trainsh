@@ -56,8 +56,8 @@ class ExecutorProviderConditionsMixin:
         if not condition:
             return False, "Provider util.branch requires 'condition'"
 
-        true_value = str(params.get("true_value", "true"))
-        false_value = str(params.get("false_value", "false"))
+        true_value = self._interpolate(str(params.get("true_value", "true")))
+        false_value = self._interpolate(str(params.get("false_value", "false")))
         variable = str(params.get("variable", "branch")).strip()
         host = self._provider_host(params.get("host", "local"))
 

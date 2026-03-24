@@ -309,6 +309,13 @@ class R2B2FlowTests(unittest.TestCase):
                     self.assertTrue(ok, listed)
                     self.assertIn("object.txt", listed)
 
+                    ok, counted = executor._exec_provider_storage_count(
+                        {"storage": "artifacts", "path": "/exports", "recursive": True, "capture_var": "COUNT"}
+                    )
+                    self.assertTrue(ok, counted)
+                    self.assertEqual(counted, "1")
+                    self.assertEqual(executor.ctx.variables["COUNT"], "1")
+
                     ok, info = executor._exec_provider_storage_info(
                         {"storage": "artifacts", "path": "/exports/object.txt"}
                     )
@@ -323,6 +330,16 @@ class R2B2FlowTests(unittest.TestCase):
 
                     ok, message = executor._exec_provider_storage_mkdir(
                         {"storage": "artifacts", "path": "/tmpdir"}
+                    )
+                    self.assertTrue(ok, message)
+
+                    ok, message = executor._exec_provider_storage_wait_count(
+                        {"storage": "artifacts", "path": "/exports", "min_count": 1, "timeout": 1}
+                    )
+                    self.assertTrue(ok, message)
+
+                    ok, message = executor._exec_provider_storage_ensure_bucket(
+                        {"storage": "artifacts"}
                     )
                     self.assertTrue(ok, message)
 

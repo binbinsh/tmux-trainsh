@@ -2,6 +2,8 @@
 # Encapsulates @session command execution.
 
 import re
+import os
+import shlex
 import subprocess
 import time
 from typing import Any, Callable, Optional
@@ -30,6 +32,63 @@ class ExecuteHelper:
         except Exception:
             return None
         return timeout_secs if timeout_secs > 0 else None
+
+    def _read_captured_output(self, host: str, path: str) -> str:
+        """Read one captured-output file from local or remote host."""
+        target = str(path or "").strip()
+        if not target:
+            return ""
+        if host == "local":
+            try:
+                with open(os.path.expanduser(target), "r", encoding="utf-8", errors="replace") as handle:
+                    return handle.read()
+            except OSError:
+                return ""
+        try:
+            ssh_args = self.build_ssh_args(host, command=f"cat {shlex.quote(target)}", tty=False)
+            result = subprocess.run(
+                ssh_args,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception:
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout or ""
+
+    def _cleanup_captured_output(self, host: str, path: str) -> None:
+        """Best-effort cleanup for one captured-output file."""
+        target = str(path or "").strip()
+        if not target:
+            return
+        if host == "local":
+            try:
+                os.remove(os.path.expanduser(target))
+            except OSError:
+                return
+            return
+        try:
+            ssh_args = self.build_ssh_args(host, command=f"rm -f {shlex.quote(target)}", tty=False)
+            subprocess.run(
+                ssh_args,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception:
+            return
+
+    def _store_captured_output(self, step: Any, host: str) -> None:
+        """Read captured output and persist it into runtime variables."""
+        capture_var = str(getattr(step, "capture_var", "") or "").strip()
+        capture_path = str(getattr(step, "capture_path", "") or "").strip()
+        if not capture_var or not capture_path:
+            return
+        output = self._read_captured_output(host, capture_path)
+        self.executor.ctx.variables[capture_var] = output.rstrip("\r\n")
+        self._cleanup_captured_output(host, capture_path)
 
     def exec_execute(self, step: Any) -> tuple[bool, str]:
         """Execute command: @session > command."""
@@ -82,6 +141,7 @@ class ExecuteHelper:
                 time.sleep(0.5)
                 window_info = self.window_cls(name=window_name, host=host, remote_session=remote_session)
                 ok, msg = self.executor._wait_for_idle(window_info, timeout)
+                self._store_captured_output(step, host)
                 elapsed = int(time.time() - start_time)
                 if self.executor.logger:
                     self.executor.logger.log_detail("execute_complete", f"Command completed on {window_name}", {
@@ -98,6 +158,7 @@ class ExecuteHelper:
                 return False, "Failed sending command to tmux session"
 
             wait_result = tmux_client.wait_for(signal, timeout=timeout)
+            self._store_captured_output(step, host)
             elapsed = int(time.time() - start_time)
             if self.executor.logger:
                 self.executor.logger.log_detail("execute_complete", f"Command completed on {window_name}", {
@@ -121,6 +182,7 @@ class ExecuteHelper:
                     duration_ms = int((time.time() - start_time) * 1000)
                     if self.executor.logger:
                         self.executor.logger.log_ssh("local", commands, result.returncode, result.stdout, result.stderr, duration_ms)
+                    self._store_captured_output(step, "local")
                     return result.returncode == 0, result.stdout or result.stderr
                 except subprocess.TimeoutExpired:
                     return False, f"Command timed out after {timeout}s"
@@ -136,6 +198,7 @@ class ExecuteHelper:
                 duration_ms = int((time.time() - start_time) * 1000)
                 if self.executor.logger:
                     self.executor.logger.log_ssh(host, commands, result.returncode, result.stdout, result.stderr, duration_ms)
+                self._store_captured_output(step, host)
                 return result.returncode == 0, result.stdout or result.stderr
             except subprocess.TimeoutExpired:
                 return False, f"Command timed out after {timeout}s"

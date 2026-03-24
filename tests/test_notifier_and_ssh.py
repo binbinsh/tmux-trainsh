@@ -258,6 +258,11 @@ class SSHTests(unittest.TestCase):
             result = client.download_file("/out", "./in")
         self.assertFalse(result.success)
 
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="ok\n", stderr="")) as run_mock:
+            result = client.run_with_input("cat >/tmp/token", "sekret\n")
+        self.assertTrue(result.success)
+        self.assertEqual(run_mock.call_args.kwargs["input"], "sekret\n")
+
         script = get_system_info_script()
         self.assertIn("SYSTEM INFO", script)
         self.assertIn("GPU INFO", script)

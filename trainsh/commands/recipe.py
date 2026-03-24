@@ -17,7 +17,7 @@ from .recipe_templates import get_recipe_template, list_template_names
 
 SUBCOMMAND_SPECS = (
     SubcommandSpec("list", "List user recipes and bundled examples."),
-    SubcommandSpec("show", "Inspect one recipe's metadata and rendered steps."),
+    SubcommandSpec("show", "Print raw recipe source by default, or the compiled step view."),
     SubcommandSpec("new", "Create a recipe file from a bundled template."),
     SubcommandSpec("edit", "Open a recipe file in $EDITOR."),
     SubcommandSpec("remove", "Delete a recipe file after confirmation."),
@@ -228,13 +228,48 @@ def cmd_list(args: List[str]) -> None:
 def cmd_show(args: List[str]) -> None:
     """Show recipe details."""
     if not args:
-        print("Usage: train recipe show <name>")
+        print("Usage: train recipe show <name> [--source|--compiled]")
         raise SystemExit(1)
 
-    recipe_path = find_recipe(args[0])
-    if not recipe_path:
-        print(f"Recipe not found: {args[0]}")
+    show_mode = "source"
+    recipe_name = ""
+    for arg in args:
+        text = str(arg).strip()
+        if not text:
+            continue
+        if text == "--source":
+            show_mode = "source"
+            continue
+        if text == "--compiled":
+            show_mode = "compiled"
+            continue
+        if text in {"-h", "--help", "help"}:
+            print("Usage: train recipe show <name> [--source|--compiled]")
+            raise SystemExit(0)
+        if not recipe_name:
+            recipe_name = text
+            continue
+        print(f"Unknown flag: {text}")
+        print("Usage: train recipe show <name> [--source|--compiled]")
         raise SystemExit(1)
+
+    if not recipe_name:
+        print("Usage: train recipe show <name> [--source|--compiled]")
+        raise SystemExit(1)
+
+    recipe_path = find_recipe(recipe_name)
+    if not recipe_path:
+        print(f"Recipe not found: {recipe_name}")
+        raise SystemExit(1)
+
+    if show_mode == "source":
+        try:
+            source = Path(recipe_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"Error reading recipe: {exc}")
+            raise SystemExit(1)
+        print(source.rstrip())
+        return
 
     from ..pyrecipe import load_python_recipe
 
@@ -269,7 +304,7 @@ def cmd_show(args: List[str]) -> None:
 def cmd_new(args: List[str]) -> None:
     """Create a new recipe from template."""
     if not args:
-        print("Usage: train recipe new <name> [--template minimal]")
+        print(f"Usage: train recipe new <name> [--template {'|'.join(list_template_names())}]")
         raise SystemExit(1)
 
     name = args[0]
@@ -289,7 +324,7 @@ def cmd_new(args: List[str]) -> None:
             template_name = rest_args[i].strip() or template_name
         else:
             print(f"Unknown flag: {arg}")
-            print("Usage: train recipe new <name> [--template minimal]")
+            print(f"Usage: train recipe new <name> [--template {'|'.join(list_template_names())}]")
             raise SystemExit(1)
         i += 1
 

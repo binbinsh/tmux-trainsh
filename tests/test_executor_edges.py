@@ -239,13 +239,13 @@ class ExecSupportAndNotifyEdgeTests(unittest.TestCase):
             ) as mocked_attach, patch.object(
                 executor.vast_control, "cmd_vast_cost", return_value=(True, "cost")
             ):
-                self.assertEqual(executor._cmd_vast_start([]), (True, "start"))
-                self.assertEqual(executor._cmd_vast_stop([]), (True, "stop"))
+                self.assertEqual(executor._cmd_vast_start(["gpu"]), (True, "start"))
+                self.assertEqual(executor._cmd_vast_stop(["gpu"]), (True, "stop"))
                 self.assertEqual(executor._cmd_vast_pick([]), (True, "pick"))
-                self.assertEqual(executor._cmd_vast_wait([]), (True, "wait"))
+                self.assertEqual(executor._cmd_vast_wait(["gpu"]), (True, "wait"))
                 self.assertTrue(executor._verify_ssh_connection("gpu"))
                 executor._ensure_ssh_key_attached(object(), "~/.ssh/id")
-                self.assertEqual(executor._cmd_vast_cost([]), (True, "cost"))
+                self.assertEqual(executor._cmd_vast_cost(["gpu"]), (True, "cost"))
             mocked_attach.assert_called_once()
 
             with patch("trainsh.core.executor_support.time.sleep") as mocked_sleep:

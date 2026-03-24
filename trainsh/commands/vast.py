@@ -9,13 +9,19 @@ from ..cli_utils import SubcommandSpec, dispatch_subcommand, prompt_input
 from .help_catalog import render_command_help
 from .help_cmd import reject_subcommand_help
 from ..core.models import AuthMethod, Host, HostType
-from .remote_run import parse_remote_run_args, run_remote_command
+from .remote_run import (
+    parse_remote_clone_args,
+    parse_remote_run_args,
+    run_remote_command,
+    run_remote_git_clone,
+)
 
 SUBCOMMAND_SPECS = (
     SubcommandSpec("list", "List your current Vast.ai instances."),
     SubcommandSpec("show", "Inspect one instance in detail."),
     SubcommandSpec("ssh", "Open SSH to a running instance."),
     SubcommandSpec("run", "Run one remote shell command on an instance."),
+    SubcommandSpec("clone", "Clone one git repository on an instance."),
     SubcommandSpec("start", "Start an instance."),
     SubcommandSpec("stop", "Stop an instance."),
     SubcommandSpec("reboot", "Reboot an instance."),
@@ -111,6 +117,33 @@ def cmd_run(args: List[str]) -> None:
         vast_instance_id=str(instance_id),
     )
     run_remote_command(host, command, label=f"Vast.ai #{instance_id}")
+
+
+def cmd_clone(args: List[str]) -> None:
+    """Clone one repository on a Vast.ai instance."""
+    instance_id_text, request = parse_remote_clone_args(
+        args,
+        usage=(
+            "train vast clone <instance-id> <repo-url> [destination] "
+            "[--branch <name>] [--depth <n>] [--auth auto|github_token|plain] "
+            "[--token-secret <name>]"
+        ),
+    )
+
+    try:
+        instance_id = int(instance_id_text)
+    except ValueError:
+        print(f"Invalid instance ID: {instance_id_text}")
+        sys.exit(1)
+
+    host = Host(
+        name=f"vast-{instance_id}",
+        type=HostType.VASTAI,
+        username="root",
+        auth_method=AuthMethod.KEY,
+        vast_instance_id=str(instance_id),
+    )
+    run_remote_git_clone(host, request, label=f"Vast.ai #{instance_id}")
 
 
 def cmd_start(args: List[str]) -> None:
@@ -282,6 +315,7 @@ def main(args: List[str]) -> Optional[str]:
         "show": cmd_show,
         "ssh": cmd_ssh,
         "run": cmd_run,
+        "clone": cmd_clone,
         "start": cmd_start,
         "stop": cmd_stop,
         "reboot": cmd_reboot,

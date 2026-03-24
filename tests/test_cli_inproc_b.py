@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from trainsh.commands import colab, host, storage, transfer, vast
+from trainsh.commands.remote_run import RemoteCloneRequest
 from trainsh.core.models import AuthMethod, Host, HostType, Storage, StorageType
 
 
@@ -125,6 +126,33 @@ class HostCommandTests(unittest.TestCase):
                 text = capture_output(host.cmd_run, ["gpu-box", "--", "nvidia-smi"])
                 self.assertIn("Running on gpu-box...", text)
                 self.assertIn("GPU OK", text)
+
+            with patch("trainsh.commands.host.run_remote_git_clone") as clone_mock:
+                host.cmd_clone(
+                    [
+                        "gpu-box",
+                        "https://github.com/org/private-repo.git",
+                        "/srv/repo",
+                        "--branch",
+                        "main",
+                        "--auth",
+                        "github_token",
+                    ]
+                )
+            clone_mock.assert_called_once()
+            clone_host, clone_request = clone_mock.call_args.args
+            self.assertEqual(clone_host.name, "gpu-box")
+            self.assertEqual(
+                clone_request,
+                RemoteCloneRequest(
+                    repo_url="https://github.com/org/private-repo.git",
+                    destination="/srv/repo",
+                    branch="main",
+                    depth="",
+                    auth="github_token",
+                    token_secret="GITHUB_TOKEN",
+                ),
+            )
 
             ssh_client.test_connection.return_value = False
             with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh_client):
@@ -419,6 +447,23 @@ class TransferColabVastCommandTests(unittest.TestCase):
                 text = capture_output(vast.cmd_run, ["123", "--", "nvidia-smi"])
             self.assertIn("Running on Vast.ai #123...", text)
             self.assertIn("VAST OK", text)
+
+            with patch("trainsh.commands.vast.run_remote_git_clone") as clone_mock:
+                vast.cmd_clone(
+                    [
+                        "123",
+                        "https://github.com/org/private-repo.git",
+                        "/workspace/repo",
+                        "--depth",
+                        "1",
+                    ]
+                )
+            clone_mock.assert_called_once()
+            clone_host, clone_request = clone_mock.call_args.args
+            self.assertEqual(clone_host.vast_instance_id, "123")
+            self.assertEqual(clone_request.destination, "/workspace/repo")
+            self.assertEqual(clone_request.depth, "1")
+            self.assertEqual(clone_request.auth, "auto")
 
             text = capture_output(vast.cmd_start, ["123"])
             self.assertIn("Instance started.", text)

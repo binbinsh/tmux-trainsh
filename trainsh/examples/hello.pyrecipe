@@ -2,8 +2,6 @@ from trainsh import Recipe, local
 
 recipe = Recipe(
     "hello-world",
-    owner="examples",
-    tags=["bundle", "local", "intro"],
     callbacks=["console", "jsonl"],
 )
 message = "Hello from trainsh"

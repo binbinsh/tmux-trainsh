@@ -29,6 +29,8 @@ class RecipeStepModel:
     commands: str = ""
     background: bool = False
     timeout: int = 0
+    capture_var: str = ""
+    capture_path: str = ""
     source: str = ""
     dest: str = ""
     delete: bool = False
