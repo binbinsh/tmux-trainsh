@@ -22,12 +22,6 @@ uv tool install -U tmux-trainsh
 train help
 ```
 
-Install the latest GitHub version with uv:
-
-```bash
-uv tool install -U git+https://github.com/binbinsh/tmux-trainsh
-```
-
 Or use the install script:
 
 ```bash
@@ -54,6 +48,7 @@ curl -LsSf https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.
 train secrets set GITHUB_TOKEN
 train secrets set VAST_API_KEY
 train secrets set RUNPOD_API_KEY
+train secrets set POE_API_KEY
 train host add
 train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 0
 train storage add

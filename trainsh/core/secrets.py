@@ -521,6 +521,7 @@ class KeyringBackend(SecretsBackend):
         predefined = [
             SecretKeys.VAST_API_KEY,
             SecretKeys.RUNPOD_API_KEY,
+            SecretKeys.POE_API_KEY,
             SecretKeys.HF_TOKEN,
             SecretKeys.OPENAI_API_KEY,
             SecretKeys.OPENROUTER_API_KEY,
@@ -884,6 +885,7 @@ class SecretsManager:
         predefined = [
             SecretKeys.VAST_API_KEY,
             SecretKeys.RUNPOD_API_KEY,
+            SecretKeys.POE_API_KEY,
             SecretKeys.HF_TOKEN,
             SecretKeys.OPENAI_API_KEY,
             SecretKeys.OPENROUTER_API_KEY,

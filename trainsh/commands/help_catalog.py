@@ -592,6 +592,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                 (
                     "VAST_API_KEY",
                     "RUNPOD_API_KEY",
+                    "POE_API_KEY",
                     "HF_TOKEN",
                     "OPENAI_API_KEY",
                     "OPENROUTER_API_KEY",
@@ -612,6 +613,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train secrets list",
             "train secrets set VAST_API_KEY",
             "train secrets set RUNPOD_API_KEY",
+            "train secrets set POE_API_KEY",
             "train secrets set GITHUB_TOKEN",
             "train secrets get OPENAI_API_KEY",
             "train secrets backend",
@@ -961,7 +963,7 @@ def render_top_level_help() -> str:
         "  vllm      Managed vLLM servers, tunnels, and JSONL batch clients.",
         "  vast      Vast.ai host lifecycle and one-off remote clone.",
         "  runpod    RunPod Pod lifecycle and one-off remote clone.",
-        "  secrets   Stored credentials such as VAST_API_KEY, RUNPOD_API_KEY, and GITHUB_TOKEN.",
+        "  secrets   Stored credentials such as VAST_API_KEY, RUNPOD_API_KEY, POE_API_KEY, and GITHUB_TOKEN.",
         "  resume    Resume the latest failed or interrupted run.",
         "  status    Choose between status, logs, jobs, and scheduler history.",
         "  schedule  Scheduled recipe execution and scheduler inspection.",
@@ -1133,10 +1135,6 @@ def render_readme_overview() -> str:
         "uv tool install -U tmux-trainsh\n"
         "train help\n"
         "```\n\n"
-        "Install the latest GitHub version with uv:\n\n"
-        "```bash\n"
-        "uv tool install -U git+https://github.com/binbinsh/tmux-trainsh\n"
-        "```\n\n"
         "Or use the install script:\n\n"
         "```bash\n"
         "curl -LsSf https://raw.githubusercontent.com/binbinsh/tmux-trainsh/main/install.sh | bash\n"
@@ -1158,6 +1156,7 @@ def render_readme_overview() -> str:
         "train secrets set GITHUB_TOKEN\n"
         "train secrets set VAST_API_KEY\n"
         "train secrets set RUNPOD_API_KEY\n"
+        "train secrets set POE_API_KEY\n"
         "train host add\n"
         "train vllm serve gpu-box Qwen/Qwen2.5-32B-Instruct --gpus 0\n"
         "train storage add\n\n"

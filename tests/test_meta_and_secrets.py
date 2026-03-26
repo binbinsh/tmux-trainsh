@@ -85,6 +85,7 @@ class SecretsCommandTests(CaptureMixin, unittest.TestCase):
         self.assertIsNone(code)
         self.assertIn("Backend:", out)
         self.assertIn("VAST_API_KEY", out)
+        self.assertIn("POE_API_KEY", out)
 
         out, code, _ = self.capture(secrets_cmd.main, [])
         self.assertIsNone(code)
