@@ -383,6 +383,7 @@ class VastAPIClient:
             ssh_idx=data.get("ssh_idx"),
             ssh_host=data.get("ssh_host"),
             ssh_port=data.get("ssh_port"),
+            machine_dir_ssh_port=data.get("machine_dir_ssh_port"),
             ports=data.get("ports"),
             public_ipaddr=data.get("public_ipaddr"),
             direct_port_start=data.get("direct_port_start"),

@@ -125,8 +125,11 @@ class VastFormatterTests(unittest.TestCase):
             disk_usage=30,
             ssh_host="proxy",
             ssh_port=2222,
+            machine_dir_ssh_port=5300,
             public_ipaddr="1.2.3.4",
+            ports={"22/tcp": [{"HostPort": "2201"}]},
             direct_port_start=2200,
+            direct_port_end=2205,
             geolocation="CN",
             reliability2=0.98,
             template_name="tmpl",
@@ -152,6 +155,9 @@ class VastFormatterTests(unittest.TestCase):
         self.assertIn("CNY/hr", header)
         self.assertTrue(sep.startswith("-"))
         self.assertIn("GPU: A100 x2", detail)
+        self.assertIn("SSH (direct mapped): root@1.2.3.4 -p 2201", detail)
+        self.assertIn("Direct Port Range: 2200-2205", detail)
+        self.assertIn("Machine Dir SSH Port: 5300", detail)
         self.assertIn("#1 running", brief)
 
         out = io.StringIO()
@@ -179,9 +185,25 @@ class VastConnectionTests(unittest.TestCase):
         targets = vast_ssh_targets(inst)
         self.assertEqual(
             [(target["hostname"], target["port"]) for target in targets],
-            [("1.2.3.4", 2201), ("1.2.3.4", 2200), ("proxy", 2223), ("proxy", 2222)],
+            [("1.2.3.4", 2201), ("proxy", 2223), ("proxy", 2222)],
         )
         self.assertEqual(preferred_vast_ssh_target(inst)["port"], 2201)
+
+    def test_direct_port_range_start_is_not_treated_as_ssh_port(self):
+        inst = VastInstance(
+            id=2,
+            public_ipaddr="1.2.3.4",
+            direct_port_start=2200,
+            direct_port_end=2205,
+            ssh_host="proxy",
+            ssh_port=2222,
+        )
+
+        targets = vast_ssh_targets(inst)
+        self.assertEqual(
+            [(target["hostname"], target["port"]) for target in targets],
+            [("proxy", 2222)],
+        )
 
 
 class VastCommandTests(unittest.TestCase):
@@ -233,7 +255,8 @@ class VastCommandTests(unittest.TestCase):
             out, code = capture_output(vast.cmd_ssh, ["1"])
         self.assertIsNone(code)
         os_system.assert_called_once()
-        self.assertIn("Connecting to 1.2.3.4:2200", out)
+        self.assertIn("Connecting to proxy:2222", out)
+        self.assertIn("source: ssh_proxy", out)
 
         mapped_client = SimpleNamespace(
             get_instance=lambda instance_id: self.make_instance(
@@ -248,6 +271,7 @@ class VastCommandTests(unittest.TestCase):
             out, code = capture_output(vast.cmd_ssh, ["1"])
         self.assertIsNone(code)
         self.assertIn("Connecting to 1.2.3.4:2201", out)
+        self.assertIn("source: ports:22/tcp", out)
         self.assertIn("2201", os_system.call_args.args[0])
 
         with patch("trainsh.services.vast_api.get_vast_client", return_value=client):

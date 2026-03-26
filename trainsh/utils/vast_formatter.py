@@ -220,8 +220,14 @@ def format_instance_detail(
     # Network/SSH info
     if inst.ssh_host and inst.ssh_port:
         lines.append(f"  SSH (proxy): root@{inst.ssh_host} -p {inst.ssh_port}")
-    if inst.public_ipaddr and inst.direct_port_start:
-        lines.append(f"  SSH (direct): root@{inst.public_ipaddr} -p {inst.direct_port_start}")
+    if inst.public_ipaddr and inst.ssh_direct_port is not None:
+        lines.append(f"  SSH (direct mapped): root@{inst.public_ipaddr} -p {inst.ssh_direct_port}")
+    elif inst.public_ipaddr:
+        lines.append(f"  SSH (direct mapped): unavailable")
+    if inst.direct_port_range:
+        lines.append(f"  Direct Port Range: {inst.direct_port_range}")
+    if inst.machine_dir_ssh_port is not None:
+        lines.append(f"  Machine Dir SSH Port: {inst.machine_dir_ssh_port}")
 
     # Location info
     if inst.geolocation or inst.country_code:

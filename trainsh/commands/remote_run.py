@@ -7,7 +7,7 @@ import shlex
 import sys
 from typing import List, Tuple
 
-from ..core.models import Host
+from ..core.models import Host, HostType
 from ..services.git_auth import (
     build_git_clone_command,
     build_remote_git_auth_command,
@@ -112,6 +112,24 @@ def _write_remote_result(result) -> None:
             sys.stderr.write("\n")
 
 
+def _print_ssh_target(host: Host, result) -> None:
+    """Print the concrete SSH target used when it adds debugging value."""
+    target_host = str(getattr(result, "target_hostname", "") or "").strip()
+    target_port = getattr(result, "target_port", None)
+    target_source = str(getattr(result, "target_source", "") or "").strip()
+    if not target_host or target_port in (None, ""):
+        return
+
+    is_dynamic_provider = host.type in {HostType.VASTAI, HostType.RUNPOD}
+    if not is_dynamic_provider and target_source in {"", "primary"}:
+        return
+
+    if target_source:
+        print(f"SSH target: {target_host}:{target_port} (source: {target_source})")
+        return
+    print(f"SSH target: {target_host}:{target_port}")
+
+
 def run_remote_command(host: Host, command: str, *, label: str) -> None:
     """Execute one command on one resolved host and forward output locally."""
     print(f"Running on {label}...")
@@ -124,6 +142,7 @@ def run_remote_command(host: Host, command: str, *, label: str) -> None:
 
     result = ssh.run(command)
 
+    _print_ssh_target(host, result)
     _write_remote_result(result)
 
     if result.exit_code != 0:

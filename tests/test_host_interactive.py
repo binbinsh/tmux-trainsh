@@ -82,10 +82,12 @@ class HostCommandDeepTests(unittest.TestCase):
             num_gpus=1,
             dph_total=0.5,
             disk_space=100.0,
-            public_ipaddr=None,
-            direct_port_start=None,
-            ssh_host=None,
-            ssh_port=None,
+            public_ipaddr="1.2.3.4",
+            ports={"22/tcp": [{"HostPort": "2201"}]},
+            direct_port_start=2200,
+            direct_port_end=2205,
+            ssh_host="proxy",
+            ssh_port=2222,
         )
         data.update(overrides)
         return SimpleNamespace(**data)
@@ -609,10 +611,12 @@ class HostCommandDeepTests(unittest.TestCase):
                 self.assertIsNone(code)
                 self.assertIn("vast-exited", out)
                 self.assertIn("exited", out)
+                self.assertIn("src=ports:22/tcp", out)
 
                 out, code = capture_output(host.cmd_show, ["vast-exited"])
                 self.assertIsNone(code)
                 self.assertIn("Auto-discovered: yes", out)
+                self.assertIn("Connection Source: ports:22/tcp", out)
 
                 with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh):
                     out, code = capture_output(host.cmd_test, ["vast-exited"])

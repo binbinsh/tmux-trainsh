@@ -32,6 +32,7 @@ def _apply_connection_targets(
         primary = targets[0]
         host.hostname = primary["hostname"]
         host.port = int(primary.get("port", 22) or 22)
+        env_vars["connection_source"] = str(primary.get("source") or "primary")
         if len(targets) > 1:
             env_vars["connection_candidates"] = targets[1:]
         else:
@@ -40,6 +41,7 @@ def _apply_connection_targets(
     else:
         host.hostname = ""
         host.port = 22
+        env_vars.pop("connection_source", None)
         env_vars.pop("connection_candidates", None)
         env_vars.pop(ready_key, None)
     host.env_vars = env_vars

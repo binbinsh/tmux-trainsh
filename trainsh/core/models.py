@@ -596,6 +596,7 @@ class VastInstance:
     ssh_idx: Optional[str] = None
     ssh_host: Optional[str] = None
     ssh_port: Optional[int] = None
+    machine_dir_ssh_port: Optional[int] = None
     ports: Optional[Dict[str, Any]] = None
     public_ipaddr: Optional[str] = None
     direct_port_start: Optional[int] = None
@@ -633,11 +634,57 @@ class VastInstance:
             return f"ssh -p {self.ssh_port} root@{self.ssh_host}"
         return None
 
+    @staticmethod
+    def _mapped_host_port(ports: Optional[Dict[str, Any]], *keys: str) -> Optional[int]:
+        """Return the first concrete host port mapped for one container port."""
+        if not isinstance(ports, dict):
+            return None
+
+        for key in keys:
+            raw = ports.get(key)
+            if isinstance(raw, dict):
+                bindings = [raw]
+            elif isinstance(raw, list):
+                bindings = [item for item in raw if isinstance(item, dict)]
+            else:
+                bindings = []
+
+            for binding in bindings:
+                value = (
+                    binding.get("HostPort")
+                    or binding.get("host_port")
+                    or binding.get("public_port")
+                    or binding.get("port")
+                )
+                if value in (None, ""):
+                    continue
+                try:
+                    return int(str(value).strip())
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    @property
+    def ssh_direct_port(self) -> Optional[int]:
+        """Get the actual direct SSH host port, if Vast exposed one."""
+        return self._mapped_host_port(self.ports, "22/tcp", "22")
+
+    @property
+    def direct_port_range(self) -> Optional[str]:
+        """Get the allocated direct port range as display text."""
+        if self.direct_port_start is None and self.direct_port_end is None:
+            return None
+        if self.direct_port_start is None:
+            return str(self.direct_port_end)
+        if self.direct_port_end is None or self.direct_port_end == self.direct_port_start:
+            return str(self.direct_port_start)
+        return f"{self.direct_port_start}-{self.direct_port_end}"
+
     @property
     def ssh_direct_command(self) -> Optional[str]:
         """Get direct SSH command (if available)."""
-        if self.public_ipaddr and self.direct_port_start:
-            return f"ssh -p {self.direct_port_start} root@{self.public_ipaddr}"
+        if self.public_ipaddr and self.ssh_direct_port is not None:
+            return f"ssh -p {self.ssh_direct_port} root@{self.public_ipaddr}"
         return None
 
     @property

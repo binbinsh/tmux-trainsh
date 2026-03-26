@@ -59,10 +59,13 @@ def _append_target(
 def vast_ssh_targets(instance: Any) -> list[dict[str, Any]]:
     """Return ordered SSH targets for one Vast instance.
 
-    Ordering follows Vast's own connection model first:
+    Ordering follows Vast's official `ssh-url` behavior:
     1. explicit 22/tcp port mappings on the public IP
-    2. legacy direct SSH fields
-    3. proxy SSH fields, including the jupyter runtype offset fallback
+    2. proxy SSH fields, including the jupyter runtype offset fallback
+
+    `direct_port_start` / `direct_port_end` describe the allocated direct port
+    range, but Vast's own CLI does not treat the range start as the SSH port.
+    SSH should come from the concrete 22/tcp mapping instead.
     """
 
     targets: list[dict[str, Any]] = []
@@ -86,14 +89,6 @@ def vast_ssh_targets(instance: Any) -> list[dict[str, Any]]:
                     port=host_port,
                     source=f"ports:{key}",
                 )
-
-    _append_target(
-        targets,
-        seen,
-        hostname=public_ipaddr,
-        port=_read_value(instance, "direct_port_start"),
-        source="direct_port_start",
-    )
 
     ssh_host = _read_value(instance, "ssh_host")
     ssh_port = _coerce_port(_read_value(instance, "ssh_port"))

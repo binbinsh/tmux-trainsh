@@ -94,11 +94,23 @@ class ModelsMoreTests(unittest.TestCase):
         )
         self.assertIn("2.0 KB / 4.0 KB", transfer.formatted_progress)
 
-        inst = VastInstance(id=7, actual_status="running", ssh_host="proxy", ssh_port=22, public_ipaddr="1.2.3.4", direct_port_start=2200, dph_total=1.5, gpu_ram=8192)
+        inst = VastInstance(
+            id=7,
+            actual_status="running",
+            ssh_host="proxy",
+            ssh_port=22,
+            public_ipaddr="1.2.3.4",
+            ports={"22/tcp": [{"HostPort": "2201"}]},
+            direct_port_start=2200,
+            dph_total=1.5,
+            gpu_ram=8192,
+        )
         self.assertTrue(inst.is_running)
         self.assertEqual(inst.display_name, "Vast.ai #7")
         self.assertIn("proxy", inst.ssh_proxy_command)
         self.assertIn("1.2.3.4", inst.ssh_direct_command)
+        self.assertIn("2201", inst.ssh_direct_command)
+        self.assertEqual(inst.direct_port_range, "2200")
         self.assertEqual(inst.hourly_rate, 1.5)
         self.assertEqual(inst.gpu_memory_gb, 8.0)
         self.assertEqual(inst.status_color, "green")

@@ -17,6 +17,9 @@ class SSHResult:
     exit_code: int
     stdout: str
     stderr: str
+    target_hostname: Optional[str] = None
+    target_port: Optional[int] = None
+    target_source: Optional[str] = None
 
     @property
     def success(self) -> bool:
@@ -111,7 +114,7 @@ class SSHClient:
             port=host.port,
             proxy_command=cls._resolve_proxy_command(host, env_vars),
             jump_host=host.jump_host,
-            source="primary",
+            source=str(env_vars.get("connection_source", "primary") or "primary"),
         )
         targets = [primary]
         targets.extend(cls._parse_connection_candidates(host, env_vars))
@@ -257,7 +260,7 @@ class SSHClient:
                 hostname=target_hostname,
                 port=target_port,
                 proxy_command=cls._build_cloudflared_proxy_command(cloudflared_env, target_hostname),
-                source="candidate:dict:cloudflared",
+                source=str(entry.get("source", "candidate:dict:cloudflared") or "candidate:dict:cloudflared"),
             )
 
         candidate_hostname = str(entry.get("hostname", "")).strip()
@@ -277,7 +280,7 @@ class SSHClient:
             port=candidate_port,
             proxy_command=proxy_command,
             jump_host=jump_host,
-            source="candidate:dict:ssh",
+            source=str(entry.get("source", "candidate:dict:ssh") or "candidate:dict:ssh"),
         )
 
     @classmethod
@@ -419,7 +422,15 @@ class SSHClient:
     ) -> SSHResult:
         """Execute a command on the remote host with optional stdin content."""
         if self._requires_sshpass() and not self._can_use_sshpass():
-            return SSHResult(exit_code=-1, stdout="", stderr=self._sshpass_error())
+            primary = self.connection_targets[0] if self.connection_targets else None
+            return SSHResult(
+                exit_code=-1,
+                stdout="",
+                stderr=self._sshpass_error(),
+                target_hostname=primary.hostname if primary else None,
+                target_port=primary.port if primary else None,
+                target_source=primary.source if primary else None,
+            )
         last_result: Optional[SSHResult] = None
         for index, target in enumerate(self.connection_targets):
             args = self._build_ssh_args(command, target=target)
@@ -436,18 +447,27 @@ class SSHClient:
                     exit_code=result.returncode,
                     stdout=result.stdout or "",
                     stderr=result.stderr or "",
+                    target_hostname=target.hostname,
+                    target_port=target.port,
+                    target_source=target.source,
                 )
             except subprocess.TimeoutExpired:
                 ssh_result = SSHResult(
                     exit_code=-1,
                     stdout="",
                     stderr="Command timed out",
+                    target_hostname=target.hostname,
+                    target_port=target.port,
+                    target_source=target.source,
                 )
             except Exception as e:
                 ssh_result = SSHResult(
                     exit_code=-1,
                     stdout="",
                     stderr=str(e),
+                    target_hostname=target.hostname,
+                    target_port=target.port,
+                    target_source=target.source,
                 )
 
             # OpenSSH returns 255 on connection/auth/proxy failures.
@@ -547,7 +567,15 @@ class SSHClient:
             SSHResult with exit code and output
         """
         if self._requires_sshpass() and not self._can_use_sshpass():
-            return SSHResult(exit_code=-1, stdout="", stderr=self._sshpass_error())
+            primary = self.connection_targets[0] if self.connection_targets else None
+            return SSHResult(
+                exit_code=-1,
+                stdout="",
+                stderr=self._sshpass_error(),
+                target_hostname=primary.hostname if primary else None,
+                target_port=primary.port if primary else None,
+                target_source=primary.source if primary else None,
+            )
         last_result: Optional[SSHResult] = None
         for index, target in enumerate(self.connection_targets):
             args = self._build_scp_upload_args(local_path, remote_path, recursive, target)
@@ -557,12 +585,18 @@ class SSHClient:
                     exit_code=result.returncode,
                     stdout=result.stdout or "",
                     stderr=result.stderr or "",
+                    target_hostname=target.hostname,
+                    target_port=target.port,
+                    target_source=target.source,
                 )
             except Exception as e:
                 ssh_result = SSHResult(
                     exit_code=-1,
                     stdout="",
                     stderr=str(e),
+                    target_hostname=target.hostname,
+                    target_port=target.port,
+                    target_source=target.source,
                 )
 
             if ssh_result.exit_code == 255 and index < len(self.connection_targets) - 1:
@@ -621,7 +655,15 @@ class SSHClient:
             SSHResult with exit code and output
         """
         if self._requires_sshpass() and not self._can_use_sshpass():
-            return SSHResult(exit_code=-1, stdout="", stderr=self._sshpass_error())
+            primary = self.connection_targets[0] if self.connection_targets else None
+            return SSHResult(
+                exit_code=-1,
+                stdout="",
+                stderr=self._sshpass_error(),
+                target_hostname=primary.hostname if primary else None,
+                target_port=primary.port if primary else None,
+                target_source=primary.source if primary else None,
+            )
         last_result: Optional[SSHResult] = None
         for index, target in enumerate(self.connection_targets):
             args = self._build_scp_download_args(remote_path, local_path, recursive, target)
@@ -631,12 +673,18 @@ class SSHClient:
                     exit_code=result.returncode,
                     stdout=result.stdout or "",
                     stderr=result.stderr or "",
+                    target_hostname=target.hostname,
+                    target_port=target.port,
+                    target_source=target.source,
                 )
             except Exception as e:
                 ssh_result = SSHResult(
                     exit_code=-1,
                     stdout="",
                     stderr=str(e),
+                    target_hostname=target.hostname,
+                    target_port=target.port,
+                    target_source=target.source,
                 )
 
             if ssh_result.exit_code == 255 and index < len(self.connection_targets) - 1:

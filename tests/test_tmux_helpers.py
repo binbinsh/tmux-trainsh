@@ -198,10 +198,10 @@ class ExecutorUtilsTests(unittest.TestCase):
             "trainsh.core.executor_utils._test_ssh_connection", side_effect=[False, True]
         ):
             resolved = _resolve_vast_host("7")
-            self.assertIn("1.2.3.4", resolved)
-            self.assertIn("-p 2200", resolved)
+            self.assertIn("proxy", resolved)
+            self.assertIn("-p 2222", resolved)
         with patch("trainsh.services.vast_api.get_vast_client", return_value=SimpleNamespace(get_instance=lambda instance_id: instance)), patch(
-            "trainsh.core.executor_utils._test_ssh_connection", side_effect=[False, False, False]
+            "trainsh.core.executor_utils._test_ssh_connection", side_effect=[False, False]
         ):
             resolved = _resolve_vast_host("7")
             self.assertIn("1.2.3.4", resolved)

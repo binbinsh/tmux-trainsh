@@ -34,6 +34,20 @@ SUBCOMMAND_SPECS = (
 usage = render_command_help("vast")
 
 
+def _describe_ssh_target_source(source: str) -> str:
+    """Convert an internal Vast SSH target source into user-facing text."""
+    text = str(source or "").strip()
+    if not text:
+        return "unknown"
+    if text.startswith("ports:"):
+        return text
+    if text == "ssh_proxy":
+        return "ssh_proxy"
+    if text == "ssh_proxy_jupyter_offset":
+        return "ssh_proxy_jupyter_offset"
+    return text
+
+
 def cmd_list(args: List[str]) -> None:
     """List Vast.ai instances."""
     from ..services.vast_api import get_vast_client
@@ -94,7 +108,8 @@ def cmd_ssh(args: List[str]) -> None:
 
     ssh_host = target["hostname"]
     ssh_port = int(target["port"])
-    print(f"Connecting to {ssh_host}:{ssh_port}...")
+    source = _describe_ssh_target_source(str(target.get("source") or ""))
+    print(f"Connecting to {ssh_host}:{ssh_port} (source: {source})...")
     ssh_cmd = ssh_target_to_command(target)
     os.system(ssh_cmd)
 

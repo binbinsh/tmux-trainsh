@@ -164,8 +164,9 @@ class SSHTests(unittest.TestCase):
                 "tunnel_type": "cloudflared",
                 "cloudflared_hostname": "cf.example.com",
                 "proxy_command": "",
+                "connection_source": "ports:22/tcp",
                 "connection_candidates": [
-                    {"type": "ssh", "hostname": "gpu-alt", "port": 2200, "proxy_command": "proxy-cmd"},
+                    {"type": "ssh", "hostname": "gpu-alt", "port": 2200, "proxy_command": "proxy-cmd", "source": "ssh_proxy"},
                     {"type": "cloudflared", "hostname": "cf-alt.example.com"},
                     "ssh://gpu-third:2201",
                     "cloudflared://cf-token.example.com",
@@ -180,6 +181,8 @@ class SSHTests(unittest.TestCase):
         client = SSHClient.from_host(host)
         self.assertEqual(client.proxy_command, "cloudflared access ssh --hostname cf.example.com")
         self.assertGreaterEqual(len(client.connection_targets), 4)
+        self.assertEqual(client.connection_targets[0].source, "ports:22/tcp")
+        self.assertEqual(client.connection_targets[1].source, "ssh_proxy")
 
         self.assertIsNone(SSHClient._build_cloudflared_proxy_command({}, "host"))
         self.assertIn("cloudflared access ssh", SSHClient._build_cloudflared_proxy_command({"tunnel_type": "cloudflared", "cloudflared_hostname": "cf.example.com"}, "host"))

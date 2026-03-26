@@ -442,10 +442,18 @@ class TransferColabVastCommandTests(unittest.TestCase):
             system_mock.assert_called_once()
 
             ssh_client = MagicMock()
-            ssh_client.run.return_value = SimpleNamespace(exit_code=0, stdout="VAST OK\n", stderr="")
+            ssh_client.run.return_value = SimpleNamespace(
+                exit_code=0,
+                stdout="VAST OK\n",
+                stderr="",
+                target_hostname="1.2.3.4",
+                target_port=2201,
+                target_source="ports:22/tcp",
+            )
             with patch("trainsh.services.ssh.SSHClient.from_host", return_value=ssh_client):
                 text = capture_output(vast.cmd_run, ["123", "--", "nvidia-smi"])
             self.assertIn("Running on Vast.ai #123...", text)
+            self.assertIn("SSH target: 1.2.3.4:2201 (source: ports:22/tcp)", text)
             self.assertIn("VAST OK", text)
 
             with patch("trainsh.commands.vast.run_remote_git_clone") as clone_mock:

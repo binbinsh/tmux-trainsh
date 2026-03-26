@@ -206,6 +206,11 @@ def _host_location(host) -> str:
     return "(hostname unavailable)"
 
 
+def _host_connection_source(host) -> str:
+    """Return the current primary connection source for display."""
+    return str((host.env_vars or {}).get("connection_source", "") or "").strip()
+
+
 def _host_to_dict(host) -> dict:
     """Convert a host to a filtered dict (no None values)."""
     return {k: v for k, v in host.to_dict().items() if v is not None}
@@ -254,6 +259,9 @@ def cmd_list(args: List[str]) -> None:
                 status_parts.append(str(host.vast_status))
             if _is_auto_discovered_vast_host(host):
                 status_parts.append("auto")
+            source = _host_connection_source(host)
+            if source:
+                status_parts.append(f"src={source}")
             status = f" [{' / '.join(status_parts)}]"
         elif host.type == HostType.RUNPOD and host.runpod_pod_id:
             auto_runpod_count += int(_is_auto_discovered_runpod_host(host))
@@ -262,6 +270,9 @@ def cmd_list(args: List[str]) -> None:
                 status_parts.append(str(host.runpod_status))
             if _is_auto_discovered_runpod_host(host):
                 status_parts.append("auto")
+            source = _host_connection_source(host)
+            if source:
+                status_parts.append(f"src={source}")
             status = f" [{' / '.join(status_parts)}]"
         elif host.type == HostType.COLAB:
             tunnel = host.env_vars.get("tunnel_type", "cloudflared")
@@ -302,6 +313,9 @@ def cmd_show(args: List[str]) -> None:
     print(f"  Auth: {host.auth_method.value}")
     if _is_auto_discovered_host(host):
         print("  Auto-discovered: yes")
+    connection_source = _host_connection_source(host)
+    if connection_source:
+        print(f"  Connection Source: {connection_source}")
     if host.ssh_key_path:
         print(f"  SSH Key: {host.ssh_key_path}")
     secrets = get_secrets_manager()
