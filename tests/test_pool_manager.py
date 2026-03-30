@@ -27,12 +27,46 @@ class RuntimeStatePoolManagerTests(unittest.TestCase):
                 self.assertTrue(manager.try_acquire("gpu"))
                 self.assertFalse(manager.try_acquire("gpu"))
                 self.assertEqual(manager.get_stats("gpu").occupied, 2)
+                self.assertEqual(len(manager.store.load_pools()["gpu"].get("leases", {})), 2)
 
                 manager.release("gpu")
                 self.assertEqual(manager.get_stats("gpu").occupied, 1)
 
                 manager.release("gpu", request_slots=5)
                 self.assertEqual(manager.get_stats("gpu").occupied, 0)
+                self.assertEqual(manager.store.load_pools()["gpu"].get("leases", {}), {})
+            finally:
+                manager.close()
+
+    def test_refresh_reaps_dead_pid_leases_and_recomputes_occupied(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = RuntimeStatePoolManager(str(Path(tmpdir) / "runtime.db"), default_slots={"default": 1})
+            try:
+                manager.store.save_pools(
+                    {
+                        "default": {
+                            "slots": 1,
+                            "occupied": 1,
+                            "updated_at": "2026-03-31T00:00:00+00:00",
+                            "leases": {
+                                "stale": {
+                                    "pid": 999999999,
+                                    "slots": 1,
+                                    "created_at": "2026-03-30T00:00:00+00:00",
+                                    "updated_at": "2026-03-30T00:00:00+00:00",
+                                }
+                            },
+                        }
+                    }
+                )
+
+                stats = manager.refresh()
+
+                self.assertEqual(stats["default"].occupied, 0)
+                stored = manager.store.load_pools()["default"]
+                self.assertEqual(stored["occupied"], 0)
+                self.assertEqual(stored.get("leases", {}), {})
+                self.assertTrue(manager.try_acquire("default"))
             finally:
                 manager.close()
 
