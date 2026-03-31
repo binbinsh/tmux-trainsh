@@ -12,7 +12,7 @@ from .help_cmd import reject_subcommand_help
 SUBCOMMAND_SPECS = (
     SubcommandSpec("list", "List common secrets and whether they are configured."),
     SubcommandSpec("set", "Store or update one secret value."),
-    SubcommandSpec("get", "Show a masked preview of one secret."),
+    SubcommandSpec("get", "Print one secret value."),
     SubcommandSpec("remove", "Delete one secret."),
     SubcommandSpec("backend", "Show or change the secrets backend."),
 )
@@ -190,17 +190,35 @@ def cmd_get(args: List[str]) -> None:
 
     from ..core.secrets import get_secrets_manager
 
-    key = args[0].upper()
+    masked = False
+    positional: list[str] = []
+    for arg in args:
+        if arg in {"--masked", "--preview"}:
+            masked = True
+            continue
+        if arg.startswith("-"):
+            print(f"Unknown option: {arg}")
+            print("Usage: train secrets get [--masked] <key>")
+            sys.exit(1)
+        positional.append(arg)
+
+    if len(positional) != 1:
+        print("Usage: train secrets get [--masked] <key>")
+        sys.exit(1)
+
+    key = positional[0].upper()
     secrets = get_secrets_manager()
 
     value = secrets.get(key)
     if value:
-        # Mask most of the value for security
-        if len(value) > 8:
-            masked = value[:4] + "*" * (len(value) - 8) + value[-4:]
-        else:
-            masked = "*" * len(value)
-        print(f"{key}: {masked}")
+        if masked:
+            if len(value) > 8:
+                preview = value[:4] + "*" * (len(value) - 8) + value[-4:]
+            else:
+                preview = "*" * len(value)
+            print(f"{key}: {preview}")
+            return
+        print(value)
     else:
         print(f"{key}: [not set]")
 

@@ -98,13 +98,23 @@ class SecretsCommandTests(CaptureMixin, unittest.TestCase):
         with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets):
             out, code, _ = self.capture(secrets_cmd.cmd_get, ["OPENAI_API_KEY"])
         self.assertIsNone(code)
-        self.assertIn("abcd", out)
+        self.assertEqual(out.strip(), "abcdefgh1234")
+
+        with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets):
+            out, code, _ = self.capture(secrets_cmd.cmd_get, ["--masked", "OPENAI_API_KEY"])
+        self.assertIsNone(code)
+        self.assertIn("OPENAI_API_KEY: abcd", out)
+        self.assertIn("1234", out)
 
         empty_secrets = SimpleNamespace(get=lambda key: None)
         with patch("trainsh.core.secrets.get_secrets_manager", return_value=empty_secrets):
             out, code, _ = self.capture(secrets_cmd.cmd_get, ["OPENAI_API_KEY"])
         self.assertIsNone(code)
         self.assertIn("[not set]", out)
+
+        out, code, _ = self.capture(secrets_cmd.cmd_get, ["--bad-flag", "OPENAI_API_KEY"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown option: --bad-flag", out)
 
         with patch("getpass.getpass", return_value="secret-value"), patch(
             "trainsh.core.secrets.get_secrets_manager", return_value=secrets

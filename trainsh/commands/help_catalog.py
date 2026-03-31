@@ -606,6 +606,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         ),
         notes=(
             "Secret values are prompted securely for `train secrets set`.",
+            "`train secrets get <key>` prints the raw value to stdout; use `train secrets get --masked <key>` for a preview.",
             "Cloud bundle secrets are supported for providers such as R2 and B2.",
             "`GITHUB_TOKEN` is used automatically for GitHub HTTPS clones from `train host clone`, `train vast clone`, `train runpod clone`, and `recipe.git_clone(..., auth='github_token')`.",
         ),
@@ -616,6 +617,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train secrets set POE_API_KEY",
             "train secrets set GITHUB_TOKEN",
             "train secrets get OPENAI_API_KEY",
+            "train secrets get --masked OPENAI_API_KEY",
             "train secrets backend",
         ),
         see_also=("train host", "train storage", "train vast", "train runpod"),
