@@ -69,10 +69,14 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
 
     This allows us to configure remotes without modifying ~/.config/rclone/rclone.conf
 
-    Credentials are loaded in priority order:
-    1. Storage-specific secrets: {STORAGE_NAME}_ACCESS_KEY_ID, etc.
-    2. Global secrets: R2_ACCESS_KEY_ID, AWS_ACCESS_KEY_ID, etc.
-    3. Config values stored in storage.config
+    Credentials are loaded only from TrainVault-managed secrets:
+    1. Explicit secret names configured on the storage.
+    2. Storage-specific secrets: {STORAGE_NAME}_ACCESS_KEY_ID, etc.
+    3. Global secrets: R2_ACCESS_KEY_ID, AWS_ACCESS_KEY_ID, etc.
+
+    Non-secret connection metadata such as bucket, endpoint, region, host, and
+    username may still come from storage.config. Reusable credential material
+    must not be read from storage.config.
     """
     resolved_remote_name = remote_name or get_rclone_remote_name(storage) or storage.name
     name = resolved_remote_name.upper().replace("-", "_").replace(" ", "_")
@@ -84,7 +88,6 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
     def get_credential(
         storage_key: str,
         global_key: str,
-        config_key: str = "",
         *,
         explicit_secret_names: tuple[str, ...] = (),
     ) -> str:
@@ -101,27 +104,26 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         value = secrets.get(global_key)
         if value:
             return value
-        if config_key:
-            return config.get(config_key, "")
         return ""
 
     if storage.type == StorageType.R2:
         env[f"RCLONE_CONFIG_{name}_TYPE"] = "s3"
-        env[f"RCLONE_CONFIG_{name}_PROVIDER"] = "Cloudflare"
+        env[f"RCLONE_CONFIG_{name}_PROVIDER"] = "Other"
         env[f"RCLONE_CONFIG_{name}_ENV_AUTH"] = "false"
 
-        account_id = get_credential("ACCOUNT_ID", SecretKeys.R2_ACCOUNT_ID, "account_id")
-        access_key = get_credential("ACCESS_KEY_ID", SecretKeys.R2_ACCESS_KEY_ID, "access_key_id")
-        secret_key = get_credential("SECRET_ACCESS_KEY", SecretKeys.R2_SECRET_ACCESS_KEY, "secret_access_key")
+        access_key = get_credential("ACCESS_KEY_ID", SecretKeys.R2_ACCESS_KEY_ID)
+        secret_key = get_credential("SECRET_ACCESS_KEY", SecretKeys.R2_SECRET_ACCESS_KEY)
 
         if access_key:
             env[f"RCLONE_CONFIG_{name}_ACCESS_KEY_ID"] = access_key
         if secret_key:
             env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] = secret_key
 
-        endpoint = get_credential("ENDPOINT", "R2_ENDPOINT", "endpoint")
-        if not endpoint and account_id:
-            endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+        endpoint = str(config.get("endpoint") or "").strip() or get_credential("R2_ENDPOINT", "R2_ENDPOINT")
+        if not endpoint:
+            account_id = get_credential("ACCOUNT_ID", SecretKeys.R2_ACCOUNT_ID)
+            if account_id:
+                endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
         if endpoint:
             env[f"RCLONE_CONFIG_{name}_ENDPOINT"] = endpoint
 
@@ -133,13 +135,11 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         access_key = get_credential(
             "ACCESS_KEY_ID",
             SecretKeys.AWS_ACCESS_KEY_ID,
-            "access_key_id",
             explicit_secret_names=(str(config.get("access_key_secret", "")).strip(),),
         )
         secret_key = get_credential(
             "SECRET_ACCESS_KEY",
             SecretKeys.AWS_SECRET_ACCESS_KEY,
-            "secret_access_key",
             explicit_secret_names=(str(config.get("secret_key_secret", "")).strip(),),
         )
 
@@ -155,8 +155,8 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
     elif storage.type == StorageType.B2:
         env[f"RCLONE_CONFIG_{name}_TYPE"] = "b2"
 
-        key_id = get_credential("APPLICATION_KEY_ID", SecretKeys.B2_APPLICATION_KEY_ID, "application_key_id")
-        app_key = get_credential("APPLICATION_KEY", SecretKeys.B2_APPLICATION_KEY, "application_key")
+        key_id = get_credential("APPLICATION_KEY_ID", SecretKeys.B2_APPLICATION_KEY_ID)
+        app_key = get_credential("APPLICATION_KEY", SecretKeys.B2_APPLICATION_KEY)
 
         if key_id:
             env[f"RCLONE_CONFIG_{name}_ACCOUNT"] = key_id
@@ -167,15 +167,12 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         env[f"RCLONE_CONFIG_{name}_TYPE"] = "drive"
         if config.get("client_id"):
             env[f"RCLONE_CONFIG_{name}_CLIENT_ID"] = config["client_id"]
-        if config.get("client_secret"):
-            env[f"RCLONE_CONFIG_{name}_CLIENT_SECRET"] = config["client_secret"]
         if config.get("root_folder_id"):
             env[f"RCLONE_CONFIG_{name}_ROOT_FOLDER_ID"] = config["root_folder_id"]
 
         token = get_credential(
             "TOKEN",
             SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
-            "token",
             explicit_secret_names=(str(config.get("token_secret", "")).strip(),),
         )
         if token:
@@ -191,7 +188,6 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         service_account_json = get_credential(
             "SERVICE_ACCOUNT_JSON",
             "GCS_SERVICE_ACCOUNT_JSON",
-            "service_account_json",
             explicit_secret_names=(resolve_resource_secret_name(storage.name, config.get("service_account_secret"), "SERVICE_ACCOUNT_JSON"),),
         )
         if service_account_json:
@@ -220,7 +216,6 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         password = get_credential(
             "PASSWORD",
             "SSH_PASSWORD",
-            "password",
             explicit_secret_names=(str(config.get("password_secret", "")).strip(),),
         )
         if password:
@@ -233,11 +228,8 @@ def build_rclone_env(storage: Storage, remote_name: Optional[str] = None) -> Dic
         password = get_credential(
             "PASSWORD",
             "SMB_PASSWORD",
-            "password",
             explicit_secret_names=(str(config.get("password_secret", "")).strip(),),
         )
-        if not password:
-            password = str(config.get("pass") or config.get("password") or "").strip()
         if host_name:
             env[f"RCLONE_CONFIG_{name}_HOST"] = host_name
         if user_name:

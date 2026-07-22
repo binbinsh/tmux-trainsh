@@ -38,7 +38,7 @@ class StorageDeepTests(unittest.TestCase):
                 ("localbox", ["localbox", "1", "/tmp/local", "y"], StorageType.LOCAL, {"path": "/tmp/local"}),
                 ("sshbox", ["sshbox", "2", "root@example", "/srv/data", "1", "~/.ssh/id_ed25519", "n"], StorageType.SSH, {"host": "root@example", "path": "/srv/data", "key_path": "~/.ssh/id_ed25519"}),
                 ("drivebox", ["drivebox", "3", "gdrive-remote", "n"], StorageType.GOOGLE_DRIVE, {"remote_name": "gdrive-remote"}),
-                ("r2box", ["r2box", "4", "acct123", "bucket-a", "n", "n"], StorageType.R2, {"account_id": "acct123", "bucket": "bucket-a", "endpoint": "https://acct123.r2.cloudflarestorage.com"}),
+                ("r2box", ["r2box", "4", "https://objects.example.com", "bucket-a", "n", "n"], StorageType.R2, {"bucket": "bucket-a", "endpoint": "https://objects.example.com"}),
                 ("b2box", ["b2box", "5", "bucket-b", "n", "n"], StorageType.B2, {"bucket": "bucket-b"}),
                 ("s3box", ["s3box", "6", "bucket-c", "us-west-2", "https://s3.example.com", "n", "n"], StorageType.S3, {"bucket": "bucket-c", "region": "us-west-2", "endpoint": "https://s3.example.com"}),
                 ("gcsbox", ["gcsbox", "7", "bucket-d", "", "n", "n"], StorageType.GCS, {"bucket": "bucket-d"}),
@@ -118,11 +118,11 @@ class StorageDeepTests(unittest.TestCase):
 
             with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets), patch(
                 "trainsh.commands.storage.prompt_input",
-                side_effect=["r2secret", "4", "acct123", "bucket-a", "y", "n"],
+                side_effect=["r2secret", "4", "https://objects.example.com", "bucket-a", "y", "n"],
             ), patch("trainsh.commands.storage.getpass.getpass", side_effect=["AKIA", "SECRET"]):
                 out, code = capture(storage.cmd_add, [])
             self.assertIsNone(code)
-            self.assertIn("Stored R2 credentials in train secrets.", out)
+            self.assertIn("Stored object storage credentials in train secrets.", out)
             secrets.set_bundle.assert_called_once()
 
             secrets = SimpleNamespace(set_bundle=unittest.mock.MagicMock(), set=unittest.mock.MagicMock())
@@ -266,6 +266,16 @@ class StorageDeepTests(unittest.TestCase):
             ), patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")):
                 out, code = capture(storage.main, ["check", "other"])
             self.assertIsNone(code)
+
+            future_storage = SimpleNamespace(
+                name="future",
+                type=SimpleNamespace(value="future"),
+                config={},
+            )
+            with patch("trainsh.commands.storage.load_storages", return_value={"future": future_storage}):
+                out, code = capture(storage.cmd_test, ["future"])
+            self.assertEqual(code, 1)
+            self.assertIn("Connection check is not supported for storage type: future", out)
 
             out, code = capture(storage.main, ["--help"])
             self.assertEqual(code, 1)

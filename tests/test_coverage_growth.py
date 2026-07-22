@@ -37,14 +37,14 @@ def capture_output(fn, *args, **kwargs):
 
 class CoverageGrowthTests(unittest.TestCase):
     def test_transfer_support_and_tmux_edges(self):
-        secrets = SimpleNamespace(get=lambda _key: None)
+        secrets = SimpleNamespace(get=lambda key: {"SMB_PASSWORD": "secret"}.get(key))
         with patch("trainsh.services.transfer_support.get_secrets_manager", return_value=secrets):
             s3_env = build_rclone_env(Storage(name="s3", type=StorageType.S3, config={}))
             smb_env = build_rclone_env(
                 Storage(
                     name="smb",
                     type=StorageType.SMB,
-                    config={"host": "smb.example", "user": "demo", "pass": "secret", "domain": "workgroup"},
+                    config={"host": "smb.example", "user": "demo", "password_secret": "SMB_PASSWORD", "domain": "workgroup"},
                 )
             )
         self.assertEqual(s3_env["RCLONE_CONFIG_S3_TYPE"], "s3")

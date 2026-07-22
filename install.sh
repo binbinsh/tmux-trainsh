@@ -59,9 +59,20 @@ install_deps() {
     echo ""
     echo "Checking system dependencies..."
 
-    # Install keyring CLI tool
-    echo "Installing keyring..."
-    uv tool install keyring 2>/dev/null || echo "keyring already installed"
+    # Vaultwarden is the only TrainShell secrets backend; it is accessed through
+    # the official Bitwarden CLI.
+    if ! command -v bw &> /dev/null; then
+        echo "Installing Bitwarden CLI (bw)..."
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            brew install bitwarden-cli 2>/dev/null || echo "Please install Bitwarden CLI: brew install bitwarden-cli"
+        elif command -v npm &> /dev/null; then
+            npm install -g @bitwarden/cli 2>/dev/null || echo "Please install Bitwarden CLI from Bitwarden's official documentation"
+        else
+            echo "Please install Bitwarden CLI from Bitwarden's official documentation"
+        fi
+    else
+        echo "bw: installed"
+    fi
 
     # Check for rsync
     if ! command -v rsync &> /dev/null; then

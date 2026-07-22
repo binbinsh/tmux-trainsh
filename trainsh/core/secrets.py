@@ -1,17 +1,17 @@
 # tmux-trainsh secrets management
-# Multi-backend: 1Password (op CLI) or encrypted file (Fernet)
+# Vaultwarden only, through the official Bitwarden CLI (`bw`).
 
-import base64
-import getpass
 import json
 import os
 import shutil
 import subprocess
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..constants import CONFIG_DIR, CONFIG_FILE, SecretKeys
+
+DEFAULT_VAULTWARDEN_SERVER_URL = "https://vault.train.sh"
+CANONICAL_BACKEND_NAME = "vaultwarden"
 
 
 # ---------------------------------------------------------------------------
@@ -262,276 +262,139 @@ class SecretsBackend(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Backend: 1Password (op CLI)
+# Backend: Bitwarden / Vaultwarden (official bw CLI)
 # ---------------------------------------------------------------------------
 
-class OnePasswordBackend(SecretsBackend):
-    """Store each secret as its own 1Password item (title=key, password=value)."""
+class BitwardenCLIBackend(SecretsBackend):
+    """Store each secret as a Bitwarden password item using the official bw CLI."""
 
-    def __init__(self, vault: Optional[str] = None, sa_token: Optional[str] = None):
-        self._vault = vault or os.environ.get("OP_VAULT", "Development")
-        # Service account token: explicit arg > env var > config
-        self._sa_token = sa_token or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
+    def __init__(self, server_url: Optional[str] = None, folder_id: Optional[str] = None):
+        self._server_url = server_url or os.environ.get("BW_SERVER") or DEFAULT_VAULTWARDEN_SERVER_URL
+        self._folder_id = folder_id or os.environ.get("BW_FOLDER_ID")
+        self._server_configured = False
 
-    # -- helpers -----------------------------------------------------------
+    def _session(self) -> Optional[str]:
+        return os.environ.get("BW_SESSION")
 
-    def _op(self, *args: str, stdin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
-        cmd = ["op", *args]
-        if self._vault:
-            cmd += ["--vault", self._vault]
-        env = None
-        if self._sa_token:
-            env = {**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": self._sa_token}
+    def _run_bw(
+        self,
+        *args: str,
+        stdin: Optional[str] = None,
+        session: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        if not _bw_available():
+            raise RuntimeError("Bitwarden CLI 'bw' is not installed or not on PATH.")
+
+        cmd = ["bw", *args]
+        if session and self._session():
+            cmd.extend(["--session", self._session() or ""])
+
         return subprocess.run(
             cmd,
             input=stdin,
             capture_output=True,
             text=True,
             timeout=30,
-            env=env,
+            env=os.environ.copy(),
         )
 
-    def _op_with_recovery(self, *args: str, stdin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
-        """Run an op command; on desktop-app failure, try to sign in or set up a service account."""
-        r = self._op(*args, stdin=stdin)
-        if r.returncode == 0:
-            return r
-        if "cannot connect to 1Password app" not in r.stderr:
-            return r
-        # Desktop app unavailable — attempt recovery
-        token = _auto_resolve_op_auth(self._vault)
-        if token:
-            self._sa_token = token
-            return self._op(*args, stdin=stdin)
-        return r
-
-    def _op_raw(self, *args: str) -> subprocess.CompletedProcess[str]:
-        """Run an op command without appending --vault."""
-        env = None
-        if self._sa_token:
-            env = {**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": self._sa_token}
-        return subprocess.run(
-            ["op", *args],
-            capture_output=True, text=True, timeout=30, env=env,
-        )
-
-    def _ensure_vault(self) -> None:
-        """Create the vault if it doesn't exist yet."""
-        r = self._op_raw("vault", "get", self._vault, "--format=json")
-        if r.returncode == 0:
+    def _ensure_server_configured(self) -> None:
+        if self._server_configured:
             return
-        if "isn't a vault" not in r.stderr:
-            return
-        r2 = self._op_raw("vault", "create", self._vault)
-        if r2.returncode != 0:
-            raise RuntimeError(
-                f"Failed to create 1Password vault '{self._vault}': {r2.stderr.strip()}"
-            )
-        print(f"Created 1Password vault '{self._vault}'.")
+        if self._server_url:
+            r = self._run_bw("config", "server", self._server_url, session=False)
+            if r.returncode != 0:
+                raise RuntimeError(f"Failed to configure Bitwarden server: {r.stderr.strip()}")
+        self._server_configured = True
 
-    # -- public API --------------------------------------------------------
+    def _bw(self, *args: str, stdin: Optional[str] = None, session: bool = True) -> subprocess.CompletedProcess[str]:
+        self._ensure_server_configured()
+        return self._run_bw(*args, stdin=stdin, session=session)
 
-    def get(self, key: str) -> Optional[str]:
-        r = self._op_with_recovery(
-            "item", "get", key,
-            "--fields", "label=password",
-            "--reveal",
-        )
+    def _encode(self, payload: dict) -> str:
+        r = self._bw("encode", stdin=json.dumps(payload), session=False)
+        if r.returncode != 0:
+            raise RuntimeError(f"Failed to encode Bitwarden item: {r.stderr.strip()}")
+        return r.stdout.strip()
+
+    def _get_item(self, key: str) -> Optional[dict]:
+        r = self._bw("get", "item", key)
         if r.returncode != 0:
             return None
-        val = r.stdout.strip()
-        return val if val else None
+        try:
+            data = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _build_item(self, key: str, value: str) -> dict:
+        item = {
+            "type": 1,
+            "name": key,
+            "notes": "Managed by trainsh secrets backend.",
+            "favorite": False,
+            "login": {
+                "uris": [],
+                "username": key,
+                "password": value,
+            },
+            "fields": [],
+        }
+        if self._folder_id:
+            item["folderId"] = self._folder_id
+        return item
+
+    def get(self, key: str) -> Optional[str]:
+        item = self._get_item(key)
+        if not item:
+            return None
+        login = item.get("login")
+        if not isinstance(login, dict):
+            return None
+        value = login.get("password")
+        return str(value) if value else None
 
     def set(self, key: str, value: str) -> None:
-        self._ensure_vault()
-        # Check if item already exists
-        r = self._op("item", "get", key, "--format=json")
-        if r.returncode == 0:
-            # Item exists — update password field
-            r2 = self._op("item", "edit", key, f"password={value}")
-            if r2.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to update secret in 1Password: {r2.stderr.strip()}"
-                )
+        existing = self._get_item(key)
+        if existing:
+            login = existing.get("login")
+            if not isinstance(login, dict):
+                login = {}
+                existing["login"] = login
+            login["username"] = login.get("username") or key
+            login["password"] = value
+            encoded = self._encode(existing)
+            item_id = str(existing.get("id") or key)
+            r = self._bw("edit", "item", item_id, encoded)
         else:
-            # Create new item with key as title
-            r2 = self._op(
-                "item", "create",
-                "--category=password",
-                f"--title={key}",
-                f"password={value}",
-            )
-            if r2.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to store secret in 1Password: {r2.stderr.strip()}"
-                )
+            encoded = self._encode(self._build_item(key, value))
+            r = self._bw("create", "item", encoded)
+        if r.returncode != 0:
+            raise RuntimeError(f"Failed to store secret in Bitwarden: {r.stderr.strip()}")
 
     def delete(self, key: str) -> None:
-        self._op("item", "delete", key)
+        item = self._get_item(key)
+        item_id = str(item.get("id") if item else key)
+        self._bw("delete", "item", item_id)
 
     def list_set_keys(self) -> List[str]:
-        r = self._op("item", "list", "--format=json")
+        args = ["list", "items"]
+        if self._folder_id:
+            args.extend(["--folderid", self._folder_id])
+        r = self._bw(*args)
         if r.returncode != 0:
             return []
         try:
             items = json.loads(r.stdout)
-            return [item["title"] for item in items
-                    if item.get("title")]
-        except (json.JSONDecodeError, KeyError):
+        except json.JSONDecodeError:
             return []
-
-
-# ---------------------------------------------------------------------------
-# Backend: Encrypted file (Fernet)
-# ---------------------------------------------------------------------------
-
-_ENC_FILE = CONFIG_DIR / "secrets.enc"
-_SALT_LEN = 16
-_KDF_ITERATIONS = 480_000
-
-
-class EncryptedFileBackend(SecretsBackend):
-    """Fernet-encrypted JSON file at ~/.config/tmux-trainsh/secrets.enc."""
-
-    def __init__(self) -> None:
-        self._fernet: Optional[object] = None   # lazily created
-        self._password: Optional[str] = None
-
-    # -- crypto helpers ----------------------------------------------------
-
-    def _derive_key(self, password: str, salt: bytes) -> bytes:
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        from cryptography.hazmat.primitives import hashes
-
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=_KDF_ITERATIONS,
-        )
-        return base64.urlsafe_b64encode(kdf.derive(password.encode()))
-
-    def _get_fernet(self) -> "Fernet":          # type: ignore[name-defined]
-        from cryptography.fernet import Fernet
-
-        if self._fernet is not None:
-            return self._fernet                  # type: ignore[return-value]
-
-        if _ENC_FILE.exists():
-            raw = _ENC_FILE.read_bytes()
-            salt = raw[:_SALT_LEN]
-        else:
-            salt = os.urandom(_SALT_LEN)
-
-        if self._password is None:
-            self._password = getpass.getpass("Secrets password: ")
-
-        key = self._derive_key(self._password, salt)
-        self._fernet = Fernet(key)
-
-        # If file doesn't exist yet, persist the salt with an empty store
-        if not _ENC_FILE.exists():
-            self._write_store(salt, {})
-
-        return self._fernet                      # type: ignore[return-value]
-
-    def _read_store(self) -> Dict[str, str]:
-        if not _ENC_FILE.exists():
-            return {}
-        raw = _ENC_FILE.read_bytes()
-        salt = raw[:_SALT_LEN]             # noqa: F841 — kept for clarity
-        token = raw[_SALT_LEN:]
-        fernet = self._get_fernet()
-        try:
-            plaintext = fernet.decrypt(token)
-        except Exception:
-            raise RuntimeError(
-                "Wrong password or corrupted secrets file. "
-                "Delete ~/.config/tmux-trainsh/secrets.enc to reset."
-            )
-        return json.loads(plaintext)
-
-    def _write_store(self, salt: bytes, store: Dict[str, str]) -> None:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        fernet = self._get_fernet()
-        token = fernet.encrypt(json.dumps(store).encode())
-        _ENC_FILE.write_bytes(salt + token)
-        _ENC_FILE.chmod(0o600)
-
-    def _save(self, store: Dict[str, str]) -> None:
-        if _ENC_FILE.exists():
-            salt = _ENC_FILE.read_bytes()[:_SALT_LEN]
-        else:
-            salt = os.urandom(_SALT_LEN)
-        self._write_store(salt, store)
-
-    # -- public API --------------------------------------------------------
-
-    def get(self, key: str) -> Optional[str]:
-        store = self._read_store()
-        return store.get(key)
-
-    def set(self, key: str, value: str) -> None:
-        store = self._read_store()
-        store[key] = value
-        self._save(store)
-
-    def delete(self, key: str) -> None:
-        store = self._read_store()
-        store.pop(key, None)
-        if store:
-            self._save(store)
-            return
-        if _ENC_FILE.exists():
-            _ENC_FILE.unlink()
-
-    def list_set_keys(self) -> List[str]:
-        return list(self._read_store().keys())
-
-
-# ---------------------------------------------------------------------------
-# Backend: System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)
-# ---------------------------------------------------------------------------
-
-class KeyringBackend(SecretsBackend):
-    """Store each secret in the OS keyring (service='trainsh', username=key)."""
-
-    SERVICE = "trainsh"
-
-    def __init__(self) -> None:
-        import keyring as _kr
-        self._kr = _kr
-
-    def get(self, key: str) -> Optional[str]:
-        val = self._kr.get_password(self.SERVICE, key)
-        return val if val else None
-
-    def set(self, key: str, value: str) -> None:
-        self._kr.set_password(self.SERVICE, key, value)
-
-    def delete(self, key: str) -> None:
-        try:
-            self._kr.delete_password(self.SERVICE, key)
-        except self._kr.errors.PasswordDeleteError:
-            pass
-
-    def list_set_keys(self) -> List[str]:
-        # keyring API doesn't support enumeration; check predefined keys
-        from ..constants import SecretKeys
-        predefined = [
-            SecretKeys.VAST_API_KEY,
-            SecretKeys.RUNPOD_API_KEY,
-            SecretKeys.POE_API_KEY,
-            SecretKeys.HF_TOKEN,
-            SecretKeys.OPENAI_API_KEY,
-            SecretKeys.OPENROUTER_API_KEY,
-            SecretKeys.ANTHROPIC_API_KEY,
-            SecretKeys.GITHUB_TOKEN,
-            SecretKeys.GOOGLE_DRIVE_CREDENTIALS,
-            SecretKeys.R2_CREDENTIALS,
-            SecretKeys.B2_CREDENTIALS,
+        if not isinstance(items, list):
+            return []
+        return [
+            str(item.get("name"))
+            for item in items
+            if isinstance(item, dict) and item.get("name")
         ]
-        return [k for k in predefined if self.get(k) is not None]
 
 
 # ---------------------------------------------------------------------------
@@ -539,46 +402,35 @@ class KeyringBackend(SecretsBackend):
 # ---------------------------------------------------------------------------
 
 _BACKEND_NAMES = {
-    "1password": "1Password (op CLI)",
-    "keyring": "System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)",
-    "encrypted_file": "Encrypted file (~/.config/tmux-trainsh/secrets.enc)",
+    CANONICAL_BACKEND_NAME: "Vaultwarden (official Bitwarden bw CLI)",
+}
+
+_BACKEND_ALIASES = {
+    "bitwarden": CANONICAL_BACKEND_NAME,
+    "bw": CANONICAL_BACKEND_NAME,
 }
 
 
-def _op_available() -> bool:
-    return shutil.which("op") is not None
+def normalize_backend_name(name: Optional[str]) -> str:
+    normalized = str(name or "").strip().lower()
+    return _BACKEND_ALIASES.get(normalized, normalized)
 
 
-def _keyring_available() -> bool:
-    try:
-        import keyring
-        kr = keyring.get_keyring()
-        # Reject the fail backend (no real keyring found)
-        return "fail" not in type(kr).__name__.lower()
-    except Exception:
-        return False
-
-
-def _op_desktop_connectable() -> bool:
-    """Check if `op` can connect to the desktop app."""
-    r = subprocess.run(
-        ["op", "account", "list", "--format=json"],
-        capture_output=True, text=True, timeout=10,
-    )
-    return r.returncode == 0
+def _bw_available() -> bool:
+    return shutil.which("bw") is not None
 
 
 def _instantiate_backend(name: str, cfg: dict) -> SecretsBackend:
-    if name == "1password":
+    normalized = normalize_backend_name(name)
+    if normalized == CANONICAL_BACKEND_NAME:
         secrets_cfg = cfg.get("secrets", {})
-        vault = secrets_cfg.get("vault")
-        sa_token = secrets_cfg.get("sa_token")
-        return OnePasswordBackend(vault=vault, sa_token=sa_token)
-    if name == "keyring":
-        return KeyringBackend()
-    if name == "encrypted_file":
-        return EncryptedFileBackend()
-    raise ValueError(f"Unknown secrets backend: {name!r}")
+        return BitwardenCLIBackend(
+            server_url=secrets_cfg.get("server_url") or DEFAULT_VAULTWARDEN_SERVER_URL,
+            folder_id=secrets_cfg.get("folder_id"),
+        )
+    raise ValueError(
+        f"Unknown secrets backend: {name!r}. Vaultwarden is the only supported secrets backend."
+    )
 
 
 def _load_backend() -> Optional[SecretsBackend]:
@@ -587,156 +439,86 @@ def _load_backend() -> Optional[SecretsBackend]:
     backend_name = cfg.get("secrets", {}).get("backend")
     if not backend_name:
         return None
-    return _instantiate_backend(backend_name, cfg)
+    normalized = normalize_backend_name(backend_name)
+    if normalized != CANONICAL_BACKEND_NAME:
+        return None
+    return _instantiate_backend(normalized, cfg)
 
 
 def prompt_backend_selection() -> SecretsBackend:
-    """Interactively ask the user to choose a secrets backend."""
+    """Configure the single supported secrets backend: Vaultwarden."""
     from ..cli_utils import prompt_input
 
-    print("\nNo secrets backend configured. Choose one:")
-    print("  [1] 1Password (recommended if you use 1Password)")
-    print("  [2] System keyring (GNOME Keyring / macOS Keychain / Windows Credential Manager)")
-    print("  [3] Encrypted file (~/.config/tmux-trainsh/secrets.enc)")
+    print("\nNo secrets backend configured.")
+    print("TrainShell stores secrets only in Vaultwarden through the official Bitwarden CLI (`bw`).")
+    if not _bw_available():
+        raise RuntimeError("Bitwarden CLI 'bw' is required for TrainShell secrets.")
 
-    choice = prompt_input("> ")
-    if choice == "1":
-        if not _op_available():
-            print("Warning: 'op' CLI not found on PATH. Install it from https://1password.com/downloads/command-line/")
-            print("Falling back to encrypted file backend.\n")
-            return _select_and_save("encrypted_file")
-        vault = prompt_input("1Password vault name [Development]: ", default="Development")
-        sa_token = _resolve_op_auth(vault)
-        if sa_token is False:
-            return _select_and_save("encrypted_file")
-        return _select_and_save("1password", vault=vault, sa_token=sa_token)
-    elif choice == "2":
-        if not _keyring_available():
-            print("Warning: No system keyring found. Install 'keyring' package: pip install keyring")
-            print("Falling back to encrypted file backend.\n")
-            return _select_and_save("encrypted_file")
-        return _select_and_save("keyring")
-    elif choice == "3":
-        return _select_and_save("encrypted_file")
-    else:
-        print("Invalid choice, defaulting to encrypted file.\n")
-        return _select_and_save("encrypted_file")
+    server_url = prompt_input(
+        f"Vaultwarden server URL [{DEFAULT_VAULTWARDEN_SERVER_URL}]: ",
+        default=DEFAULT_VAULTWARDEN_SERVER_URL,
+    )
+    folder_id = prompt_input("Vaultwarden folder ID for TrainShell secrets [none]: ")
+    return _select_and_save(
+        CANONICAL_BACKEND_NAME,
+        server_url=server_url or DEFAULT_VAULTWARDEN_SERVER_URL,
+        folder_id=folder_id or None,
+    )
 
 
-def _resolve_op_auth(vault: Optional[str] = None):
-    """Determine 1Password auth method: desktop app or service account token.
+def _select_and_save(
+    name: str,
+    vault: Optional[str] = None,
+    sa_token: Optional[str] = None,
+    server_url: Optional[str] = None,
+    folder_id: Optional[str] = None,
+) -> SecretsBackend:
+    normalized = normalize_backend_name(name)
+    if normalized != CANONICAL_BACKEND_NAME:
+        raise ValueError("Vaultwarden is the only supported secrets backend.")
 
-    Returns:
-        str  — service account token (use SA mode)
-        None — desktop app connection works (use desktop mode)
-        False — user declined, caller should fall back to another backend
-    """
-    from ..cli_utils import prompt_input
-
-    # Already have a service account token in env — use it directly
-    env_token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
-    if env_token:
-        print("Using OP_SERVICE_ACCOUNT_TOKEN from environment.")
-        return env_token
-
-    # Try connecting to the desktop app
-    if _op_desktop_connectable():
-        return None
-
-    # Desktop app not available — prompt for service account token
-    print("\nCannot connect to 1Password desktop app.")
-    print("A Service Account token is required (no desktop app needed).")
-    print("")
-    print("To create one:")
-    print("  1. Go to https://my.1password.com/developer-tools/infrastructure-secrets/serviceaccount")
-    print(f"  2. Create a service account with read+write access to vault '{vault or 'trainsh'}'")
-    print("  3. Copy the token and paste it below")
-    print("")
-    print("  [1] Enter a Service Account token")
-    print("  [2] Fall back to encrypted file backend")
-    sa_choice = prompt_input("> ")
-    if sa_choice == "1":
-        token = prompt_input("Service Account token: ")
-        if not token:
-            print("No token provided. Falling back to encrypted file backend.\n")
-            return False
-        # Validate token works
-        r = subprocess.run(
-            ["op", "vault", "list", "--format=json"],
-            capture_output=True, text=True, timeout=15,
-            env={**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": token},
-        )
-        if r.returncode != 0:
-            print(f"Token validation failed: {r.stderr.strip()}")
-            print("Falling back to encrypted file backend.\n")
-            return False
-        print("Service account token validated successfully.")
-        return token
-    return False
-
-
-def _auto_resolve_op_auth(vault: Optional[str] = None) -> Optional[str]:
-    """Non-interactive SA token recovery at op-call time.
-
-    Checks env, then saved config. If a saved token exists, returns it.
-    Otherwise falls back to the interactive prompt flow, saving the
-    resulting token to config for future use.
-
-    Returns a service account token string, or None on failure.
-    """
-    # 1. env var
-    env_token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
-    if env_token:
-        return env_token
-
-    # 2. config (may have been saved by a previous session)
-    cfg = _load_config()
-    saved = cfg.get("secrets", {}).get("sa_token")
-    if saved:
-        return saved
-
-    # 3. interactive recovery
-    print("\n1Password desktop app is not available.")
-    result = _resolve_op_auth(vault)
-    if result is False or result is None:
-        return None
-    # Persist the token so subsequent calls don't prompt again
-    _save_sa_token(result)
-    return result
-
-
-def _save_sa_token(token: str) -> None:
-    """Persist a service account token to config.yaml."""
     cfg = _load_config()
     cfg.setdefault("secrets", {})
-    cfg["secrets"]["sa_token"] = token
-    _save_config(cfg)
-
-
-def _select_and_save(name: str, vault: Optional[str] = None, sa_token: Optional[str] = None) -> SecretsBackend:
-    cfg = _load_config()
-    cfg.setdefault("secrets", {})
-    cfg["secrets"]["backend"] = name
-    if vault:
-        cfg["secrets"]["vault"] = vault
-    if sa_token:
-        cfg["secrets"]["sa_token"] = sa_token
+    cfg["secrets"]["backend"] = CANONICAL_BACKEND_NAME
+    cfg["secrets"].pop("vault", None)
+    cfg["secrets"].pop("sa_token", None)
+    if server_url:
+        cfg["secrets"]["server_url"] = server_url
     else:
-        cfg["secrets"].pop("sa_token", None)
+        cfg["secrets"]["server_url"] = DEFAULT_VAULTWARDEN_SERVER_URL
+    if folder_id:
+        cfg["secrets"]["folder_id"] = folder_id
+    else:
+        cfg["secrets"].pop("folder_id", None)
     _save_config(cfg)
-    return _instantiate_backend(name, cfg)
+    return _instantiate_backend(CANONICAL_BACKEND_NAME, cfg)
 
 
-def set_backend(name: str, vault: Optional[str] = None, sa_token: Optional[str] = None) -> SecretsBackend:
+def set_backend(
+    name: str,
+    vault: Optional[str] = None,
+    sa_token: Optional[str] = None,
+    server_url: Optional[str] = None,
+    folder_id: Optional[str] = None,
+) -> SecretsBackend:
     """Explicitly switch to a named backend."""
-    if name not in _BACKEND_NAMES:
+    normalized = normalize_backend_name(name)
+    if normalized not in _BACKEND_NAMES:
         raise ValueError(f"Unknown backend {name!r}. Choose from: {list(_BACKEND_NAMES)}")
-    return _select_and_save(name, vault=vault, sa_token=sa_token)
+    return _select_and_save(
+        normalized,
+        server_url=server_url,
+        folder_id=folder_id,
+    )
 
 
 def get_configured_backend_name() -> Optional[str]:
     cfg = _load_config()
-    return cfg.get("secrets", {}).get("backend")
+    backend_name = cfg.get("secrets", {}).get("backend")
+    if not backend_name:
+        return None
+    normalized = normalize_backend_name(backend_name)
+    return normalized if normalized in _BACKEND_NAMES else None
 
 
 # ---------------------------------------------------------------------------
@@ -745,12 +527,11 @@ def get_configured_backend_name() -> Optional[str]:
 
 class SecretsManager:
     """
-    Multi-backend secrets manager.
+    Vaultwarden-backed secrets manager.
 
     Resolution order for get():
       1. In-memory cache
-      2. Environment variable (os.environ)
-      3. Active backend (1Password or encrypted file)
+      2. Vaultwarden through the official Bitwarden CLI (`bw`)
     """
 
     def __init__(self) -> None:
@@ -776,10 +557,6 @@ class SecretsManager:
         normalized = normalize_secret_key(key)
         if normalized in self._cache:
             return self._cache[normalized]
-
-        env_value = os.environ.get(normalized)
-        if env_value:
-            return env_value
 
         backend = self._get_backend()
         if backend is None:
@@ -898,11 +675,6 @@ class SecretsManager:
         present: set[str] = set()
 
         present.update(normalize_secret_key(key) for key in self._cache)
-        present.update(
-            normalize_secret_key(key)
-            for key, value in os.environ.items()
-            if value
-        )
 
         backend = self._get_backend()
         if backend is not None:

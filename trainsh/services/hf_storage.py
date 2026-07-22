@@ -39,7 +39,7 @@ def resolve_hf_bucket_uri(storage: Storage, path: str = "") -> str:
 
 
 def resolve_hf_token(storage: Storage) -> str:
-    """Resolve the HF token for a storage, preferring scoped secrets."""
+    """Resolve the HF token for a storage from TrainVault-managed secrets only."""
     secrets = get_secrets_manager()
     token_secret = resolve_resource_secret_name(storage.name, storage.config.get("token_secret"), "HF_TOKEN")
 
@@ -48,7 +48,7 @@ def resolve_hf_token(storage: Storage) -> str:
         if value:
             return str(value).strip()
 
-    return str(storage.config.get("token", "")).strip()
+    return ""
 
 
 def build_hf_env(storage: Storage) -> Dict[str, str]:

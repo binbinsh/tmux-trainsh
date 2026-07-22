@@ -97,17 +97,17 @@ class StorageResolutionTests(unittest.TestCase):
         self.assertTrue(remote_name.startswith("r2_"))
         self.assertIn(f"RCLONE_CONFIG_{remote_name.upper()}_TYPE", env)
 
-    def test_r2_composite_secret_bundle_supplies_s3_api_credentials_and_derived_endpoint(self):
+    def test_r2_composite_secret_bundle_supplies_s3_api_credentials_with_config_endpoint(self):
         storage = Storage(
             id="artifacts",
             name="artifacts",
             type=StorageType.R2,
-            config={"bucket": "logs"},
+            config={"bucket": "logs", "endpoint": "https://bundle-objects.example.com"},
         )
         manager = SecretsManager()
         backend = unittest.mock.MagicMock()
         backend.get.side_effect = lambda key: (
-            '{"account_id":"bundle-account","access_key_id":"bundle-ak","secret_access_key":"bundle-sk"}'
+            '{"access_key_id":"bundle-ak","secret_access_key":"bundle-sk"}'
             if key == "ARTIFACTS_R2_CREDENTIALS"
             else None
         )
@@ -122,8 +122,63 @@ class StorageResolutionTests(unittest.TestCase):
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_name}_SECRET_ACCESS_KEY"], "bundle-sk")
         self.assertEqual(
             env[f"RCLONE_CONFIG_{remote_name}_ENDPOINT"],
-            "https://bundle-account.r2.cloudflarestorage.com",
+            "https://bundle-objects.example.com",
         )
+
+    def test_rclone_env_ignores_legacy_plaintext_credential_config(self):
+        manager = unittest.mock.MagicMock()
+        manager.get.return_value = None
+
+        with patch("trainsh.services.transfer_engine.get_secrets_manager", return_value=manager):
+            r2_env = build_rclone_env(
+                Storage(
+                    name="artifacts",
+                    type=StorageType.R2,
+                    config={
+                        "bucket": "logs",
+                        "endpoint": "https://objects.example.com",
+                        "access_key_id": "plain-ak",
+                        "secret_access_key": "plain-sk",
+                    },
+                )
+            )
+            self.assertEqual(r2_env["RCLONE_CONFIG_ARTIFACTS_ENDPOINT"], "https://objects.example.com")
+            self.assertNotIn("RCLONE_CONFIG_ARTIFACTS_ACCESS_KEY_ID", r2_env)
+            self.assertNotIn("RCLONE_CONFIG_ARTIFACTS_SECRET_ACCESS_KEY", r2_env)
+
+            drive_env = build_rclone_env(
+                Storage(
+                    name="drive",
+                    type=StorageType.GOOGLE_DRIVE,
+                    config={
+                        "client_id": "client-id",
+                        "client_secret": "plain-client-secret",
+                        "token": "{\"access_token\":\"plain-token\"}",
+                    },
+                )
+            )
+            self.assertEqual(drive_env["RCLONE_CONFIG_DRIVE_CLIENT_ID"], "client-id")
+            self.assertNotIn("RCLONE_CONFIG_DRIVE_CLIENT_SECRET", drive_env)
+            self.assertNotIn("RCLONE_CONFIG_DRIVE_TOKEN", drive_env)
+
+            gcs_env = build_rclone_env(
+                Storage(
+                    name="gcs",
+                    type=StorageType.GCS,
+                    config={"service_account_json": "{\"private_key\":\"plain\"}"},
+                )
+            )
+            self.assertNotIn("RCLONE_CONFIG_GCS_SERVICE_ACCOUNT_CREDENTIALS", gcs_env)
+
+            smb_env = build_rclone_env(
+                Storage(
+                    name="smbbox",
+                    type=StorageType.SMB,
+                    config={"host": "smb.example.com", "password": "plain-password", "pass": "plain-pass"},
+                )
+            )
+            self.assertEqual(smb_env["RCLONE_CONFIG_SMBBOX_HOST"], "smb.example.com")
+            self.assertNotIn("RCLONE_CONFIG_SMBBOX_PASS", smb_env)
 
 
 if __name__ == "__main__":

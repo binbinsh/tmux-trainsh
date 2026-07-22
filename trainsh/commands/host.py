@@ -276,7 +276,8 @@ def cmd_list(args: List[str]) -> None:
             status = f" [{' / '.join(status_parts)}]"
         elif host.type == HostType.COLAB:
             tunnel = host.env_vars.get("tunnel_type", "cloudflared")
-            status = f" [Colab/{tunnel}]"
+            tunnel_label = "secure access" if tunnel == "cloudflared" else tunnel
+            status = f" [Colab/{tunnel_label}]"
         print(f"  {name:<20} {_host_location(host)}{status}")
 
     print("-" * 60)
@@ -329,10 +330,10 @@ def cmd_show(args: List[str]) -> None:
         print(f"  Jump Host: {host.jump_host}")
     tunnel_type = host.env_vars.get("tunnel_type", "")
     if host.type == HostType.SSH and tunnel_type == "cloudflared":
-        print("  Tunnel: cloudflared")
-        print(f"  Cloudflared Hostname: {host.env_vars.get('cloudflared_hostname', host.hostname)}")
+        print("  Tunnel: secure access")
+        print(f"  Tunnel Hostname: {host.env_vars.get('cloudflared_hostname', host.hostname)}")
         if host.env_vars.get("cloudflared_bin"):
-            print(f"  Cloudflared Bin: {host.env_vars.get('cloudflared_bin')}")
+            print("  Tunnel Helper: custom")
     proxy_command = host.env_vars.get("proxy_command", "")
     if proxy_command:
         print(f"  ProxyCommand: {proxy_command}")
@@ -345,7 +346,7 @@ def cmd_show(args: List[str]) -> None:
         print(f"  Tags: {', '.join(host.tags)}")
     if host.type == HostType.COLAB:
         tunnel = host.env_vars.get("tunnel_type", "cloudflared")
-        print(f"  Tunnel: {tunnel}")
+        print(f"  Tunnel: {'secure access' if tunnel == 'cloudflared' else tunnel}")
     if host.vast_instance_id:
         print(f"  Vast.ai ID: {host.vast_instance_id}")
     if host.runpod_pod_id:
@@ -374,7 +375,6 @@ def cmd_ssh(args: List[str]) -> None:
     if host.type == HostType.COLAB:
         tunnel_type = host.env_vars.get("tunnel_type", "cloudflared")
         if tunnel_type == "cloudflared":
-            # Use cloudflared access ssh
             proxy_command = host.env_vars.get("proxy_command", "").strip()
             if not proxy_command:
                 cloudflared_bin = host.env_vars.get("cloudflared_bin", "cloudflared")

@@ -4,7 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from trainsh.commands.help_catalog import render_readme_overview
 
@@ -14,8 +19,7 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Exit non-zero if README.md is out of date.")
     args = parser.parse_args()
 
-    root = Path(__file__).resolve().parents[1]
-    readme_path = root / "README.md"
+    readme_path = ROOT / "README.md"
     expected = render_readme_overview()
     current = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
 

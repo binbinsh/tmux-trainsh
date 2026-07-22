@@ -38,13 +38,13 @@ LISTED_SECRET_KEYS = (
 def _prompt_bundle_payload(provider: str) -> Optional[dict[str, str]]:
     """Prompt for a cloud storage credential bundle."""
     if provider == "r2":
-        account_id = prompt_input("Cloudflare Account ID: ")
+        account_id = prompt_input("Cloudflare account ID: ")
         if not account_id:
             return None
-        access_key_id = getpass.getpass("R2 Access Key ID: ")
+        access_key_id = getpass.getpass("Object storage access key ID: ")
         if not access_key_id:
             return None
-        secret_access_key = getpass.getpass("R2 Secret Access Key: ")
+        secret_access_key = getpass.getpass("Object storage secret access key: ")
         if not secret_access_key:
             return None
         return {
@@ -247,10 +247,12 @@ def cmd_delete(args: List[str]) -> None:
 def cmd_backend(args: List[str]) -> None:
     """Show or switch the secrets backend."""
     from ..core.secrets import (
+        DEFAULT_VAULTWARDEN_SERVER_URL,
         get_configured_backend_name,
+        normalize_backend_name,
         set_backend,
         _BACKEND_NAMES,
-        _op_available,
+        _bw_available,
     )
 
     current = get_configured_backend_name()
@@ -269,41 +271,33 @@ def cmd_backend(args: List[str]) -> None:
             print(f"  {name:<20} {label}{marker}")
         print()
         print("Switch with: train secrets backend <name>")
-        print("  e.g.  train secrets backend encrypted_file")
-        print("        train secrets backend 1password")
+        print("  e.g.  train secrets backend vaultwarden")
         return
 
-    name = args[0].lower()
+    name = normalize_backend_name(args[0])
     if name not in _BACKEND_NAMES:
-        print(f"Unknown backend: {name}")
+        print(f"Unknown backend: {args[0].lower()}")
         print(f"Choose from: {', '.join(_BACKEND_NAMES)}")
         sys.exit(1)
 
-    vault = None
-    sa_token = None
-    if name == "1password":
-        if not _op_available():
-            print("Warning: 'op' CLI not found on PATH.")
-            print("Install from https://1password.com/downloads/command-line/")
-            confirm = prompt_input("Continue anyway? (y/N): ")
-            if confirm is None or confirm.lower() != "y":
-                print("Cancelled.")
-                return
-        vault = prompt_input("1Password vault name [Development]: ", default="Development")
-        from ..core.secrets import _resolve_op_auth
-        sa_token = _resolve_op_auth(vault)
-        if sa_token is False:
-            print("Falling back to encrypted file backend.")
-            name = "encrypted_file"
-            sa_token = None
-    elif name == "keyring":
-        from ..core.secrets import _keyring_available
-        if not _keyring_available():
-            print("No system keyring found. Install 'keyring' package: pip install keyring")
-            sys.exit(1)
+    server_url = None
+    folder_id = None
+    if not _bw_available():
+        print("Error: Bitwarden CLI 'bw' is required for TrainShell secrets.")
+        print("Install the official Bitwarden CLI, then run this command again.")
+        sys.exit(1)
+    server_url = prompt_input(
+        f"Vaultwarden server URL [{DEFAULT_VAULTWARDEN_SERVER_URL}]: ",
+        default=DEFAULT_VAULTWARDEN_SERVER_URL,
+    )
+    folder_id = prompt_input("Vaultwarden folder ID for TrainShell secrets [none]: ")
 
     try:
-        set_backend(name, vault=vault, sa_token=sa_token)
+        set_backend(
+            name,
+            server_url=server_url or DEFAULT_VAULTWARDEN_SERVER_URL,
+            folder_id=folder_id or None,
+        )
         label = _BACKEND_NAMES[name]
         print(f"Switched to: {label}")
     except Exception as e:

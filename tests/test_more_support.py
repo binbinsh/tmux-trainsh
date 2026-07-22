@@ -177,11 +177,12 @@ class SmallModuleSweepTests(unittest.TestCase):
 
         secrets = MagicMock()
         secrets.get.side_effect = lambda key: {
+            "R2_ACCOUNT_ID": "acct",
             "R2_ACCESS_KEY_ID": "AKIA",
             "R2_SECRET_ACCESS_KEY": "SECRET",
         }.get(key)
         with patch("trainsh.services.transfer_support.get_secrets_manager", return_value=secrets):
-            env = build_rclone_env(Storage(name="cloud", type=StorageType.R2, config={"account_id": "acct"}))
+            env = build_rclone_env(Storage(name="cloud", type=StorageType.R2, config={}))
         self.assertIn("RCLONE_CONFIG_CLOUD_ENDPOINT", env)
         self.assertEqual(get_rclone_remote_name(Storage(name="plain", type=StorageType.S3, config={})), "plain")
         self.assertEqual(TransferPlan("rclone", "cloud").via, "cloud")

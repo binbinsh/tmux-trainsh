@@ -24,9 +24,6 @@ RUNTIME_STATE_DIR = STATE_DIR / "runtime"
 RECIPE_FILE_EXTENSION = ".pyrecipe"
 RECIPE_FILE_EXTENSIONS = (RECIPE_FILE_EXTENSION,)
 
-# Keyring service name
-KEYRING_SERVICE = "tmux-trainsh"
-
 # Vast.ai API
 VAST_API_BASE = "https://console.vast.ai/api/v0"
 RUNPOD_REST_API_BASE = "https://rest.runpod.io/v1"

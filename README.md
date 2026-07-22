@@ -13,6 +13,8 @@ train --help
 
 Those two commands are the canonical help entry points.
 
+The published Python package is `tmux-trainsh`. The daily CLI command is `train`; the package also installs a `tmux-trainsh` command alias for explicit package-name invocation. The public Python import package remains `trainsh`.
+
 ## Install
 
 Install from PyPI with uv:

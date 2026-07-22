@@ -138,7 +138,7 @@ def cmd_add(args: List[str]) -> None:
     print("  1. Local filesystem")
     print("  2. SSH/SFTP")
     print("  3. Google Drive")
-    print("  4. Cloudflare R2")
+    print("  4. S3-compatible object storage")
     print("  5. Backblaze B2")
     print("  6. Amazon S3")
     print("  7. Google Cloud Storage")
@@ -231,23 +231,26 @@ def cmd_add(args: List[str]) -> None:
         config["remote_name"] = remote_name
 
     elif storage_type == StorageType.R2:
-        account_id = prompt_input("Cloudflare Account ID: ")
-        if account_id is None:
+        endpoint = prompt_input("S3-compatible endpoint URL: ")
+        if endpoint is None:
+            return
+        endpoint = endpoint.strip()
+        if not endpoint:
+            print("Cancelled - endpoint URL is required.")
             return
         bucket = prompt_input("Bucket name: ")
         if bucket is None:
             return
-        config["account_id"] = account_id
+        config["endpoint"] = endpoint
         config["bucket"] = bucket
-        config["endpoint"] = f"https://{account_id}.r2.cloudflarestorage.com"
         store_now = _prompt_store_now()
         if store_now is None:
             return
         if store_now:
-            access_key_id = _prompt_secret("R2 Access Key ID: ")
+            access_key_id = _prompt_secret("Object storage access key ID: ")
             if access_key_id is None:
                 return
-            secret_access_key = _prompt_secret("R2 Secret Access Key: ")
+            secret_access_key = _prompt_secret("Object storage secret access key: ")
             if secret_access_key is None:
                 return
             from ..core.secrets import get_secrets_manager
@@ -256,14 +259,14 @@ def cmd_add(args: List[str]) -> None:
             get_secrets_manager().set_bundle(
                 bundle_name,
                 {
-                    "account_id": account_id.strip(),
                     "access_key_id": access_key_id,
                     "secret_access_key": secret_access_key,
+                    "endpoint": endpoint,
                 },
             )
-            print("Stored R2 credentials in train secrets.")
+            print("Stored object storage credentials in train secrets.")
         else:
-            print("You can set R2 credentials later with train secrets.")
+            print("You can set object storage credentials later with train secrets.")
 
     elif storage_type == StorageType.B2:
         bucket = prompt_input("Bucket name: ")
@@ -466,7 +469,7 @@ def cmd_show(args: List[str]) -> None:
     secrets = get_secrets_manager()
     managed = []
     if storage.type == StorageType.R2 and secrets.exists(_suggest_secret_name(storage.name, "R2_CREDENTIALS")):
-        managed.append("R2 credentials")
+        managed.append("object storage credentials")
     elif storage.type == StorageType.B2 and secrets.exists(_suggest_secret_name(storage.name, "B2_CREDENTIALS")):
         managed.append("B2 credentials")
     elif storage.type == StorageType.S3:
@@ -639,7 +642,7 @@ def cmd_test(args: List[str]) -> None:
         parsed_user, parsed_host = _split_ssh_target(host_spec)
         password_secret_name = resolve_resource_secret_name(storage.name, storage.config.get("password_secret"), "PASSWORD")
         key_secret_name = resolve_resource_secret_name(storage.name, storage.config.get("key_secret"), "SSH_PRIVATE_KEY")
-        auth_method = AuthMethod.PASSWORD if (storage.config.get("password") or get_secrets_manager().exists(password_secret_name)) else AuthMethod.KEY
+        auth_method = AuthMethod.PASSWORD if get_secrets_manager().exists(password_secret_name) else AuthMethod.KEY
         host = Host(
             name=storage.name,
             type=HostType.SSH,
@@ -670,7 +673,8 @@ def cmd_test(args: List[str]) -> None:
             print(f"Path not found: {path}")
             sys.exit(1)
     else:
-        print("Connection test not implemented for this storage type.")
+        print(f"Connection check is not supported for storage type: {storage.type.value}")
+        sys.exit(1)
 
 
 def main(args: List[str]) -> Optional[str]:

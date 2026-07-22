@@ -512,7 +512,8 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         notes=(
             "Supported types: local, ssh, gdrive, hf, r2, b2, s3, gcs, smb.",
             "Backends are stored in ~/.config/tmux-trainsh/storages.yaml.",
-            "Credential prompts can store secrets directly in train's secrets backend.",
+            "Credential prompts store secret material in TrainVault through `train secrets`.",
+            "Plaintext token, password, and access-key fields in storage config are ignored.",
             "HF buckets use `HF_TOKEN` or a storage-scoped `<NAME>_HF_TOKEN` secret.",
         ),
         examples=(
@@ -539,7 +540,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
                     "host:<name>:/path               Explicit host endpoint.",
                     "storage:<name>:/path            Named storage endpoint.",
                     "hf:<namespace>/<bucket>:/path   Hugging Face Buckets (colon path form).",
-                    "r2:<bucket>/[prefix]            Cloudflare R2 (no pre-configuration needed).",
+                    "r2:<bucket>/[prefix]            S3-compatible object storage.",
                     "b2:<bucket>/[prefix]            Backblaze B2.",
                     "gcs:<bucket>/[prefix]           Google Cloud Storage.",
                 ),
@@ -605,9 +606,11 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             ),
         ),
         notes=(
+            "Vaultwarden is the only supported secrets backend; TrainShell accesses it through the official Bitwarden CLI (`bw`).",
+            "Environment variables are not a TrainShell secret source; store reusable values with `train secrets set <key>`.",
             "Secret values are prompted securely for `train secrets set`.",
             "`train secrets get <key>` prints the raw value to stdout; use `train secrets get --masked <key>` for a preview.",
-            "Cloud bundle secrets are supported for providers such as R2 and B2.",
+            "Cloud bundle secrets are supported for object storage providers such as r2: and B2.",
             "`GITHUB_TOKEN` is used automatically for GitHub HTTPS clones from `train host clone`, `train vast clone`, `train runpod clone`, and `recipe.git_clone(..., auth='github_token')`.",
         ),
         examples=(
@@ -619,6 +622,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
             "train secrets get OPENAI_API_KEY",
             "train secrets get --masked OPENAI_API_KEY",
             "train secrets backend",
+            "train secrets backend vaultwarden",
         ),
         see_also=("train host", "train storage", "train vast", "train runpod"),
     ),
@@ -804,7 +808,7 @@ COMMAND_DOCS: tuple[CommandDoc, ...] = (
         ),
         notes=(
             "For reusable named connections inside recipes, prefer `train host add` and choose a Colab host type.",
-            "You need a running Colab notebook with SSH enabled plus a cloudflared or ngrok tunnel.",
+            "You need a running Colab notebook with SSH enabled plus a supported tunnel.",
         ),
         examples=(
             "train colab connect",
@@ -942,7 +946,7 @@ def render_top_level_help() -> str:
         "tmux-trainsh: GPU training workflow automation in the terminal.",
         "",
         "Manage remote GPU hosts (Vast.ai, Google Colab, SSH), cloud storage backends",
-        "(Hugging Face Buckets, Cloudflare R2, Backblaze B2, S3, Google Drive), and automate training workflows.",
+        "(Hugging Face Buckets, S3-compatible object storage, Backblaze B2, S3, Google Drive), and automate training workflows.",
         "",
         "Version",
         f"  {version}",
@@ -1131,6 +1135,9 @@ def render_readme_overview() -> str:
         "train --help\n"
         "```\n\n"
         "Those two commands are the canonical help entry points.\n\n"
+        "The published Python package is `tmux-trainsh`. The daily CLI command is "
+        "`train`; the package also installs a `tmux-trainsh` command alias for explicit "
+        "package-name invocation. The public Python import package remains `trainsh`.\n\n"
         "## Install\n\n"
         "Install from PyPI with uv:\n\n"
         "```bash\n"

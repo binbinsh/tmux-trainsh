@@ -14,3 +14,4 @@ site/
 .coverage.*
 coverage.json
 nanochat-output/
+:memory:/

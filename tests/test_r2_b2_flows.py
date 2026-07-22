@@ -102,13 +102,12 @@ class R2B2FlowTests(unittest.TestCase):
             id="artifacts",
             name="artifacts",
             type=StorageType.R2,
-            config={"bucket": "logs"},
+            config={"bucket": "logs", "endpoint": "https://objects.example.com"},
         )
         manager = self._build_manager(
             {
                 "ARTIFACTS_R2_CREDENTIALS": json.dumps(
                     {
-                        "account_id": "r2-account",
                         "access_key_id": "r2-ak",
                         "secret_access_key": "r2-sk",
                     }
@@ -131,12 +130,12 @@ class R2B2FlowTests(unittest.TestCase):
         self.assertEqual(calls[-1]["argv"], ["lsd", "artifacts:logs"])
         env = calls[-1]["env"]
         self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_TYPE"], "s3")
-        self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_PROVIDER"], "Cloudflare")
+        self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_PROVIDER"], "Other")
         self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_ACCESS_KEY_ID"], "r2-ak")
         self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_SECRET_ACCESS_KEY"], "r2-sk")
         self.assertEqual(
             env["RCLONE_CONFIG_ARTIFACTS_ENDPOINT"],
-            "https://r2-account.r2.cloudflarestorage.com",
+            "https://objects.example.com",
         )
         self.assertIn("Connection successful!", stdout.getvalue())
 
@@ -145,9 +144,9 @@ class R2B2FlowTests(unittest.TestCase):
             {
                 "R2_CREDENTIALS": json.dumps(
                     {
-                        "account_id": "global-account",
                         "access_key_id": "global-ak",
                         "secret_access_key": "global-sk",
+                        "endpoint": "https://global-objects.example.com",
                     }
                 )
             }
@@ -192,7 +191,7 @@ class R2B2FlowTests(unittest.TestCase):
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_SECRET_ACCESS_KEY"], "global-sk")
         self.assertEqual(
             env[f"RCLONE_CONFIG_{remote_env}_ENDPOINT"],
-            "https://global-account.r2.cloudflarestorage.com",
+            "https://global-objects.example.com",
         )
         output = stdout.getvalue()
         self.assertIn("Transfer complete: Transfer complete", output)
@@ -255,14 +254,13 @@ class R2B2FlowTests(unittest.TestCase):
             id="artifacts",
             name="artifacts archive",
             type=StorageType.R2,
-            config={"bucket": "logs"},
+            config={"bucket": "logs", "endpoint": "https://runtime-objects.example.com"},
         )
         recipe = RecipeModel(name="r2-runtime", storages={"artifacts": storage})
         manager = self._build_manager(
             {
                 "ARTIFACTS_ARCHIVE_R2_CREDENTIALS": json.dumps(
                     {
-                        "account_id": "runtime-account",
                         "access_key_id": "runtime-ak",
                         "secret_access_key": "runtime-sk",
                     }
@@ -396,7 +394,7 @@ class R2B2FlowTests(unittest.TestCase):
         self.assertEqual(env[f"RCLONE_CONFIG_{remote_env}_SECRET_ACCESS_KEY"], "runtime-sk")
         self.assertEqual(
             env[f"RCLONE_CONFIG_{remote_env}_ENDPOINT"],
-            "https://runtime-account.r2.cloudflarestorage.com",
+            "https://runtime-objects.example.com",
         )
 
 

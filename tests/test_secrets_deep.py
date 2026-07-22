@@ -13,61 +13,23 @@ def patched_secret_paths():
         config_dir = Path(tmpdir) / ".config" / "tmux-trainsh"
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "config.yaml"
-        enc_file = config_dir / "secrets.enc"
         stack.enter_context(patch.object(secrets_mod, "CONFIG_DIR", config_dir))
         stack.enter_context(patch.object(secrets_mod, "CONFIG_FILE", config_file))
-        stack.enter_context(patch.object(secrets_mod, "_ENC_FILE", enc_file))
-        yield config_dir, config_file, enc_file
+        yield config_dir, config_file
 
 
-class EncryptedFileBackendTests(unittest.TestCase):
-    def test_roundtrip_and_wrong_password(self):
-        with patched_secret_paths() as (_config_dir, _config_file, enc_file):
-            with patch("getpass.getpass", return_value="pw"):
-                backend = secrets_mod.EncryptedFileBackend()
-                backend.set("API", "secret")
-                self.assertEqual(backend.get("API"), "secret")
-                self.assertEqual(backend.list_set_keys(), ["API"])
-                backend.delete("API")
-                self.assertFalse(enc_file.exists())
+class VaultwardenOnlyBackendTests(unittest.TestCase):
+    def test_removed_backend_config_is_not_loaded(self):
+        with patched_secret_paths() as (_config_dir, config_file):
+            config_file.write_text("secrets:\n  backend: keyring\n", encoding="utf-8")
+            self.assertIsNone(secrets_mod._load_backend())
 
-            with patch("getpass.getpass", return_value="pw"):
-                backend = secrets_mod.EncryptedFileBackend()
-                backend.set("API", "secret")
-
-            with patch("getpass.getpass", return_value="wrong"):
-                backend = secrets_mod.EncryptedFileBackend()
-                with self.assertRaises(RuntimeError):
-                    backend.get("API")
-
-
-class KeyringBackendTests(unittest.TestCase):
-    def test_keyring_backend_and_enumeration(self):
-        fake_store = {}
-
-        class DeleteError(Exception):
-            pass
-
-        fake_keyring = MagicMock()
-        fake_keyring.errors.PasswordDeleteError = DeleteError
-        fake_keyring.get_password.side_effect = lambda service, key: fake_store.get(key)
-        fake_keyring.set_password.side_effect = lambda service, key, value: fake_store.__setitem__(key, value)
-
-        def delete_password(service, key):
-            if key not in fake_store:
-                raise DeleteError()
-            fake_store.pop(key)
-
-        fake_keyring.delete_password.side_effect = delete_password
-
-        with patch.dict("sys.modules", {"keyring": fake_keyring}):
-            backend = secrets_mod.KeyringBackend()
-            backend.set("VAST_API_KEY", "token")
-            self.assertEqual(backend.get("VAST_API_KEY"), "token")
-            self.assertEqual(backend.list_set_keys(), ["VAST_API_KEY"])
-            backend.delete("VAST_API_KEY")
-            self.assertIsNone(backend.get("VAST_API_KEY"))
-            backend.delete("MISSING")
+    def test_legacy_alias_config_loads_vaultwarden(self):
+        with patched_secret_paths() as (_config_dir, config_file):
+            config_file.write_text("secrets:\n  backend: bitwarden\n", encoding="utf-8")
+            backend = secrets_mod._load_backend()
+            self.assertIsInstance(backend, secrets_mod.BitwardenCLIBackend)
+            self.assertEqual(backend._server_url, secrets_mod.DEFAULT_VAULTWARDEN_SERVER_URL)
 
 
 class SecretsManagerConvenienceTests(unittest.TestCase):

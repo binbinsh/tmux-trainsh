@@ -19,7 +19,6 @@ def patched_host_store():
         stack.enter_context(patch("trainsh.constants.HOSTS_FILE", config_dir / "hosts.yaml"))
         stack.enter_context(patch("trainsh.core.secrets.CONFIG_DIR", config_dir))
         stack.enter_context(patch("trainsh.core.secrets.CONFIG_FILE", config_dir / "config.yaml"))
-        stack.enter_context(patch("trainsh.core.secrets._ENC_FILE", config_dir / "secrets.enc"))
         stack.enter_context(patch("trainsh.core.secrets._secrets_manager", None))
         stack.enter_context(patch("trainsh.services.vast_api.get_vast_client", side_effect=RuntimeError("disabled in tests")))
         yield config_dir
@@ -101,7 +100,7 @@ class HostCommandDeepTests(unittest.TestCase):
         self.assertIn("ssh://gpu-alt:2200", host._render_connection_candidate_line(1, {"type": "ssh", "hostname": "gpu-alt", "port": 2200}))
         self.assertIn("jump=jump-alt", host._render_connection_candidate_line(1, {"type": "ssh", "hostname": "gpu-alt", "jump_host": "jump-alt"}))
         self.assertIn("(proxy)", host._render_connection_candidate_line(1, {"type": "ssh", "hostname": "gpu-alt", "proxy_command": "proxy"}))
-        self.assertIn("cloudflared://cf.example.com", host._render_connection_candidate_line(2, {"type": "cloudflared", "hostname": "cf.example.com", "cloudflared_bin": "/usr/bin/cloudflared"}))
+        self.assertIn("tunnel://cf.example.com", host._render_connection_candidate_line(2, {"type": "cloudflared", "hostname": "cf.example.com", "cloudflared_bin": "/usr/bin/cloudflared"}))
         self.assertIn("plain-text", host._render_connection_candidate_line(3, "plain-text"))
 
     def test_prompt_connection_candidates_and_int(self):
@@ -210,7 +209,9 @@ class HostCommandDeepTests(unittest.TestCase):
                     "gpu-pass", "1", "gpu3.example.com", "22", "bob",
                     "3", "y", "", "n", "", "n",
                 ],
-            ), patch("trainsh.commands.host_interactive.getpass.getpass", return_value="pw-secret"):
+            ), patch("trainsh.commands.host_interactive.getpass.getpass", return_value="pw-secret"), patch(
+                "trainsh.core.secrets.get_secrets_manager", return_value=MagicMock()
+            ):
                 out, code = capture_output(host.cmd_add, [])
             self.assertIsNone(code)
             created = host.load_hosts()["gpu-pass"]

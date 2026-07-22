@@ -12,6 +12,14 @@ from trainsh.commands import colab, config_cmd, recipe, schedule_cmd, transfer
 from trainsh.core.models import Storage, StorageType
 
 
+class FakeSecretsManager:
+    def __init__(self):
+        self.values = {}
+
+    def set(self, key, value):
+        self.values[key] = value
+
+
 def capture(fn, *args, **kwargs):
     stream = StringIO()
     code = None
@@ -208,26 +216,42 @@ class ColabCommandEdgeTests(unittest.TestCase):
 
                 with patch(
                     "trainsh.commands.colab.prompt_input",
-                    side_effect=["demo-ng", "2", "ngrok.example.com", "2200", "pw"],
+                    side_effect=["demo-ng", "2", "ngrok.example.com", "2200", "Y"],
+                ), patch("trainsh.commands.colab.getpass.getpass", return_value="pw"), patch(
+                    "trainsh.commands.colab.get_secrets_manager",
+                    return_value=FakeSecretsManager(),
                 ):
                     out, code = capture(colab.cmd_connect, [])
                 self.assertIsNone(code)
                 self.assertIn("Added Colab connection: demo-ng", out)
+                stored = colab._load_colab_data()["connections"][0]
+                self.assertEqual(stored["password_secret"], "DEMO_NG_SSH_PASSWORD")
+                self.assertNotIn("password", stored)
 
                 with patch(
                     "trainsh.commands.colab.prompt_input",
-                    side_effect=["demo-cf", "1", "cf.example.com", "pw"],
+                    side_effect=["demo-cf", "1", "cf.example.com", "Y"],
+                ), patch("trainsh.commands.colab.getpass.getpass", return_value="pw"), patch(
+                    "trainsh.commands.colab.get_secrets_manager",
+                    return_value=FakeSecretsManager(),
                 ):
                     out, code = capture(colab.cmd_connect, [])
                 self.assertIsNone(code)
                 self.assertIn("demo-cf", colab._load_colab_data()["connections"][1]["name"])
 
-                with patch("os.system") as mocked_system:
+                with patch("trainsh.commands.colab.materialize_secret_file", return_value="/tmp/train-colab.pass"), patch(
+                    "trainsh.commands.colab.shutil.which",
+                    return_value="/usr/bin/sshpass",
+                ), patch("os.system") as mocked_system:
                     out, code = capture(colab.cmd_ssh, ["demo-ng"])
                 self.assertIsNone(code)
                 self.assertIn("ngrok", mocked_system.call_args.args[0])
+                self.assertIn("sshpass -f /tmp/train-colab.pass", mocked_system.call_args.args[0])
 
-                with patch("os.system") as mocked_system:
+                with patch("trainsh.commands.colab.materialize_secret_file", return_value="/tmp/train-colab.pass"), patch(
+                    "trainsh.commands.colab.shutil.which",
+                    return_value="/usr/bin/sshpass",
+                ), patch("os.system") as mocked_system:
                     out, code = capture(colab.cmd_ssh, ["demo-cf"])
                 self.assertIsNone(code)
                 self.assertIn("cloudflared access ssh", mocked_system.call_args.args[0])
@@ -241,7 +265,10 @@ class ColabCommandEdgeTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn("Connection not found", out)
 
-                with patch("os.system") as mocked_system:
+                with patch("trainsh.commands.colab.materialize_secret_file", return_value="/tmp/train-colab.pass"), patch(
+                    "trainsh.commands.colab.shutil.which",
+                    return_value="/usr/bin/sshpass",
+                ), patch("os.system") as mocked_system:
                     out, code = capture(colab.cmd_run, ["echo", "hi"])
                 self.assertIsNone(code)
                 self.assertIn("Running on Colab: echo hi", out)
@@ -258,6 +285,28 @@ class ColabCommandEdgeTests(unittest.TestCase):
                 out, code = capture(colab.main, ["unknown"])
                 self.assertEqual(code, 1)
                 self.assertIn("Unknown subcommand", out)
+
+    def test_legacy_plaintext_colab_password_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            colab_file = Path(tmpdir) / "colab.yaml"
+            with patch("trainsh.commands.colab.COLAB_FILE", colab_file), patch("trainsh.commands.colab.CONFIG_DIR", Path(tmpdir)):
+                colab._save_colab_data(
+                    {
+                        "connections": [
+                            {
+                                "name": "legacy",
+                                "tunnel_type": "ngrok",
+                                "config": {"hostname": "tcp.ngrok.io", "port": 2200},
+                                "password": "pw",
+                            }
+                        ]
+                    }
+                )
+                with patch("os.system") as mocked_system:
+                    out, code = capture(colab.cmd_ssh, ["legacy"])
+                self.assertEqual(code, 1)
+                self.assertIn("Legacy plaintext Colab password is no longer accepted", out)
+                mocked_system.assert_not_called()
 
 
 class ConfigCommandEdgeTests(unittest.TestCase):
@@ -428,13 +477,13 @@ class RecipeCommandEdgeTests(unittest.TestCase):
 
             loaded = SimpleNamespace(name="demo", variables={"A": "1"}, hosts={"gpu": "local"}, steps=[SimpleNamespace(raw="echo hi")])
             with patch("trainsh.pyrecipe.load_python_recipe", return_value=loaded):
-                out, code = capture(recipe.cmd_show, ["demo"])
+                out, code = capture(recipe.cmd_show, ["demo", "--compiled"])
             self.assertIsNone(code)
             self.assertIn("Recipe: demo", out)
             self.assertIn("1. echo hi", out)
 
             with patch("trainsh.pyrecipe.load_python_recipe", side_effect=RuntimeError("boom")):
-                out, code = capture(recipe.cmd_show, ["demo"])
+                out, code = capture(recipe.cmd_show, ["demo", "--compiled"])
             self.assertEqual(code, 1)
             self.assertIn("Error loading recipe: boom", out)
 

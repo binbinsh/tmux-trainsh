@@ -62,7 +62,6 @@ class SecretsCommandTests(CaptureMixin, unittest.TestCase):
         self._patches = [
             patch.object(secrets_core, "CONFIG_DIR", config_dir),
             patch.object(secrets_core, "CONFIG_FILE", config_dir / "config.yaml"),
-            patch.object(secrets_core, "_ENC_FILE", config_dir / "secrets.enc"),
         ]
         for p in self._patches:
             p.start()
@@ -79,7 +78,7 @@ class SecretsCommandTests(CaptureMixin, unittest.TestCase):
         secrets = SimpleNamespace(_get_backend=lambda: backend, set=lambda key, value: None, get=lambda key: "abcdefgh1234", delete=lambda key: None)
 
         with patch("trainsh.core.secrets.get_secrets_manager", return_value=secrets), patch(
-            "trainsh.core.secrets.get_configured_backend_name", return_value="encrypted_file"
+            "trainsh.core.secrets.get_configured_backend_name", return_value="vaultwarden"
         ):
             out, code, _ = self.capture(secrets_cmd.cmd_list, [])
         self.assertIsNone(code)
@@ -162,54 +161,35 @@ class SecretsCommandTests(CaptureMixin, unittest.TestCase):
         self.assertIn("Unknown subcommand", out)
 
     def test_backend_command_paths(self):
-        with patch("trainsh.core.secrets.get_configured_backend_name", return_value="encrypted_file"), patch(
-            "trainsh.core.secrets._BACKEND_NAMES", {"encrypted_file": "Encrypted File", "1password": "1Password", "keyring": "Keyring"}
-        ):
+        with patch("trainsh.core.secrets.get_configured_backend_name", return_value="vaultwarden"):
             out, code, _ = self.capture(secrets_cmd.cmd_backend, [])
         self.assertIsNone(code)
-        self.assertIn("Current backend: Encrypted File", out)
+        self.assertIn("Current backend: Vaultwarden", out)
+        self.assertIn("train secrets backend vaultwarden", out)
 
         out, code, _ = self.capture(secrets_cmd.cmd_backend, ["bad"])
         self.assertEqual(code, 1)
         self.assertIn("Unknown backend", out)
 
-        with patch("trainsh.core.secrets._BACKEND_NAMES", {"1password": "1Password"}), patch(
-            "trainsh.core.secrets._op_available", return_value=False
-        ), patch("trainsh.commands.secrets_cmd.prompt_input", return_value="n"):
-            out, code, _ = self.capture(secrets_cmd.cmd_backend, ["1password"])
-        self.assertIsNone(code)
-        self.assertIn("Cancelled.", out)
-
-        with patch("trainsh.core.secrets._BACKEND_NAMES", {"1password": "1Password", "encrypted_file": "Encrypted File"}), patch(
-            "trainsh.core.secrets._op_available", return_value=False
-        ), patch("trainsh.commands.secrets_cmd.prompt_input", return_value="y"), patch(
-            "trainsh.core.secrets._resolve_op_auth", return_value=False
-        ), patch(
-            "trainsh.core.secrets.set_backend"
-        ) as mocked_set:
-            out, code, _ = self.capture(secrets_cmd.cmd_backend, ["1password"])
-        self.assertIsNone(code)
-        mocked_set.assert_called_once()
-        self.assertIn("Falling back to encrypted file backend.", out)
-
-        with patch("trainsh.core.secrets._BACKEND_NAMES", {"1password": "1Password"}), patch(
-            "trainsh.core.secrets._op_available", return_value=True
-        ), patch("trainsh.commands.secrets_cmd.prompt_input", return_value="Vault"), patch(
-            "trainsh.core.secrets._resolve_op_auth", return_value="token"
-        ), patch(
-            "trainsh.core.secrets.set_backend"
-        ) as mocked_set:
-            out, code, _ = self.capture(secrets_cmd.cmd_backend, ["1password"])
-        self.assertIsNone(code)
-        mocked_set.assert_called_once_with("1password", vault="Vault", sa_token="token")
-        self.assertIn("Switched to: 1Password", out)
-
-        with patch("trainsh.core.secrets._BACKEND_NAMES", {"keyring": "Keyring"}), patch(
-            "trainsh.core.secrets._keyring_available", return_value=False
-        ):
-            out, code, _ = self.capture(secrets_cmd.cmd_backend, ["keyring"])
+        with patch("trainsh.core.secrets._bw_available", return_value=False):
+            out, code, _ = self.capture(secrets_cmd.cmd_backend, ["vaultwarden"])
         self.assertEqual(code, 1)
-        self.assertIn("No system keyring found", out)
+        self.assertIn("Bitwarden CLI 'bw' is required", out)
+
+        with patch("trainsh.core.secrets._bw_available", return_value=True), patch(
+            "trainsh.commands.secrets_cmd.prompt_input",
+            side_effect=["https://vault.train.sh", "folder-123"],
+        ), patch(
+            "trainsh.core.secrets.set_backend"
+        ) as mocked_set:
+            out, code, _ = self.capture(secrets_cmd.cmd_backend, ["vaultwarden"])
+        self.assertIsNone(code)
+        mocked_set.assert_called_once_with(
+            "vaultwarden",
+            server_url="https://vault.train.sh",
+            folder_id="folder-123",
+        )
+        self.assertIn("Switched to: Vaultwarden", out)
 
 
 class RecipeFileCommandTests(CaptureMixin, unittest.TestCase):
@@ -232,7 +212,7 @@ class RecipeFileCommandTests(CaptureMixin, unittest.TestCase):
 
                 out, code, _ = self.capture(recipe.cmd_show, ["mine"])
                 self.assertIsNone(code)
-                self.assertIn("Recipe: mine", out)
+                self.assertIn("recipe = Recipe('mine')", out)
 
                 out, code, _ = self.capture(recipe.cmd_show, ["missing"])
                 self.assertEqual(code, 1)

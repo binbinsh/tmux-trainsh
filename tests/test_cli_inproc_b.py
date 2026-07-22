@@ -11,6 +11,14 @@ from trainsh.commands.remote_run import RemoteCloneRequest
 from trainsh.core.models import AuthMethod, Host, HostType, Storage, StorageType
 
 
+class FakeSecretsManager:
+    def __init__(self):
+        self.values = {}
+
+    def set(self, key, value):
+        self.values[key] = value
+
+
 @contextmanager
 def patched_config_files():
     with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
@@ -81,12 +89,12 @@ class HostCommandTests(unittest.TestCase):
             text = capture_output(host.cmd_list, [])
             self.assertIn("Configured hosts:", text)
             self.assertIn("gpu-box", text)
-            self.assertIn("Colab/cloudflared", text)
+            self.assertIn("Colab/secure access", text)
 
             text = capture_output(host.cmd_show, ["gpu-box"])
             self.assertIn("Host: gpu-box", text)
             self.assertIn("Connection candidates:", text)
-            self.assertIn("Cloudflared Hostname: ssh.example.com", text)
+            self.assertIn("Tunnel Hostname: ssh.example.com", text)
 
             with self.assertRaises(SystemExit):
                 host.cmd_show(["missing"])
@@ -291,13 +299,13 @@ class TransferColabVastCommandTests(unittest.TestCase):
                         "name": "demo",
                         "tunnel_type": "cloudflared",
                         "config": {"hostname": "cf.example.com"},
-                        "password": "pw",
+                        "password_secret": "DEMO_SSH_PASSWORD",
                     },
                     {
                         "name": "ngrok-demo",
                         "tunnel_type": "ngrok",
                         "config": {"hostname": "tcp.ngrok.io", "port": 2222},
-                        "password": "pw",
+                        "password_secret": "NGROK_DEMO_SSH_PASSWORD",
                     },
                 ]
             }
@@ -383,7 +391,13 @@ class TransferColabVastCommandTests(unittest.TestCase):
             text = capture_output(colab.cmd_list, [])
             self.assertIn("No Colab connections configured.", text)
 
-            with patch("trainsh.commands.colab.prompt_input", side_effect=["demo", "1", "cf.example.com", "pw"]):
+            with patch("trainsh.commands.colab.prompt_input", side_effect=["demo", "1", "cf.example.com", "Y"]), patch(
+                "trainsh.commands.colab.getpass.getpass",
+                return_value="pw",
+            ), patch(
+                "trainsh.commands.colab.get_secrets_manager",
+                return_value=FakeSecretsManager(),
+            ):
                 text = capture_output(colab.cmd_connect, [])
             self.assertIn("Added Colab connection: demo", text)
             self._write_colab(config_dir)
@@ -392,11 +406,18 @@ class TransferColabVastCommandTests(unittest.TestCase):
             self.assertIn("Colab connections:", text)
             self.assertIn("demo", text)
 
-            with patch("os.system") as system_mock:
+            with patch("trainsh.commands.colab.materialize_secret_file", return_value="/tmp/train-colab.pass"), patch(
+                "trainsh.commands.colab.shutil.which",
+                return_value="/usr/bin/sshpass",
+            ), patch("os.system") as system_mock:
                 colab.cmd_ssh(["demo"])
             self.assertIn("cloudflared access ssh", system_mock.call_args.args[0])
+            self.assertIn("sshpass -f /tmp/train-colab.pass", system_mock.call_args.args[0])
 
-            with patch("os.system") as system_mock:
+            with patch("trainsh.commands.colab.materialize_secret_file", return_value="/tmp/train-colab.pass"), patch(
+                "trainsh.commands.colab.shutil.which",
+                return_value="/usr/bin/sshpass",
+            ), patch("os.system") as system_mock:
                 text = capture_output(colab.cmd_run, ["python", "-V"])
             self.assertIn("Running on Colab: python -V", text)
             system_mock.assert_called_once()

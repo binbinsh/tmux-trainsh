@@ -67,9 +67,9 @@ class TransferEngineHelpersTests(unittest.TestCase):
         with patch("trainsh.services.transfer_engine.get_secrets_manager", return_value=secrets), patch(
             "trainsh.services.transfer_support.materialize_secret_file", return_value="/tmp/secret.key"
         ):
-            env = build_rclone_env(self._storage(account_id="acct"))
+            env = build_rclone_env(self._storage(endpoint="https://objects.example.com"))
             self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_ACCESS_KEY_ID"], "AKIA")
-            self.assertIn("acct.r2.cloudflarestorage.com", env["RCLONE_CONFIG_ARTIFACTS_ENDPOINT"])
+            self.assertEqual(env["RCLONE_CONFIG_ARTIFACTS_ENDPOINT"], "https://objects.example.com")
 
             env = build_rclone_env(
                 self._storage(

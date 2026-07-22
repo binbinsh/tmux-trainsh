@@ -743,7 +743,7 @@ class TransferEngine:
 
         password_secret = resolve_resource_secret_name(storage.name, config.get("password_secret"), "PASSWORD")
         key_secret = resolve_resource_secret_name(storage.name, config.get("key_secret"), "SSH_PRIVATE_KEY")
-        auth_method = AuthMethod.PASSWORD if (_transfer_support.get_secrets_manager().exists(password_secret) or config.get("password")) else AuthMethod.KEY
+        auth_method = AuthMethod.PASSWORD if _transfer_support.get_secrets_manager().exists(password_secret) else AuthMethod.KEY
         host = Host(
             id=storage.id,
             name=storage.name,

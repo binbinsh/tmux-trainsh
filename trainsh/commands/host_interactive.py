@@ -61,9 +61,9 @@ def _render_connection_candidate_line(index: int, candidate) -> str:
         candidate_type = str(candidate.get("type", "ssh")).strip().lower()
         if candidate_type == "cloudflared":
             cloudflared_hostname = candidate.get("hostname") or candidate.get("cloudflared_hostname", "")
-            line = f"{index}. cloudflared://{cloudflared_hostname}"
+            line = f"{index}. tunnel://{cloudflared_hostname}"
             if candidate.get("cloudflared_bin"):
-                line += f" (bin={candidate.get('cloudflared_bin')})"
+                line += " (custom helper)"
             return line
 
         candidate_hostname = candidate.get("hostname", "")
@@ -94,24 +94,24 @@ def _prompt_connection_candidates() -> Optional[list]:
 
         print("\nCandidate type:")
         print("  1. SSH")
-        print("  2. Cloudflared Access")
+        print("  2. Tunnel Access")
         candidate_type = host_cmd.prompt_input("Choice [1]: ", default="1")
         if candidate_type is None:
             return None
 
         if candidate_type.strip() == "2":
             cloudflared_hostname = host_cmd.prompt_input(
-                "Cloudflared hostname (e.g. ssh-access.example.com): ",
+                "Tunnel hostname (e.g. ssh-access.example.com): ",
             )
             if cloudflared_hostname is None:
                 return None
             cloudflared_hostname = cloudflared_hostname.strip()
             if not cloudflared_hostname:
-                print("Skipped - cloudflared hostname is required.")
+                print("Skipped - tunnel hostname is required.")
                 continue
 
             cloudflared_bin = host_cmd.prompt_input(
-                "cloudflared binary [cloudflared]: ",
+                "Tunnel helper binary [default]: ",
                 default="cloudflared",
             )
             if cloudflared_bin is None:
@@ -125,7 +125,7 @@ def _prompt_connection_candidates() -> Optional[list]:
             if cloudflared_bin != "cloudflared":
                 candidate["cloudflared_bin"] = cloudflared_bin
             candidates.append(candidate)
-            print(f"Added candidate #{len(candidates)}: cloudflared://{cloudflared_hostname}")
+            print(f"Added candidate #{len(candidates)}: tunnel://{cloudflared_hostname}")
             continue
 
         candidate_hostname = host_cmd.prompt_input("Candidate hostname/IP: ")
@@ -193,7 +193,7 @@ def cmd_add(args: List[str]) -> None:
 
     print("\nHost type:")
     print("  1. SSH (standard)")
-    print("  2. Google Colab (via cloudflared)")
+    print("  2. Google Colab (via secure tunnel)")
     print("  3. Google Colab (via ngrok)")
     type_choice = host_cmd.prompt_input("Choice [1]: ", default="1")
     if type_choice is None:
@@ -202,10 +202,9 @@ def cmd_add(args: List[str]) -> None:
     if type_choice == "2":
         print("\nIn your Colab notebook, run:")
         print("  !pip install colab-ssh")
-        print("  from colab_ssh import launch_ssh_cloudflared")
-        print("  launch_ssh_cloudflared(password='your_password')")
+        print("  Start an SSH tunnel from the notebook, then paste the generated hostname below.")
         print("")
-        hostname = host_cmd.prompt_input("Cloudflared hostname (e.g., xxx.trycloudflare.com): ")
+        hostname = host_cmd.prompt_input("Tunnel hostname: ")
         if hostname is None:
             return
         if not hostname:
@@ -347,7 +346,7 @@ def cmd_add(args: List[str]) -> None:
         jump_host = jump_host.strip() or None
 
         use_cloudflared = host_cmd.prompt_input(
-            "Use cloudflared Access tunnel? (y/N): ",
+            "Use secure access tunnel? (y/N): ",
             default="N",
         )
         if use_cloudflared is None:
@@ -355,18 +354,18 @@ def cmd_add(args: List[str]) -> None:
 
         if use_cloudflared.strip().lower() in ("y", "yes"):
             cloudflared_hostname = host_cmd.prompt_input(
-                f"Cloudflared hostname [{hostname}]: ",
+                f"Tunnel hostname [{hostname}]: ",
                 default=hostname,
             )
             if cloudflared_hostname is None:
                 return
             cloudflared_hostname = cloudflared_hostname.strip()
             if not cloudflared_hostname:
-                print("Cancelled - cloudflared hostname is required when enabled.")
+                print("Cancelled - tunnel hostname is required when enabled.")
                 return
 
             cloudflared_bin = host_cmd.prompt_input(
-                "cloudflared binary [cloudflared]: ",
+                "Tunnel helper binary [default]: ",
                 default="cloudflared",
             )
             if cloudflared_bin is None:
@@ -379,7 +378,7 @@ def cmd_add(args: List[str]) -> None:
                 env_vars["cloudflared_bin"] = cloudflared_bin
 
         proxy_command = host_cmd.prompt_input(
-            "ProxyCommand override (optional, e.g. wstunnel/cloudflared ...): ",
+            "ProxyCommand override (optional): ",
             default="",
         )
         if proxy_command is None:
@@ -559,7 +558,7 @@ def cmd_edit(args: List[str]) -> None:
         current_tunnel = str(env_vars.get("tunnel_type", "")).strip().lower()
         tunnel_default = "Y" if current_tunnel == "cloudflared" else "N"
         use_cloudflared = host_cmd.prompt_input(
-            "Use cloudflared Access tunnel? (y/N): ",
+            "Use secure access tunnel? (y/N): ",
             default=tunnel_default,
         )
         if use_cloudflared is None:
@@ -567,19 +566,19 @@ def cmd_edit(args: List[str]) -> None:
         if use_cloudflared.strip().lower() in ("y", "yes"):
             cloudflared_hostname_default = str(env_vars.get("cloudflared_hostname", hostname)).strip() or hostname
             cloudflared_hostname = host_cmd.prompt_input(
-                f"Cloudflared hostname [{cloudflared_hostname_default}]: ",
+                f"Tunnel hostname [{cloudflared_hostname_default}]: ",
                 default=cloudflared_hostname_default,
             )
             if cloudflared_hostname is None:
                 return
             cloudflared_hostname = cloudflared_hostname.strip()
             if not cloudflared_hostname:
-                print("Cancelled - cloudflared hostname is required when enabled.")
+                print("Cancelled - tunnel hostname is required when enabled.")
                 return
 
             cloudflared_bin_default = str(env_vars.get("cloudflared_bin", "cloudflared")).strip() or "cloudflared"
             cloudflared_bin = host_cmd.prompt_input(
-                f"cloudflared binary [{cloudflared_bin_default}]: ",
+                "Tunnel helper binary [default]: ",
                 default=cloudflared_bin_default,
             )
             if cloudflared_bin is None:
@@ -657,7 +656,7 @@ def cmd_edit(args: List[str]) -> None:
         env_vars = dict(host.env_vars or {})
         current_tunnel = str(env_vars.get("tunnel_type", "cloudflared")).strip().lower()
         print("\nTunnel type:")
-        print("  1. cloudflared")
+        print("  1. secure tunnel")
         print("  2. ngrok")
         tunnel_default = "2" if current_tunnel == "ngrok" else "1"
         tunnel_choice = host_cmd.prompt_input(f"Choice [{tunnel_default}]: ", default=tunnel_default)
@@ -677,20 +676,20 @@ def cmd_edit(args: List[str]) -> None:
             env_vars["tunnel_type"] = "cloudflared"
             cloudflared_hostname_default = str(env_vars.get("cloudflared_hostname", hostname)).strip() or hostname
             cloudflared_hostname = host_cmd.prompt_input(
-                f"Cloudflared hostname [{cloudflared_hostname_default}]: ",
+                f"Tunnel hostname [{cloudflared_hostname_default}]: ",
                 default=cloudflared_hostname_default,
             )
             if cloudflared_hostname is None:
                 return
             cloudflared_hostname = cloudflared_hostname.strip()
             if not cloudflared_hostname:
-                print("Cancelled - cloudflared hostname is required.")
+                print("Cancelled - tunnel hostname is required.")
                 return
             env_vars["cloudflared_hostname"] = cloudflared_hostname
 
             cloudflared_bin_default = str(env_vars.get("cloudflared_bin", "cloudflared")).strip() or "cloudflared"
             cloudflared_bin = host_cmd.prompt_input(
-                f"cloudflared binary [{cloudflared_bin_default}]: ",
+                "Tunnel helper binary [default]: ",
                 default=cloudflared_bin_default,
             )
             if cloudflared_bin is None:

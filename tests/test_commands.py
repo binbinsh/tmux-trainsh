@@ -228,12 +228,14 @@ def test_train_py_wrapper() -> list[tuple[str, bool, str]]:
 
 
 def test_project_entrypoint() -> tuple[bool, str]:
-    """Verify packaging metadata still exposes the expected train entry point."""
+    """Verify packaging metadata exposes the expected CLI entry points."""
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     if "[project.scripts]" not in pyproject:
         return False, "pyproject.toml is missing the [project.scripts] section"
     if not re.search(r'^train\s*=\s*"trainsh\.main:cli"$', pyproject, flags=re.MULTILINE):
         return False, "pyproject.toml is missing [project.scripts] train = \"trainsh.main:cli\""
+    if not re.search(r'^tmux-trainsh\s*=\s*"trainsh\.main:cli"$', pyproject, flags=re.MULTILINE):
+        return False, "pyproject.toml is missing [project.scripts] tmux-trainsh = \"trainsh.main:cli\""
     return True, ""
 
 

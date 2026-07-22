@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# train - GPU training workflow automation
+# tmux-trainsh CLI - GPU training workflow automation
 # License: MIT
 
 import sys
