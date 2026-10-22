@@ -108,3 +108,5 @@ python3 tests/test_commands.py
 python3 -m unittest tests.test_runtime_persist tests.test_pyrecipe_runtime tests.test_runtime_semantics tests.test_provider_dispatch tests.test_ti_dependencies
 uv run --with coverage python scripts/check_runtime_coverage.py
 ```
+
+Current source version: `1.2026.124`.

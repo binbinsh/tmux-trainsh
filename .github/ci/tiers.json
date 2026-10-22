@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "gridheap.ci-tiers.v1",
+  "project": "tmux-trainsh",
+  "engine": "none",
+  "automatic": {
+    "docs": "metadata",
+    "ordinary": "fast-preflight",
+    "critical": "affected-integration",
+    "main": "none"
+  },
+  "escalationLabels": [
+    "ci:integration",
+    "ci:full"
+  ],
+  "fullValidation": "explicit-dispatch-or-release",
+  "releaseSourceGate": "preserved"
+}
